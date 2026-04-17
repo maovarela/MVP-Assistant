@@ -1,7 +1,7 @@
-// src/index.js
+// index.js
 // Entry point — Telegram bot listener + scheduler
 
-import "fs";
+import "dotenv/config";
 import TelegramBot from "node-telegram-bot-api";
 import cron from "node-cron";
 import { runAgent } from "./agent.js";
@@ -9,31 +9,43 @@ import { getTasksDueSoon, getDailySummary } from "./memory.js";
 
 // ─── Config ───────────────────────────────────────────────────────────────────
 
-const TOKEN    = process.env.TELEGRAM_BOT_TOKEN;
-const CHAT_ID  = process.env.TELEGRAM_CHAT_ID;
+const TOKEN   = process.env.TELEGRAM_BOT_TOKEN?.trim();
+const CHAT_ID = process.env.TELEGRAM_CHAT_ID?.trim();
 
 if (!TOKEN || !CHAT_ID) {
-  console.error("Missing TELEGRAM_BOT_TOKEN or TELEGRAM_CHAT_ID");
+  console.error("Missing TELEGRAM_BOT_TOKEN or TELEGRAM_CHAT_ID (revisa tu .env)");
   process.exit(1);
 }
 
 const bot = new TelegramBot(TOKEN, { polling: true });
 
-console.log("PM Agent running...");
+console.log(`PM Agent running... (authorized CHAT_ID=${CHAT_ID})`);
+
+bot.on("polling_error", (err) => console.error("[polling_error]", err.message));
+
+// TEST_MODE=1 → bot replies "hola" to verify end-to-end before wiring the agent
+const TEST_MODE = process.env.TEST_MODE === "1";
 
 // ─── Message Handler ──────────────────────────────────────────────────────────
 
 bot.on("message", async (msg) => {
   const chatId = msg.chat.id.toString();
+  console.log(`[msg] from=${chatId} text=${JSON.stringify(msg.text)}`);
 
-  // Only respond to your own chat
-  if (chatId !== CHAT_ID) return;
+  if (chatId !== CHAT_ID) {
+    console.log(`[msg] ignored — ${chatId} !== ${CHAT_ID}`);
+    return;
+  }
 
   const text = msg.text?.trim();
   if (!text) return;
 
-  // Show typing indicator
   bot.sendChatAction(chatId, "typing");
+
+  if (TEST_MODE) {
+    await bot.sendMessage(chatId, "hola");
+    return;
+  }
 
   try {
     const response = await runAgent(text);
