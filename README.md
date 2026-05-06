@@ -68,7 +68,17 @@ npm run dev           # starts server.js with file watch
 3. **Settings → Volumes → New Volume** mounted at `/data` (so SQLite persists across deploys)
 4. **Variables** — paste via Raw Editor:
    ```env
-   ANTHROPIC_API_KEY=sk-ant-...
+   # LLM fallback chain (Gemini → Groq → DeepSeek)
+   LLM_API_KEY=AIza...
+   LLM_MODEL=gemini-2.0-flash
+   LLM_BASE_URL=https://generativelanguage.googleapis.com/v1beta/openai/
+   LLM_FALLBACK_1_KEY=gsk_...
+   LLM_FALLBACK_1_MODEL=llama-3.3-70b-versatile
+   LLM_FALLBACK_1_BASE_URL=https://api.groq.com/openai/v1
+   LLM_FALLBACK_2_KEY=sk-...
+   LLM_FALLBACK_2_MODEL=deepseek-chat
+   LLM_FALLBACK_2_BASE_URL=https://api.deepseek.com/v1
+
    TELEGRAM_BOT_TOKEN=...
    TELEGRAM_CHAT_ID=...
    TELEGRAM_WEBHOOK_SECRET=any-long-random-string
@@ -136,7 +146,7 @@ For everything older than today, send the bot statements as **PDF or CSV attachm
 
 ## Operating notes
 
-- LLM: Anthropic only for now (no fallback chain — single API key)
-- Webhook returns 200 immediately; processing happens async so Telegram doesn't retry on slow Claude calls
+- **LLM fallback chain** (matches Runaldo): Gemini → Groq → DeepSeek. All speak the OpenAI Chat Completions API. First success wins. PDF parsing only works on Gemini (Groq's Llama-3.3 and DeepSeek-chat don't support PDF input).
+- Webhook returns 200 immediately; processing happens async so Telegram doesn't retry on slow LLM calls
 - SQLite file lives on Railway Volume, persists across redeploys
 - `EMAIL_BACKFILL_DAYS=90` runs once on boot, scans last 90 days of inbox. Set to 0 / unset on subsequent deploys

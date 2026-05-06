@@ -3,7 +3,6 @@
 // Uses Claude for everything — no per-bank hardcoded regex. Same parser
 // works for Amex, Revolut, BNP, and anything else with sensible formatting.
 
-import Anthropic from "@anthropic-ai/sdk";
 import { parse as parseCsv } from "csv-parse/sync";
 import fs from "fs";
 import crypto from "crypto";
@@ -13,9 +12,7 @@ import {
   isEmailProcessed,
   markEmailProcessed,
 } from "./memory.js";
-
-const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
-const PARSER_MODEL = "claude-sonnet-4-5";
+import { callLLMText, callLLM, getProviders } from "./llm.js";
 
 // ─── Categories — single source of truth ─────────────────────────────────────
 const CATEGORIES = [
@@ -71,16 +68,14 @@ ${(body || "").slice(0, 8000)}`;
 
   let parsed;
   try {
-    const resp = await client.messages.create({
-      model: PARSER_MODEL,
+    const text = await callLLMText({
+      messages: [
+        { role: "system", content: EMAIL_PARSE_PROMPT },
+        { role: "user", content: userPrompt },
+      ],
       max_tokens: 400,
-      system: EMAIL_PARSE_PROMPT,
-      messages: [{ role: "user", content: userPrompt }],
+      temperature: 0.2,
     });
-    const text = resp.content
-      .filter((b) => b.type === "text")
-      .map((b) => b.text)
-      .join("");
     parsed = JSON.parse(extractJson(text));
   } catch (err) {
     console.error(`[email parse] failed for ${messageId}:`, err.message);
@@ -198,13 +193,14 @@ For each row return:
 Return ONLY the JSON array. No prose, no markdown fences.`;
 
 async function parseCsvBatch(batch) {
-  const resp = await client.messages.create({
-    model: PARSER_MODEL,
+  const text = await callLLMText({
+    messages: [
+      { role: "system", content: CSV_PARSE_PROMPT },
+      { role: "user", content: JSON.stringify(batch) },
+    ],
     max_tokens: 4000,
-    system: CSV_PARSE_PROMPT,
-    messages: [{ role: "user", content: JSON.stringify(batch) }],
+    temperature: 0.2,
   });
-  const text = resp.content.filter((b) => b.type === "text").map((b) => b.text).join("");
   return JSON.parse(extractJson(text));
 }
 
@@ -226,22 +222,31 @@ Each transaction:
 Return ONLY the JSON array.`;
 
 export async function importPdf(filePath) {
-  const data = fs.readFileSync(filePath).toString("base64");
+  const base64 = fs.readFileSync(filePath).toString("base64");
 
-  const resp = await client.messages.create({
-    model: PARSER_MODEL,
+  // PDF inline support is uneven across OpenAI-compat providers. Gemini's
+  // OpenAI-compat endpoint accepts files as image_url with PDF data URIs.
+  // Groq Llama and DeepSeek text don't support PDFs — they will fail and the
+  // chain will fall through to whichever provider is left.
+  const resp = await callLLM({
+    messages: [
+      { role: "system", content: PDF_PARSE_PROMPT },
+      {
+        role: "user",
+        content: [
+          { type: "text", text: "Extract all transactions from this statement." },
+          {
+            type: "image_url",
+            image_url: { url: `data:application/pdf;base64,${base64}` },
+          },
+        ],
+      },
+    ],
     max_tokens: 8000,
-    system: PDF_PARSE_PROMPT,
-    messages: [{
-      role: "user",
-      content: [
-        { type: "document", source: { type: "base64", media_type: "application/pdf", data } },
-        { type: "text", text: "Extract all transactions from this statement." },
-      ],
-    }],
+    temperature: 0.2,
   });
 
-  const text = resp.content.filter((b) => b.type === "text").map((b) => b.text).join("");
+  const text = resp.choices[0]?.message?.content || "";
   let txs;
   try {
     txs = JSON.parse(extractJson(text));
