@@ -11,7 +11,14 @@ import {
   updateTask,
   listTasks,
   getDailySummary,
+  listTransactions,
+  spendByCategory,
+  spendByMerchant,
+  monthlyTotals,
+  getTransactionStats,
 } from "./memory.js";
+import { fetchAndParseRecent } from "./email.js";
+import { CATEGORIES } from "./transactions.js";
 
 const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 
@@ -19,25 +26,29 @@ const MODEL = "claude-sonnet-4-5";
 
 // ─── System Prompt ────────────────────────────────────────────────────────────
 
-const SYSTEM_PROMPT = `Eres el PM Agent personal de Mauricio Varela.
+const SYSTEM_PROMPT = `Eres el PM + finance Agent personal de Mauricio Varela.
 
 CONTEXTO:
 - Mauricio trabaja en Edenred Payment Solutions (EPNA) en RevOps/Sales Ops
 - Tiene proyectos activos: ICDB regulatory reporting, Closing Accounts Project, PortPagos (startup B2B payments)
 - Vive en París, 7ème arrondissement
+- Tiene 3 fuentes de gasto: Amex, Revolut, BNP — todas las notificaciones llegan al inbox del agente
 - Prefiere respuestas directas, sin fluff
 - Habla contigo en español
 
 COMPORTAMIENTO:
 - Cuando detectas una tarea o proyecto nuevo, usas tools directamente sin pedir confirmación
-- Eres proactivo: si ves un deadline en riesgo, lo mencionas aunque no te pregunten
+- Eres proactivo: si ves un deadline en riesgo o un gasto inusual, lo mencionas aunque no te pregunten
 - Eres conciso — máximo 3-4 líneas salvo que pidan detalles
 - Usas bullet points solo cuando hay múltiples items
 - Nunca dices "claro que sí" ni "por supuesto" — vas directo al punto
 
 MEMORIA:
-- Tienes acceso a historial de conversación y todos los proyectos y tareas guardados
-- Cuando el usuario dice "mis proyectos" o "mis tareas", consultas la base de datos primero`;
+- Tienes acceso a historial de conversación y todos los proyectos, tareas y transacciones guardadas
+- Cuando el usuario dice "mis proyectos", "mis tareas" o "mis gastos", consultas la base de datos primero
+- Las transacciones tienen amount con signo: negativo = gasto, positivo = ingreso. Cuando hables de "gastos" usa el valor absoluto.
+- Categorías de gasto válidas: ${CATEGORIES.join(", ")}
+- Si el usuario pregunta por un mes, usa formato YYYY-MM-DD (e.g. mes actual = primer y último día del mes)`;
 
 // ─── Tool Definitions ─────────────────────────────────────────────────────────
 
@@ -114,6 +125,70 @@ const TOOLS = [
       properties: {},
     },
   },
+
+  // ── Transactions / spending ────────────────────────────────────────────────
+  {
+    name: "list_transactions",
+    description: "Lista transacciones bancarias filtradas por fecha, categoría o comercio. Por defecto últimas 100.",
+    input_schema: {
+      type: "object",
+      properties: {
+        from:     { type: "string", description: "Fecha inicio YYYY-MM-DD inclusive" },
+        to:       { type: "string", description: "Fecha fin YYYY-MM-DD inclusive" },
+        category: { type: "string", description: `Una de: ${CATEGORIES.join(", ")}` },
+        merchant: { type: "string", description: "Filtro por nombre de comercio (substring)" },
+        limit:    { type: "number", description: "Máximo de resultados (default 100)" },
+      },
+    },
+  },
+  {
+    name: "spend_by_category",
+    description: "Total gastado agrupado por categoría en un rango de fechas. Solo cuenta outflows.",
+    input_schema: {
+      type: "object",
+      properties: {
+        from: { type: "string", description: "YYYY-MM-DD" },
+        to:   { type: "string", description: "YYYY-MM-DD" },
+      },
+    },
+  },
+  {
+    name: "spend_by_merchant",
+    description: "Top comercios donde más se ha gastado en un rango. Útil para 'dónde gasto más'.",
+    input_schema: {
+      type: "object",
+      properties: {
+        from:  { type: "string" },
+        to:    { type: "string" },
+        limit: { type: "number", description: "Top N (default 20)" },
+      },
+    },
+  },
+  {
+    name: "monthly_totals",
+    description: "Totales de ingresos/gastos/neto por mes. Muestra los últimos N meses.",
+    input_schema: {
+      type: "object",
+      properties: {
+        months: { type: "number", description: "Cuántos meses hacia atrás (default 12)" },
+      },
+    },
+  },
+  {
+    name: "transaction_stats",
+    description: "Cuenta total de transacciones, fecha más antigua y más reciente. Útil para saber cobertura del histórico.",
+    input_schema: { type: "object", properties: {} },
+  },
+  {
+    name: "scan_inbox_now",
+    description: "Fuerza un scan inmediato del inbox del email para parsear transacciones nuevas (en lugar de esperar al cron horario).",
+    input_schema: {
+      type: "object",
+      properties: {
+        days_back: { type: "number", description: "Días hacia atrás a escanear (default 1)" },
+      },
+    },
+  },
 ];
 
 // ─── Tool Executor ─────────────────────────────────────────────────────────────
@@ -139,6 +214,24 @@ async function executeTool(name, input) {
 
     case "get_daily_summary":
       return getDailySummary();
+
+    case "list_transactions":
+      return listTransactions(input);
+
+    case "spend_by_category":
+      return spendByCategory(input);
+
+    case "spend_by_merchant":
+      return spendByMerchant(input);
+
+    case "monthly_totals":
+      return monthlyTotals(input);
+
+    case "transaction_stats":
+      return getTransactionStats();
+
+    case "scan_inbox_now":
+      return await fetchAndParseRecent({ daysBack: input.days_back || 1 });
 
     default:
       return { error: `Tool ${name} not implemented yet` };

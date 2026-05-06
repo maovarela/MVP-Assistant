@@ -1,20 +1,28 @@
 {
   "name": "mvp-assistant",
-  "version": "0.1.0",
-  "description": "Personal PM agent — Telegram bot backed by Claude",
+  "version": "0.2.0",
+  "description": "Personal PM + finance agent — Telegram bot backed by Claude",
   "type": "module",
-  "main": "index.js",
+  "main": "server.js",
   "scripts": {
-    "start": "node index.js"
+    "start": "node server.js",
+    "dev": "node --watch server.js"
   },
   "engines": {
     "node": ">=20"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.30.1",
+    "@notionhq/client": "^2.2.15",
     "better-sqlite3": "^11.3.0",
+    "csv-parse": "^5.5.6",
     "dotenv": "^16.4.5",
+    "express": "^4.21.2",
+    "googleapis": "^144.0.0",
+    "imapflow": "^1.0.171",
+    "mailparser": "^3.7.2",
     "node-cron": "^3.0.3",
-    "node-telegram-bot-api": "^0.66.0"
+    "node-telegram-bot-api": "^0.66.0",
+    "nodemailer": "^6.9.16"
   }
 }

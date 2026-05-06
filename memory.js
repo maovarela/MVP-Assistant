@@ -50,6 +50,33 @@ db.exec(`
   CREATE INDEX IF NOT EXISTS idx_tasks_status    ON tasks(status);
   CREATE INDEX IF NOT EXISTS idx_tasks_due_date  ON tasks(due_date);
   CREATE INDEX IF NOT EXISTS idx_messages_role   ON messages(role);
+
+  -- Transactions: bank transactions ingested from emails / CSV / PDF / manual
+  -- amount is signed: negative = outflow (gasto), positive = inflow (ingreso)
+  -- external_id is unique per source: gmail message ID, bank's tx ID, or hash for manual
+  CREATE TABLE IF NOT EXISTS transactions (
+    id           INTEGER PRIMARY KEY AUTOINCREMENT,
+    external_id  TEXT UNIQUE,
+    source       TEXT NOT NULL CHECK(source IN ('email', 'csv', 'pdf', 'manual')),
+    date         TEXT NOT NULL,
+    merchant     TEXT,
+    amount       REAL NOT NULL,
+    currency     TEXT NOT NULL DEFAULT 'EUR',
+    category     TEXT,
+    description  TEXT,
+    raw          TEXT,
+    created_at   TEXT NOT NULL DEFAULT (datetime('now'))
+  );
+
+  CREATE INDEX IF NOT EXISTS idx_tx_date     ON transactions(date);
+  CREATE INDEX IF NOT EXISTS idx_tx_category ON transactions(category);
+  CREATE INDEX IF NOT EXISTS idx_tx_merchant ON transactions(merchant);
+
+  -- Tracks Gmail message IDs we've already processed (avoid double-parsing)
+  CREATE TABLE IF NOT EXISTS processed_emails (
+    message_id   TEXT PRIMARY KEY,
+    processed_at TEXT NOT NULL DEFAULT (datetime('now'))
+  );
 `);
 
 // ─── Messages (conversation history) ─────────────────────────────────────────
@@ -211,6 +238,116 @@ export function getDailySummary() {
     in_progress: listTasks({ status: "In Progress" }),
     blocked: listTasks({ status: "Blocked" }),
   };
+}
+
+// ─── Transactions ─────────────────────────────────────────────────────────────
+
+/**
+ * Insert a transaction. Returns null if external_id already exists (dedup).
+ * tx fields: { external_id, source, date, merchant, amount, currency, category, description, raw }
+ */
+export function insertTransaction(tx) {
+  try {
+    const result = db.prepare(`
+      INSERT INTO transactions
+        (external_id, source, date, merchant, amount, currency, category, description, raw)
+      VALUES
+        (@external_id, @source, @date, @merchant, @amount, @currency, @category, @description, @raw)
+    `).run({
+      external_id: tx.external_id || null,
+      source:      tx.source,
+      date:        tx.date,
+      merchant:    tx.merchant || null,
+      amount:      tx.amount,
+      currency:    tx.currency || "EUR",
+      category:    tx.category || null,
+      description: tx.description || null,
+      raw:         tx.raw || null,
+    });
+    return result.lastInsertRowid;
+  } catch (err) {
+    if (err.code === "SQLITE_CONSTRAINT_UNIQUE") return null; // already imported
+    throw err;
+  }
+}
+
+export function listTransactions({ from, to, category, merchant, limit = 100 } = {}) {
+  let query = `SELECT * FROM transactions WHERE 1=1`;
+  const params = [];
+  if (from)     { query += ` AND date >= ?`;            params.push(from); }
+  if (to)       { query += ` AND date <= ?`;            params.push(to); }
+  if (category) { query += ` AND category = ?`;         params.push(category); }
+  if (merchant) { query += ` AND merchant LIKE ?`;      params.push(`%${merchant}%`); }
+  query += ` ORDER BY date DESC LIMIT ?`;
+  params.push(limit);
+  return db.prepare(query).all(...params);
+}
+
+/** Spend summary by category for a date range. Outflows (amount<0) only. */
+export function spendByCategory({ from, to } = {}) {
+  let query = `
+    SELECT
+      COALESCE(category, 'uncategorised') AS category,
+      ROUND(SUM(ABS(amount)), 2)          AS total,
+      COUNT(*)                            AS count
+    FROM transactions
+    WHERE amount < 0
+  `;
+  const params = [];
+  if (from) { query += ` AND date >= ?`; params.push(from); }
+  if (to)   { query += ` AND date <= ?`; params.push(to); }
+  query += ` GROUP BY category ORDER BY total DESC`;
+  return db.prepare(query).all(...params);
+}
+
+/** Spend summary by merchant for a date range. */
+export function spendByMerchant({ from, to, limit = 20 } = {}) {
+  let query = `
+    SELECT
+      COALESCE(merchant, 'unknown')   AS merchant,
+      ROUND(SUM(ABS(amount)), 2)      AS total,
+      COUNT(*)                        AS count
+    FROM transactions
+    WHERE amount < 0
+  `;
+  const params = [];
+  if (from) { query += ` AND date >= ?`; params.push(from); }
+  if (to)   { query += ` AND date <= ?`; params.push(to); }
+  query += ` GROUP BY merchant ORDER BY total DESC LIMIT ?`;
+  params.push(limit);
+  return db.prepare(query).all(...params);
+}
+
+/** Monthly net flow (income - expenses). */
+export function monthlyTotals({ months = 12 } = {}) {
+  return db.prepare(`
+    SELECT
+      strftime('%Y-%m', date)                                       AS month,
+      ROUND(SUM(CASE WHEN amount < 0 THEN ABS(amount) ELSE 0 END), 2) AS expenses,
+      ROUND(SUM(CASE WHEN amount > 0 THEN amount       ELSE 0 END), 2) AS income,
+      ROUND(SUM(amount), 2)                                          AS net
+    FROM transactions
+    GROUP BY month
+    ORDER BY month DESC
+    LIMIT ?
+  `).all(months);
+}
+
+/** Has this email already been processed? */
+export function isEmailProcessed(messageId) {
+  const row = db.prepare(`SELECT 1 FROM processed_emails WHERE message_id = ?`).get(messageId);
+  return Boolean(row);
+}
+
+export function markEmailProcessed(messageId) {
+  db.prepare(`INSERT OR IGNORE INTO processed_emails (message_id) VALUES (?)`).run(messageId);
+}
+
+export function getTransactionStats() {
+  const total = db.prepare(`SELECT COUNT(*) AS n FROM transactions`).get().n;
+  const earliest = db.prepare(`SELECT MIN(date) AS d FROM transactions`).get().d;
+  const latest = db.prepare(`SELECT MAX(date) AS d FROM transactions`).get().d;
+  return { total, earliest, latest };
 }
 
 export default db;

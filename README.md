@@ -1,78 +1,142 @@
-# PM Agent
+# MVP-Assistant
 
-Agente personal de gestión de proyectos. Telegram + Claude Sonnet + SQLite.
+Personal PM + finance agent. Telegram bot powered by Claude Sonnet 4.5 with persistent SQLite memory and automated bank-statement ingestion.
 
-## Stack
+## What it does
 
-- **Claude Sonnet 4.5** — 200K contexto, tool use nativo
-- **Telegram** — interfaz móvil con push notifications
-- **SQLite** — memoria persistente (proyectos, tareas, historial)
-- **Notion** — sync de tareas (Fase 3)
-- **Google Calendar + Gmail** — acciones (Fase 3)
-- **node-cron** — briefing diario y follow-ups automáticos
+- 📋 **Project & task tracking** — projects, tasks with priorities, due dates, status
+- 💰 **Spending intelligence** — auto-parses bank notification emails (Amex, Revolut, BNP) and lets you bulk-import historical CSV/PDF statements
+- 🤖 **Conversational** — ask anything in Spanish/English, agent uses tools to query DB
+- 📅 **Daily briefings** — 8 AM Paris brief, 9 AM follow-ups, Sunday 6 PM weekly review
+- ⚡ **Webhook-based** — instant Telegram replies, no polling lag
 
-## Setup local
+## Architecture
+
+```
+Telegram  ──webhook──►  Express server  ──►  Claude Sonnet 4.5  ──►  SQLite
+                              │                        ▲
+                              ▼                        │
+                        Cron jobs                  Tool calls
+                        (hourly inbox scan,
+                         daily brief, weekly)
+                              │
+                              ▼
+                       Gmail IMAP ──► Claude parser ──► transactions table
+```
+
+## Project structure
+
+```
+MVP-Assistant/
+├── server.js         # Express + webhook + scheduler (entry point)
+├── agent.js          # Claude tool-use loop (PM + finance tools)
+├── memory.js         # SQLite layer: messages, projects, tasks, transactions
+├── transactions.js   # Email/CSV/PDF parsing via Claude
+├── email.js          # IMAP reader (Gmail app password)
+├── google.js         # Calendar (legacy Gmail code unused — IMAP supersedes)
+├── notion.js         # Notion sync (Phase 3, optional)
+├── railway.json      # Railway deploy config
+├── Procfile          # web: node server.js
+└── package.json
+```
+
+## Setup
+
+### 1. Gmail App Password
+
+1. Activate **2-Step Verification** on the dedicated Gmail
+2. Go to <https://myaccount.google.com/apppasswords>
+3. Generate new app password ("MVP Assistant")
+4. Save the 16-char string
+
+### 2. Telegram bot
+
+`@BotFather` → `/newbot` → save token. Your chat ID via `@userinfobot`.
+
+### 3. Local dev
 
 ```bash
-git clone <repo>
-cd pm-agent
 npm install
-cp .env.example .env
-# Rellena las variables en .env
+cp .env.example .env  # fill in keys
+npm run dev           # starts server.js with file watch
 ```
 
-### Crear el bot de Telegram
+### 4. Railway deploy
 
-1. Habla con @BotFather en Telegram
-2. `/newbot` → sigue los pasos → copia el token
-3. Envía un mensaje al bot, luego visita:
-   `https://api.telegram.org/bot<TOKEN>/getUpdates`
-4. Copia tu `chat_id` del JSON de respuesta
+1. railway.app → New Project → Deploy from GitHub → `maovarela/MVP-Assistant`
+2. **Settings → Networking → Generate Domain** (so `RAILWAY_PUBLIC_DOMAIN` is exposed and webhook auto-registers)
+3. **Settings → Volumes → New Volume** mounted at `/data` (so SQLite persists across deploys)
+4. **Variables** — paste via Raw Editor:
+   ```env
+   ANTHROPIC_API_KEY=sk-ant-...
+   TELEGRAM_BOT_TOKEN=...
+   TELEGRAM_CHAT_ID=...
+   TELEGRAM_WEBHOOK_SECRET=any-long-random-string
+   GMAIL_USER=mauricio.varela.ai@gmail.com
+   GMAIL_APP_PASSWORD=...
+   DB_PATH=/data/pm.db
+   EMAIL_BACKFILL_DAYS=90
+   ```
+5. Deploy → check logs for `[webhook] registered at https://...`
 
-### Correr en local
+## Bank statement ingestion
 
-```bash
-npm run dev
+### Real-time (automatic, going forward)
+
+Every hour the agent scans the inbox for new emails from Amex / Revolut / BNP. New transaction notifications are parsed by Claude and stored in `transactions`.
+
+**To enable transaction emails on each provider:**
+
+| Provider | How to enable transaction emails |
+|---|---|
+| **Revolut** | App → Profile → Notifications → enable email notifications. Or change account email to `mauricio.varela.ai@gmail.com`. |
+| **Amex FR** | americanexpress.fr → Mon compte → Alertes → activate "Notification par email pour chaque opération". |
+| **BNP** | mabanque.bnpparibas → Préférences → Alertes → enable email alerts on every debit/credit. |
+
+### Historical (manual upload — one-shot)
+
+For everything older than today, send the bot statements as **PDF or CSV attachments via Telegram**. The bot detects the file type, parses with Claude, dedupes, inserts.
+
+**How to download statements:**
+
+| Provider | Path |
+|---|---|
+| **Revolut** | App → Profile (top-left avatar) → **Statements** → choose account → date range → Generate → PDF or **Excel/CSV**. |
+| **Amex FR** | americanexpress.fr → "Mes relevés" → download monthly PDF. Or "Téléchargement des opérations" → CSV. |
+| **BNP** | mabanque.bnpparibas → Comptes → "Relevés de compte" (PDF). Or "Mes opérations → Télécharger" → CSV/Excel. |
+
+**Bulk:** download every month you want, send each file to the bot. ~30 sec each. Dedup is automatic — safe to re-send.
+
+## Bot commands & natural language
+
+```
+"qué tengo pendiente esta semana?"
+"cuánto he gastado este mes?"
+"en qué gasto más?"
+"cuánto gasté en restaurantes en marzo?"
+"resumen del último trimestre"
+"crea tarea: enviar reporte ICDB el viernes, alta prioridad"
+"marca como done la tarea 3"
+"weekly review"
 ```
 
-### Test de memoria (sin Telegram)
+## Tools available to the agent
 
-```bash
-node src/memory.js
-```
+**Tasks/projects:** `create_project`, `list_projects`, `create_task`, `update_task_status`, `list_tasks`, `get_daily_summary`
 
-## Deploy en Railway
+**Finance:** `list_transactions`, `spend_by_category`, `spend_by_merchant`, `monthly_totals`, `transaction_stats`, `scan_inbox_now`
 
-```bash
-npm install -g railway
-railway login
-railway init
-railway up
-```
+## Schema
 
-Variables de entorno en Railway Dashboard:
-- `ANTHROPIC_API_KEY`
-- `TELEGRAM_BOT_TOKEN`
-- `TELEGRAM_CHAT_ID`
-- `DB_PATH` = `/data/pm.db`
+- `messages` — conversation history (last 20 fed back to Claude per turn)
+- `projects` — name, description, status
+- `tasks` — linked to projects, priority, status, due_date, owner
+- `transactions` — date, merchant, amount (signed), currency, category, source (email/csv/pdf/manual)
+- `processed_emails` — Gmail message IDs already parsed (dedup)
 
-**Importante:** Crea un Volume en Railway montado en `/data` para que el SQLite persista entre deploys.
+## Operating notes
 
-## Fases de build
-
-- [x] Fase 1 — Esqueleto + SQLite memory
-- [x] Fase 2 — Agent loop con tools básicas
-- [x] Fase 3 — Notion + Google Calendar + Gmail (tools/ listas, activar en agent.js)
-- [ ] Fase 4 — Telegram streaming
-- [ ] Fase 5 — Prompt templates guardados en SQLite
-
-## Comandos disponibles (ejemplos)
-
-```
-"Qué tengo pendiente hoy?"
-"Crea el proyecto PortPagos Q2 con las tareas de MVP"
-"Marca como done la tarea 3"
-"Qué está bloqueado?"
-"Dame el resumen de la semana"
-"Crea una tarea: revisar el ICDB report con Gwenael, viernes, alta prioridad"
-```
+- LLM: Anthropic only for now (no fallback chain — single API key)
+- Webhook returns 200 immediately; processing happens async so Telegram doesn't retry on slow Claude calls
+- SQLite file lives on Railway Volume, persists across redeploys
+- `EMAIL_BACKFILL_DAYS=90` runs once on boot, scans last 90 days of inbox. Set to 0 / unset on subsequent deploys
