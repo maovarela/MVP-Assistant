@@ -136,6 +136,25 @@ For everything older than today, send the bot statements as **PDF or CSV attachm
 
 **Finance:** `list_transactions`, `spend_by_category`, `spend_by_merchant`, `monthly_totals`, `transaction_stats`, `scan_inbox_now`
 
+**Notion:** `search_notion`, `read_notion_page`, `query_notion_database`
+
+**Google Calendar (read-only):** `list_calendar_events`, `search_calendar`
+
+**Gmail send:** `send_email` (uses same App Password as IMAP)
+
+## Connecting Notion + Calendar
+
+### Notion
+1. https://notion.so/my-integrations → New integration → name: `MVP Assistant` → submit
+2. Copy the secret token → set `NOTION_API_KEY=ntn_...` in Railway
+3. **Share pages/databases with the integration**: open each page → `···` menu → Connections → Connect to → MVP Assistant. (Connect a parent page and the integration inherits access to children.)
+
+### Google Calendar
+1. calendar.google.com → Settings → scroll past "Add calendar" / "Import & export" → find **Settings for my calendars** → click the calendar you want
+2. Scroll down to **Integrate calendar** section
+3. Copy "Secret address in iCal format"
+4. Set `GOOGLE_CALENDAR_ICS_URL=https://...basic.ics` in Railway. Multiple calendars: comma-separated.
+
 ## Schema
 
 - `messages` — conversation history (last 20 fed back to Claude per turn)

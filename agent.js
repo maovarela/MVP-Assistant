@@ -21,6 +21,9 @@ import {
 import { fetchAndParseRecent } from "./email.js";
 import { CATEGORIES } from "./transactions.js";
 import { callLLM } from "./llm.js";
+import { searchNotion, readNotionPage, queryNotionDatabase } from "./notion.js";
+import { listEvents, searchEvents } from "./calendar.js";
+import { sendEmail } from "./mailer.js";
 
 // ─── System Prompt ────────────────────────────────────────────────────────────
 
@@ -42,11 +45,23 @@ COMPORTAMIENTO:
 - Nunca dices "claro que sí" ni "por supuesto" — vas directo al punto
 
 MEMORIA:
-- Tienes acceso a historial de conversación + proyectos + tareas + transacciones
+- Tienes acceso a historial de conversación + proyectos + tareas + transacciones (SQLite)
 - Cuando el usuario dice "mis proyectos/tareas/gastos", consulta la DB primero
 - Las transacciones tienen amount con signo: negativo = gasto, positivo = ingreso. Para "gastos" usa valor absoluto.
 - Categorías de gasto válidas: ${CATEGORIES.join(", ")}
-- Para meses pasa el rango YYYY-MM-DD (primer y último día del mes)`;
+- Para meses pasa el rango YYYY-MM-DD (primer y último día del mes)
+
+INTEGRACIONES EXTERNAS:
+- Notion: tienes acceso a sus páginas y databases compartidas con la integración. Si te preguntan algo que probablemente esté en Notion (planes, viajes, notas, docs), llama a search_notion → read_notion_page.
+- Google Calendar: read-only via ICS. Cuando preguntan "cuándo", "qué tengo el día X", "cuándo voy a X" → list_calendar_events o search_calendar.
+- Gmail SEND: puedes mandar emails desde mauricio.varela.ai@gmail.com vía send_email. PERO siempre confirma con el usuario antes de mandar correos importantes. No envíes sin confirmación explícita.
+
+DECISIÓN DE TOOLS:
+- Si la pregunta es sobre fechas/eventos → calendar primero
+- Si es sobre planes, notas, docs → search_notion
+- Si es sobre tareas/proyectos guardados → list_tasks/list_projects
+- Si es sobre gastos → list_transactions / spend_by_*
+- Cuando combines fuentes, hazlo (ej. "qué tengo en Barcelona": calendar + Notion)`;
 
 // ─── Tool Definitions (OpenAI format) ────────────────────────────────────────
 
@@ -143,6 +158,64 @@ const TOOLS = [
       days_back: { type: "number", description: "Default 1" },
     },
   }),
+
+  // ── Notion ──────────────────────────────────────────────────────────────
+  fn("search_notion", "Busca páginas/databases en el workspace de Notion. Devuelve títulos + IDs para luego leerlos.", {
+    type: "object",
+    properties: {
+      query: { type: "string", description: "Texto a buscar (vacío = top recientes)" },
+      limit: { type: "number", description: "Default 10" },
+    },
+  }),
+  fn("read_notion_page", "Lee el contenido completo de una página de Notion: título, propiedades y body en texto plano.", {
+    type: "object",
+    properties: {
+      page_id: { type: "string", description: "ID de la página (UUID con guiones o sin)" },
+    },
+    required: ["page_id"],
+  }),
+  fn("query_notion_database", "Query a un database de Notion con filtros y sorts. Útil para tablas estructuradas.", {
+    type: "object",
+    properties: {
+      database_id: { type: "string", description: "ID del database" },
+      filter:      { type: "object", description: "Filtro estilo Notion API (opcional)" },
+      sorts:       { type: "array",  description: "Sorts estilo Notion API (opcional)" },
+      limit:       { type: "number", description: "Default 50" },
+    },
+    required: ["database_id"],
+  }),
+
+  // ── Google Calendar (read-only via ICS feed) ──────────────────────────
+  fn("list_calendar_events", "Lista eventos de Google Calendar entre fechas. Default próximos 14 días.", {
+    type: "object",
+    properties: {
+      days_ahead: { type: "number", description: "Días futuros a incluir (default 14)" },
+      days_back:  { type: "number", description: "Días pasados a incluir (default 0)" },
+    },
+  }),
+  fn("search_calendar", "Busca eventos por palabra clave en título/descripción/ubicación. Útil para 'cuándo voy a Barcelona'.", {
+    type: "object",
+    properties: {
+      query:      { type: "string", description: "Texto a buscar" },
+      days_ahead: { type: "number", description: "Días futuros (default 365)" },
+      days_back:  { type: "number", description: "Días pasados (default 30)" },
+    },
+    required: ["query"],
+  }),
+
+  // ── Gmail SEND ────────────────────────────────────────────────────────
+  fn("send_email", "Envía un email desde la cuenta del agente vía SMTP. Pide siempre confirmación al usuario antes de mandar correos importantes.", {
+    type: "object",
+    properties: {
+      to:       { type: "string", description: "Destinatario(s), coma-separado" },
+      subject:  { type: "string" },
+      body:     { type: "string", description: "Cuerpo en texto plano" },
+      cc:       { type: "string", description: "CC (opcional)" },
+      bcc:      { type: "string", description: "BCC (opcional)" },
+      reply_to: { type: "string", description: "Reply-To (opcional)" },
+    },
+    required: ["to", "subject", "body"],
+  }),
 ];
 
 function fn(name, description, parameters) {
@@ -166,6 +239,23 @@ async function executeTool(name, input) {
     case "monthly_totals":      return monthlyTotals(input);
     case "transaction_stats":   return getTransactionStats();
     case "scan_inbox_now":      return await fetchAndParseRecent({ daysBack: input.days_back || 1 });
+
+    case "search_notion":         return await searchNotion(input);
+    case "read_notion_page":      return await readNotionPage(input.page_id);
+    case "query_notion_database": return await queryNotionDatabase(input);
+
+    case "list_calendar_events":  return await listEvents({ daysAhead: input.days_ahead, daysBack: input.days_back });
+    case "search_calendar":       return await searchEvents({ query: input.query, daysAhead: input.days_ahead, daysBack: input.days_back });
+
+    case "send_email":            return await sendEmail({
+      to:      input.to,
+      subject: input.subject,
+      body:    input.body,
+      cc:      input.cc,
+      bcc:     input.bcc,
+      replyTo: input.reply_to,
+    });
+
     default:                    return { error: `Tool ${name} not implemented` };
   }
 }
