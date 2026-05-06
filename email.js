@@ -34,7 +34,10 @@ function isBankEmail(fromAddress) {
 
 async function openClient() {
   const user = process.env.GMAIL_USER;
-  const pass = process.env.GMAIL_APP_PASSWORD;
+  // Strip spaces — Gmail shows app passwords as "abcd efgh ijkl mnop" but the
+  // actual value is the 16 chars concatenated. Pasting with spaces is a very
+  // common gotcha.
+  const pass = (process.env.GMAIL_APP_PASSWORD || "").replace(/\s+/g, "");
   if (!user || !pass) {
     throw new Error("GMAIL_USER and GMAIL_APP_PASSWORD must be set");
   }
@@ -46,7 +49,16 @@ async function openClient() {
     auth: { user, pass },
     logger: false,
   });
-  await client.connect();
+
+  try {
+    await client.connect();
+  } catch (err) {
+    // Surface the underlying IMAP error so we can debug ("Command failed" is
+    // imapflow's generic wrapper — the original Gmail error is in err.response
+    // or err.responseText).
+    const detail = err.responseText || err.response || err.code || err.message;
+    throw new Error(`IMAP connect to ${HOST} as ${user} failed: ${detail}`);
+  }
   return client;
 }
 
