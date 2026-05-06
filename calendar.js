@@ -23,13 +23,23 @@ export async function listEvents({ daysAhead = 14, daysBack = 0 } = {}) {
   const toDate   = new Date(now); toDate.setDate(now.getDate() + daysAhead);
 
   const urls = feeds();
-  if (!urls.length) return [];
+  if (!urls.length) {
+    console.warn("[calendar] no GOOGLE_CALENDAR_ICS_URL set");
+    return [];
+  }
+
+  console.log(`[calendar] window ${fromDate.toISOString()} → ${toDate.toISOString()}`);
 
   const allEvents = [];
   for (const url of urls) {
     try {
-      const data   = await ical.async.fromURL(url);
-      const events = expandEvents(data, fromDate, toDate);
+      const data        = await ical.async.fromURL(url);
+      const totalVevents = Object.values(data).filter((e) => e?.type === "VEVENT").length;
+      const events      = expandEvents(data, fromDate, toDate);
+      console.log(`[calendar] ${url.slice(0, 60)}... → ${totalVevents} VEVENTs in feed, ${events.length} in window`);
+      if (events.length) {
+        console.log(`[calendar] first match:`, events[0].title, events[0].start);
+      }
       allEvents.push(...events);
     } catch (err) {
       console.error(`[calendar] failed to fetch ${url.slice(0, 60)}...`, err.message);
