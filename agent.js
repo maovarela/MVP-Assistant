@@ -174,12 +174,10 @@ const TOOLS = [
     },
     required: ["page_id"],
   }),
-  fn("query_notion_database", "Query a un database de Notion con filtros y sorts. Útil para tablas estructuradas.", {
+  fn("query_notion_database", "Lista entradas de un database de Notion. Para filtros complejos usa search_notion + read_notion_page.", {
     type: "object",
     properties: {
-      database_id: { type: "string", description: "ID del database" },
-      filter:      { type: "object", description: "Filtro estilo Notion API (opcional)" },
-      sorts:       { type: "array",  description: "Sorts estilo Notion API (opcional)" },
+      database_id: { type: "string", description: "ID del database (UUID con guiones o sin)" },
       limit:       { type: "number", description: "Default 50" },
     },
     required: ["database_id"],
