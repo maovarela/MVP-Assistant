@@ -131,3 +131,112 @@ function stripHtml(html) {
 export async function backfillEmails({ daysBack = 90 } = {}) {
   return fetchAndParseRecent({ daysBack });
 }
+
+// ─── General email search/read (non-bank) ────────────────────────────────────
+// The bank-transaction parser above is finance-specific. These helpers expose
+// the inbox to the agent for everything else: reservation confirmations,
+// receipts, forwarded threads, etc. The agent uses search_emails to find
+// candidates, then read_email to pull full body.
+
+function gmailDate(d) {
+  // Gmail X-GM-RAW expects YYYY/MM/DD.
+  return d.toISOString().slice(0, 10).replace(/-/g, "/");
+}
+
+function summariseAddress(addr) {
+  if (!addr) return "";
+  if (typeof addr === "string") return addr;
+  if (addr.text) return addr.text;
+  const v = addr.value?.[0];
+  if (!v) return "";
+  return v.name ? `${v.name} <${v.address}>` : v.address || "";
+}
+
+/**
+ * Search the inbox using Gmail's full search syntax (X-GM-RAW).
+ * Examples of `query`: "from:booking.com reserva", "subject:Barcelona",
+ * "vuelo iberia". Empty query returns the most recent N emails.
+ *
+ * Returns lightweight metadata + a short snippet — full body is fetched on
+ * demand via readEmailByUid to keep tool responses small.
+ */
+export async function searchEmails({ query = "", daysBack = 30, limit = 10 } = {}) {
+  const since = new Date();
+  since.setDate(since.getDate() - daysBack);
+
+  const trimmed = (query || "").trim();
+  const gmailQuery = trimmed
+    ? `${trimmed} after:${gmailDate(since)}`
+    : `after:${gmailDate(since)}`;
+
+  const client = await openClient();
+  const out = [];
+  try {
+    const lock = await client.getMailboxLock("INBOX");
+    try {
+      let uids = await client.search({ gmailRaw: gmailQuery }, { uid: true });
+      if (!uids || uids.length === 0) return out;
+
+      // Most recent first, capped to `limit`.
+      uids = uids.sort((a, b) => b - a).slice(0, Math.max(1, limit));
+
+      for (const uid of uids) {
+        try {
+          const msg = await client.fetchOne(uid, { source: true }, { uid: true });
+          if (!msg?.source) continue;
+          const parsed = await simpleParser(msg.source);
+          const body = parsed.text || stripHtml(parsed.html || "");
+          out.push({
+            uid,
+            message_id: parsed.messageId || `imap-${uid}`,
+            from:       summariseAddress(parsed.from),
+            to:         summariseAddress(parsed.to),
+            subject:    parsed.subject || "",
+            date:       parsed.date?.toISOString() || "",
+            snippet:    body.replace(/\s+/g, " ").trim().slice(0, 240),
+          });
+        } catch (err) {
+          console.error(`[imap] search uid=${uid} failed:`, err.message);
+        }
+      }
+    } finally {
+      lock.release();
+    }
+  } finally {
+    await client.logout().catch(() => {});
+  }
+  return out;
+}
+
+/**
+ * Read the full content of an email by UID (UID returned from searchEmails).
+ * Body is truncated to 8000 chars — plenty for almost any single message and
+ * keeps the LLM context bounded.
+ */
+export async function readEmailByUid(uid) {
+  if (uid == null) throw new Error("uid is required");
+  const client = await openClient();
+  try {
+    const lock = await client.getMailboxLock("INBOX");
+    try {
+      const msg = await client.fetchOne(uid, { source: true }, { uid: true });
+      if (!msg?.source) return null;
+      const parsed = await simpleParser(msg.source);
+      const body = parsed.text || stripHtml(parsed.html || "");
+      return {
+        uid,
+        message_id: parsed.messageId || `imap-${uid}`,
+        from:       summariseAddress(parsed.from),
+        to:         summariseAddress(parsed.to),
+        cc:         summariseAddress(parsed.cc),
+        subject:    parsed.subject || "",
+        date:       parsed.date?.toISOString() || "",
+        body:       body.slice(0, 8000),
+      };
+    } finally {
+      lock.release();
+    }
+  } finally {
+    await client.logout().catch(() => {});
+  }
+}

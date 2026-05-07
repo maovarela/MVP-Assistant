@@ -18,7 +18,7 @@ import {
   monthlyTotals,
   getTransactionStats,
 } from "./memory.js";
-import { fetchAndParseRecent } from "./email.js";
+import { fetchAndParseRecent, searchEmails, readEmailByUid } from "./email.js";
 import { CATEGORIES } from "./transactions.js";
 import { callLLM } from "./llm.js";
 import { searchNotion, readNotionPage, queryNotionDatabase } from "./notion.js";
@@ -55,13 +55,15 @@ INTEGRACIONES EXTERNAS:
 - Notion: tienes acceso a sus páginas y databases compartidas con la integración. Si te preguntan algo que probablemente esté en Notion (planes, viajes, notas, docs), llama a search_notion → read_notion_page.
 - Google Calendar: read-only via ICS. Cuando preguntan "cuándo", "qué tengo el día X", "cuándo voy a X" → list_calendar_events o search_calendar.
 - Gmail SEND: puedes mandar emails desde mauricio.varela.ai@gmail.com vía send_email. PERO siempre confirma con el usuario antes de mandar correos importantes. No envíes sin confirmación explícita.
+- Gmail READ: tienes acceso de lectura al inbox del agente. Para reservas, confirmaciones, recibos, threads forwarded, etc. → search_emails (sintaxis Gmail: 'from:booking.com reserva', 'subject:Barcelona', 'vuelo iberia') y luego read_email con el UID. El parseo de transacciones bancarias corre solo en background — NO llames scan_inbox_now salvo que el usuario lo pida explícitamente.
 
 DECISIÓN DE TOOLS:
 - Si la pregunta es sobre fechas/eventos → calendar primero
 - Si es sobre planes, notas, docs → search_notion
 - Si es sobre tareas/proyectos guardados → list_tasks/list_projects
 - Si es sobre gastos → list_transactions / spend_by_*
-- Cuando combines fuentes, hazlo (ej. "qué tengo en Barcelona": calendar + Notion)`;
+- Si menciona un email, reserva, confirmación, vuelo, hotel, recibo recibido por mail → search_emails → read_email
+- Cuando combines fuentes, hazlo (ej. "qué tengo en Barcelona": calendar + Notion + emails)`;
 
 // ─── Tool Definitions (OpenAI format) ────────────────────────────────────────
 
@@ -159,6 +161,23 @@ const TOOLS = [
     },
   }),
 
+  // ── Email read access (non-bank) ────────────────────────────────────────
+  fn("search_emails", "Busca emails en el inbox del agente. Soporta sintaxis Gmail completa: 'from:booking.com', 'subject:reserva', 'iberia vuelo', etc. Devuelve UIDs + metadata + snippet.", {
+    type: "object",
+    properties: {
+      query:     { type: "string", description: "Gmail search syntax. Vacío = emails más recientes." },
+      days_back: { type: "number", description: "Ventana hacia atrás en días (default 30)" },
+      limit:     { type: "number", description: "Máximo de resultados (default 10)" },
+    },
+  }),
+  fn("read_email", "Lee el cuerpo completo de un email. Usa primero search_emails para obtener el UID.", {
+    type: "object",
+    properties: {
+      uid: { type: "number", description: "UID devuelto por search_emails" },
+    },
+    required: ["uid"],
+  }),
+
   // ── Notion ──────────────────────────────────────────────────────────────
   fn("search_notion", "Busca páginas/databases en el workspace de Notion. Devuelve títulos + IDs para luego leerlos.", {
     type: "object",
@@ -237,6 +256,8 @@ async function executeTool(name, input) {
     case "monthly_totals":      return monthlyTotals(input);
     case "transaction_stats":   return getTransactionStats();
     case "scan_inbox_now":      return await fetchAndParseRecent({ daysBack: input.days_back || 1 });
+    case "search_emails":       return await searchEmails({ query: input.query, daysBack: input.days_back, limit: input.limit });
+    case "read_email":          return await readEmailByUid(input.uid);
 
     case "search_notion":         return await searchNotion(input);
     case "read_notion_page":      return await readNotionPage(input.page_id);
