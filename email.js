@@ -253,6 +253,20 @@ export async function searchEmails({ query = "", daysBack = 30, limit = 10 } = {
         uids = await imapNativeSearch(client, { query: trimmed, since });
         console.log(`[email] native fallback matched ${uids?.length || 0} UIDs`);
       }
+      // Last-ditch fallback: if a specific keyword search found nothing,
+      // return the most recent emails in the window so the LLM can still
+      // scan candidates by subject/from. Useful for forwarded confirmations
+      // where the keyword guess (e.g. "Barcelona") doesn't match the actual
+      // subject ("Confirmation de réservation : Barcelone").
+      // The agent's inbox is low-volume, so this rarely floods context.
+      if ((!uids || uids.length === 0) && trimmed) {
+        try {
+          uids = await client.search({ since }, { uid: true });
+          console.log(`[email] recent-window fallback matched ${uids?.length || 0} UIDs`);
+        } catch (err) {
+          console.error(`[email] recent-window fallback failed: ${err.message}`);
+        }
+      }
       if (!uids || uids.length === 0) return out;
 
       // Most recent first, capped to `limit`.

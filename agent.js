@@ -55,7 +55,11 @@ INTEGRACIONES EXTERNAS:
 - Notion: tienes acceso a sus páginas y databases compartidas con la integración. Si te preguntan algo que probablemente esté en Notion (planes, viajes, notas, docs), llama a search_notion → read_notion_page.
 - Google Calendar: read-only via ICS. Cuando preguntan "cuándo", "qué tengo el día X", "cuándo voy a X" → list_calendar_events o search_calendar.
 - Gmail SEND: puedes mandar emails desde mauricio.varela.ai@gmail.com vía send_email. PERO siempre confirma con el usuario antes de mandar correos importantes. No envíes sin confirmación explícita.
-- Gmail READ: tienes acceso de lectura al inbox del agente. Para reservas, confirmaciones, recibos, threads forwarded, etc. → search_emails (sintaxis Gmail: 'from:booking.com reserva', 'subject:Barcelona', 'vuelo iberia') y luego read_email con el UID. El parseo de transacciones bancarias corre solo en background — NO llames scan_inbox_now salvo que el usuario lo pida explícitamente.
+- Gmail READ: tienes acceso de lectura al inbox del agente. Para reservas, confirmaciones, recibos, threads forwarded, etc. → search_emails (sintaxis Gmail: 'from:booking.com reserva', 'subject:Barcelona', 'vuelo iberia') y luego read_email con el UID. Notas importantes:
+  - El agente solo ve emails en SU inbox (mauricio.varela.ai@gmail.com). Confirmaciones que llegaron al Gmail personal solo aparecen si las forwardeaste.
+  - Si una búsqueda por keyword devuelve 0 resultados, search_emails ya hace fallback a "los emails recientes de la ventana" — revisa siempre el resultado completo (subject + snippet) antes de decir "no encontré". Una reserva con subject "Confirmation de réservation : Barcelone - RBP5XC" no matcheará "Barcelona" pero SÍ aparecerá en el fallback.
+  - Antes de concluir que algo no existe, prueba al menos: query vacía (lista recientes), variantes de idioma (Barcelona/Barcelone/Barcelone), y sintaxis Gmail (from:varelaperezmauricio para emails que tú forwardeaste).
+  - El parseo de transacciones bancarias corre solo en background — NO llames scan_inbox_now salvo que el usuario lo pida explícitamente.
 
 DECISIÓN DE TOOLS:
 - Si la pregunta es sobre fechas/eventos → calendar primero
@@ -162,7 +166,7 @@ const TOOLS = [
   }),
 
   // ── Email read access (non-bank) ────────────────────────────────────────
-  fn("search_emails", "Busca emails en el inbox del agente. Soporta sintaxis Gmail completa: 'from:booking.com', 'subject:reserva', 'iberia vuelo', etc. Devuelve UIDs + metadata + snippet.", {
+  fn("search_emails", "Busca emails en el inbox del agente. Sintaxis Gmail completa: 'from:booking.com', 'subject:reserva', 'iberia vuelo'. Si no encuentra nada con la query, devuelve los emails más recientes de la ventana — siempre revisa el resultado completo (subject + from + snippet) antes de concluir que un email no existe. Cuando busques destinos, prueba variantes de idioma (Barcelona/Barcelone) o usa query vacía.", {
     type: "object",
     properties: {
       query:     { type: "string", description: "Gmail search syntax. Vacío = emails más recientes." },
