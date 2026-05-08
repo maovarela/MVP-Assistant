@@ -82,8 +82,13 @@ export async function fetchAndParseRecent({ daysBack = 1 } = {}) {
       for (const uid of uids) {
         stats.fetched++;
         try {
-          const { source } = await client.fetchOne(uid, { source: true }, { uid: true });
-          if (!source) { stats.errors++; continue; }
+          const fetched = await client.fetchOne(uid, { source: true }, { uid: true });
+          const source = fetched?.source;
+          if (!source) {
+            console.error(`[imap] uid=${uid} fetch returned no source (deleted? expunged?)`);
+            stats.errors++;
+            continue;
+          }
 
           const parsed = await simpleParser(source);
           const fromAddr = parsed.from?.value?.[0]?.address || "";
@@ -152,13 +157,73 @@ function summariseAddress(addr) {
   return v.name ? `${v.name} <${v.address}>` : v.address || "";
 }
 
+// Find the Gmail "All Mail" mailbox. Its localized name varies (English
+// "[Gmail]/All Mail", French "[Gmail]/Tous les messages", etc.), so we look it
+// up by the IMAP SPECIAL-USE \All flag. Returns null if it can't be found —
+// caller falls back to INBOX in that case.
+async function findAllMailbox(client) {
+  try {
+    const list = await client.list();
+    const all = list.find((b) => Array.isArray(b.specialUse) ? b.specialUse.includes("\\All") : b.specialUse === "\\All");
+    return all?.path || null;
+  } catch (err) {
+    console.error("[imap] list mailboxes failed:", err.message);
+    return null;
+  }
+}
+
 /**
- * Search the inbox using Gmail's full search syntax (X-GM-RAW).
+ * IMAP-native fallback search when X-GM-RAW returns nothing (or isn't
+ * supported). Plain IMAP can't do full-text well, but it can match subject /
+ * from / body substring and date — good enough as a backup.
+ */
+async function imapNativeSearch(client, { query, since }) {
+  const q = (query || "").trim();
+  if (!q) {
+    return client.search({ since }, { uid: true });
+  }
+  // Try in order: subject, from, body. OR them together.
+  const orQuery = {
+    since,
+    or: [
+      { subject: q },
+      { from: q },
+      { body: q },
+    ],
+  };
+  try {
+    return await client.search(orQuery, { uid: true });
+  } catch (err) {
+    console.error("[imap] native OR search failed, falling back to subject-only:", err.message);
+    return client.search({ since, subject: q }, { uid: true });
+  }
+}
+
+async function fetchAndSummarise(client, uid) {
+  const msg = await client.fetchOne(uid, { source: true }, { uid: true });
+  if (!msg?.source) return null;
+  const parsed = await simpleParser(msg.source);
+  const body = parsed.text || stripHtml(parsed.html || "");
+  return {
+    uid,
+    message_id: parsed.messageId || `imap-${uid}`,
+    from:       summariseAddress(parsed.from),
+    to:         summariseAddress(parsed.to),
+    subject:    parsed.subject || "",
+    date:       parsed.date?.toISOString() || "",
+    snippet:    body.replace(/\s+/g, " ").trim().slice(0, 240),
+    _body:      body,
+  };
+}
+
+/**
+ * Search the inbox using Gmail's full search syntax (X-GM-RAW), falling back
+ * to plain IMAP search if Gmail's extension returns nothing. Searches in the
+ * "All Mail" folder so archived/labeled emails are visible too — Gmail's IMAP
+ * "INBOX" only contains messages currently in the Inbox view.
+ *
  * Examples of `query`: "from:booking.com reserva", "subject:Barcelona",
  * "vuelo iberia". Empty query returns the most recent N emails.
- *
- * Returns lightweight metadata + a short snippet — full body is fetched on
- * demand via readEmailByUid to keep tool responses small.
  */
 export async function searchEmails({ query = "", daysBack = 30, limit = 10 } = {}) {
   const since = new Date();
@@ -172,9 +237,22 @@ export async function searchEmails({ query = "", daysBack = 30, limit = 10 } = {
   const client = await openClient();
   const out = [];
   try {
-    const lock = await client.getMailboxLock("INBOX");
+    const allMailbox = (await findAllMailbox(client)) || "INBOX";
+    const lock = await client.getMailboxLock(allMailbox);
+    console.log(`[email] search query=${JSON.stringify(trimmed)} daysBack=${daysBack} mailbox=${allMailbox}`);
     try {
-      let uids = await client.search({ gmailRaw: gmailQuery }, { uid: true });
+      let uids = [];
+      try {
+        uids = await client.search({ gmailRaw: gmailQuery }, { uid: true });
+      } catch (err) {
+        console.error(`[email] gmailRaw search failed: ${err.message}`);
+      }
+      console.log(`[email] gmailRaw matched ${uids?.length || 0} UIDs`);
+
+      if (!uids || uids.length === 0) {
+        uids = await imapNativeSearch(client, { query: trimmed, since });
+        console.log(`[email] native fallback matched ${uids?.length || 0} UIDs`);
+      }
       if (!uids || uids.length === 0) return out;
 
       // Most recent first, capped to `limit`.
@@ -182,21 +260,15 @@ export async function searchEmails({ query = "", daysBack = 30, limit = 10 } = {
 
       for (const uid of uids) {
         try {
-          const msg = await client.fetchOne(uid, { source: true }, { uid: true });
-          if (!msg?.source) continue;
-          const parsed = await simpleParser(msg.source);
-          const body = parsed.text || stripHtml(parsed.html || "");
-          out.push({
-            uid,
-            message_id: parsed.messageId || `imap-${uid}`,
-            from:       summariseAddress(parsed.from),
-            to:         summariseAddress(parsed.to),
-            subject:    parsed.subject || "",
-            date:       parsed.date?.toISOString() || "",
-            snippet:    body.replace(/\s+/g, " ").trim().slice(0, 240),
-          });
+          const summary = await fetchAndSummarise(client, uid);
+          if (!summary) {
+            console.error(`[email] uid=${uid} no source returned`);
+            continue;
+          }
+          delete summary._body;
+          out.push(summary);
         } catch (err) {
-          console.error(`[imap] search uid=${uid} failed:`, err.message);
+          console.error(`[email] search uid=${uid} failed:`, err.message);
         }
       }
     } finally {
@@ -205,6 +277,7 @@ export async function searchEmails({ query = "", daysBack = 30, limit = 10 } = {
   } finally {
     await client.logout().catch(() => {});
   }
+  console.log(`[email] search returning ${out.length} results`);
   return out;
 }
 
@@ -217,10 +290,14 @@ export async function readEmailByUid(uid) {
   if (uid == null) throw new Error("uid is required");
   const client = await openClient();
   try {
-    const lock = await client.getMailboxLock("INBOX");
+    const allMailbox = (await findAllMailbox(client)) || "INBOX";
+    const lock = await client.getMailboxLock(allMailbox);
     try {
       const msg = await client.fetchOne(uid, { source: true }, { uid: true });
-      if (!msg?.source) return null;
+      if (!msg?.source) {
+        console.error(`[email] read uid=${uid} no source (deleted/expunged?)`);
+        return null;
+      }
       const parsed = await simpleParser(msg.source);
       const body = parsed.text || stripHtml(parsed.html || "");
       return {
