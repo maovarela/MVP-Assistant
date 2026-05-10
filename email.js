@@ -76,8 +76,11 @@ export async function fetchAndParseRecent({ daysBack = 1 } = {}) {
   try {
     const lock = await client.getMailboxLock("INBOX");
     try {
-      // Search messages newer than `since`
-      const uids = await client.search({ since });
+      // Search messages newer than `since`. {uid: true} is critical: without it
+      // imapflow returns sequence numbers (SEARCH), but fetchOne below uses
+      // {uid: true} so it interprets the IDs as UIDs. Mismatch means fetchOne
+      // either misses the message entirely or returns wrong message data.
+      const uids = await client.search({ since }, { uid: true });
 
       for (const uid of uids) {
         stats.fetched++;
