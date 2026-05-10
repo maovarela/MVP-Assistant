@@ -308,8 +308,17 @@ export async function runAgent(userMessage) {
       temperature: 0.5,
     });
 
-    const choice = response.choices[0];
-    const msg = choice.message;
+    const choice = response?.choices?.[0];
+    const msg = choice?.message;
+    // Belt-and-braces — llm.js already guards this, but if a future provider
+    // wrapper bypasses the validation we still want a clean error instead of
+    // "Cannot read properties of undefined".
+    if (!msg) {
+      console.error("[agent] LLM returned no message; aborting loop");
+      const fallback = "No pude generar respuesta — los providers LLM están todos fallando. Reintenta en un momento.";
+      saveMessage("assistant", fallback);
+      return fallback;
+    }
 
     // No more tool calls → done
     if (!msg.tool_calls || msg.tool_calls.length === 0) {
