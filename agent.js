@@ -17,6 +17,7 @@ import {
   spendByMerchant,
   monthlyTotals,
   getTransactionStats,
+  getLlmStats,
 } from "./memory.js";
 import { fetchAndParseRecent, searchEmails, readEmailByUid } from "./email.js";
 import { CATEGORIES } from "./transactions.js";
@@ -182,6 +183,14 @@ const TOOLS = [
     required: ["uid"],
   }),
 
+  // ── LLM observability ────────────────────────────────────────────────────
+  fn("llm_stats", "Reporte de consumo de LLMs en los últimos N días: llamadas, tokens, breakdown por provider y latencia. Útil para responder 'cuánto consumí esta semana'.", {
+    type: "object",
+    properties: {
+      days: { type: "number", description: "Ventana en días (default 7)" },
+    },
+  }),
+
   // ── Notion ──────────────────────────────────────────────────────────────
   fn("search_notion", "Busca páginas/databases en el workspace de Notion. Devuelve títulos + IDs para luego leerlos.", {
     type: "object",
@@ -262,6 +271,7 @@ async function executeTool(name, input) {
     case "scan_inbox_now":      return await fetchAndParseRecent({ daysBack: input.days_back || 1 });
     case "search_emails":       return await searchEmails({ query: input.query, daysBack: input.days_back, limit: input.limit });
     case "read_email":          return await readEmailByUid(input.uid);
+    case "llm_stats":           return getLlmStats({ days: input.days || 7 });
 
     case "search_notion":         return await searchNotion(input);
     case "read_notion_page":      return await readNotionPage(input.page_id);
@@ -292,7 +302,9 @@ export async function runAgent(userMessage) {
 
   // Build conversation: system + recent history + new user message
   // (The new message was just saved, so getRecentMessages already includes it)
-  const history = getRecentMessages(20);
+  // 10 messages keeps enough conversational context for follow-ups while
+  // cutting input tokens roughly in half vs. the previous 20.
+  const history = getRecentMessages(10);
   const messages = [
     { role: "system", content: SYSTEM_PROMPT },
     ...history.map((m) => ({ role: m.role, content: m.content })),
