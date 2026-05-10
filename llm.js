@@ -70,6 +70,14 @@ export async function callLLM(opts) {
 
       console.log(`[llm] calling ${p.name} (${params.model})`);
       const response = await client.chat.completions.create(params);
+      // Some "OpenAI-compatible" endpoints (notably OpenRouter free tiers)
+      // return 200 OK with no choices array — usually rate limit / safety
+      // filter / upstream timeout dressed as success. Treat as failure so
+      // the next provider gets a turn instead of crashing the agent loop.
+      if (!response?.choices?.[0]?.message) {
+        const reason = response?.choices?.[0]?.finish_reason || "no choices in response";
+        throw new Error(`malformed response from ${p.name}: ${reason}`);
+      }
       console.log(`[llm] ${p.name} ok — ${response.usage?.total_tokens ?? "?"} tokens`);
       return response;
     } catch (err) {
