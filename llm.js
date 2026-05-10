@@ -10,6 +10,14 @@
 // DeepSeek, OpenAI, Together, etc. all work).
 
 import OpenAI from "openai";
+import { recordLlmCall } from "./memory.js";
+
+// In-memory cooldown so we don't waste 1-3s per turn retrying providers that
+// are consistently rate-limited. After a 429, the provider is skipped for
+// COOLDOWN_MS — gives daily quotas a chance to reset, but doesn't pin the
+// chain to a permanently-broken provider.
+const COOLDOWN_MS = 5 * 60 * 1000; // 5 minutes
+const cooldownUntil = new Map();   // providerName -> epoch ms
 
 function buildProviders() {
   const providers = [];
@@ -57,18 +65,22 @@ export async function callLLM(opts) {
   let lastError = null;
 
   for (const p of getProviders()) {
+    const cd = cooldownUntil.get(p.name);
+    if (cd && Date.now() < cd) {
+      const remaining = Math.ceil((cd - Date.now()) / 1000);
+      console.log(`[llm] skipping ${p.name} (cooldown ${remaining}s)`);
+      continue;
+    }
+
+    const model = opts.model || p.model;
+    const start = Date.now();
     try {
       const client = new OpenAI({ apiKey: p.apiKey, baseURL: p.baseURL });
-      const params = {
-        model: opts.model || p.model,
-        messages,
-        max_tokens,
-        temperature,
-      };
+      const params = { model, messages, max_tokens, temperature };
       if (tools)       params.tools = tools;
       if (tool_choice) params.tool_choice = tool_choice;
 
-      console.log(`[llm] calling ${p.name} (${params.model})`);
+      console.log(`[llm] calling ${p.name} (${model})`);
       const response = await client.chat.completions.create(params);
       // Some "OpenAI-compatible" endpoints (notably OpenRouter free tiers)
       // return 200 OK with no choices array — usually rate limit / safety
@@ -78,11 +90,43 @@ export async function callLLM(opts) {
         const reason = response?.choices?.[0]?.finish_reason || "no choices in response";
         throw new Error(`malformed response from ${p.name}: ${reason}`);
       }
-      console.log(`[llm] ${p.name} ok — ${response.usage?.total_tokens ?? "?"} tokens`);
+      const latency = Date.now() - start;
+      const usage = response.usage || {};
+      console.log(`[llm] ${p.name} ok — ${usage.total_tokens ?? "?"} tokens (${latency}ms)`);
+      try {
+        recordLlmCall({
+          provider: p.name,
+          model,
+          prompt_tokens:     usage.prompt_tokens,
+          completion_tokens: usage.completion_tokens,
+          total_tokens:      usage.total_tokens,
+          latency_ms:        latency,
+          success:           true,
+        });
+      } catch (e) { console.warn(`[llm] recordLlmCall failed: ${e.message}`); }
+      cooldownUntil.delete(p.name);
       return response;
     } catch (err) {
+      const latency = Date.now() - start;
       console.warn(`[llm] ${p.name} failed: ${err.message}`);
       lastError = err;
+
+      const status = err.status || err.statusCode;
+      const rateLimited = status === 429 || /\b429\b|rate.?limit/i.test(err.message || "");
+      if (rateLimited) {
+        cooldownUntil.set(p.name, Date.now() + COOLDOWN_MS);
+        console.log(`[llm] ${p.name} cooldown ${COOLDOWN_MS / 1000}s after 429`);
+      }
+
+      try {
+        recordLlmCall({
+          provider:   p.name,
+          model,
+          latency_ms: latency,
+          success:    false,
+          error:      (err.message || "unknown").slice(0, 500),
+        });
+      } catch (e) { console.warn(`[llm] recordLlmCall failed: ${e.message}`); }
     }
   }
 

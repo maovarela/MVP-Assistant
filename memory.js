@@ -77,6 +77,25 @@ db.exec(`
     message_id   TEXT PRIMARY KEY,
     processed_at TEXT NOT NULL DEFAULT (datetime('now'))
   );
+
+  -- Per-call observability for the LLM provider chain.
+  -- One row per HTTP attempt (success or failure), so we can see who
+  -- actually does the work, who's rate-limited, and total tokens spent.
+  CREATE TABLE IF NOT EXISTS llm_calls (
+    id                INTEGER PRIMARY KEY AUTOINCREMENT,
+    provider          TEXT NOT NULL,
+    model             TEXT NOT NULL,
+    prompt_tokens     INTEGER,
+    completion_tokens INTEGER,
+    total_tokens      INTEGER,
+    latency_ms        INTEGER,
+    success           INTEGER NOT NULL DEFAULT 1,
+    error             TEXT,
+    created_at        TEXT NOT NULL DEFAULT (datetime('now'))
+  );
+
+  CREATE INDEX IF NOT EXISTS idx_llm_calls_created  ON llm_calls(created_at);
+  CREATE INDEX IF NOT EXISTS idx_llm_calls_provider ON llm_calls(provider);
 `);
 
 // ─── Messages (conversation history) ─────────────────────────────────────────
@@ -341,6 +360,74 @@ export function isEmailProcessed(messageId) {
 
 export function markEmailProcessed(messageId) {
   db.prepare(`INSERT OR IGNORE INTO processed_emails (message_id) VALUES (?)`).run(messageId);
+}
+
+// ─── LLM observability ────────────────────────────────────────────────────────
+
+export function recordLlmCall({ provider, model, prompt_tokens, completion_tokens, total_tokens, latency_ms, success, error }) {
+  db.prepare(`
+    INSERT INTO llm_calls
+      (provider, model, prompt_tokens, completion_tokens, total_tokens, latency_ms, success, error)
+    VALUES
+      (@provider, @model, @prompt_tokens, @completion_tokens, @total_tokens, @latency_ms, @success, @error)
+  `).run({
+    provider,
+    model,
+    prompt_tokens:     prompt_tokens     ?? null,
+    completion_tokens: completion_tokens ?? null,
+    total_tokens:      total_tokens      ?? null,
+    latency_ms:        latency_ms        ?? null,
+    success:           success ? 1 : 0,
+    error:             error ?? null,
+  });
+}
+
+/**
+ * Aggregate stats over the last `days` days. Returns:
+ *   { window_days, overall, by_provider, by_day }
+ */
+export function getLlmStats({ days = 7 } = {}) {
+  const since = new Date(Date.now() - days * 86400000).toISOString();
+
+  const overall = db.prepare(`
+    SELECT
+      COUNT(*)                                                     AS calls,
+      SUM(CASE WHEN success=1 THEN 1 ELSE 0 END)                   AS successes,
+      SUM(CASE WHEN success=0 THEN 1 ELSE 0 END)                   AS failures,
+      COALESCE(SUM(total_tokens), 0)                               AS total_tokens,
+      COALESCE(SUM(prompt_tokens), 0)                              AS prompt_tokens,
+      COALESCE(SUM(completion_tokens), 0)                          AS completion_tokens,
+      ROUND(AVG(CASE WHEN success=1 THEN latency_ms END))          AS avg_latency_ms_ok,
+      ROUND(AVG(latency_ms))                                       AS avg_latency_ms_all
+    FROM llm_calls WHERE created_at >= ?
+  `).get(since);
+
+  const by_provider = db.prepare(`
+    SELECT
+      provider,
+      model,
+      COUNT(*)                                            AS calls,
+      SUM(CASE WHEN success=1 THEN 1 ELSE 0 END)          AS successes,
+      SUM(CASE WHEN success=0 THEN 1 ELSE 0 END)          AS failures,
+      COALESCE(SUM(total_tokens), 0)                      AS total_tokens,
+      ROUND(AVG(latency_ms))                              AS avg_latency_ms
+    FROM llm_calls WHERE created_at >= ?
+    GROUP BY provider, model
+    ORDER BY calls DESC
+  `).all(since);
+
+  const by_day = db.prepare(`
+    SELECT
+      DATE(created_at)                                    AS day,
+      COUNT(*)                                            AS calls,
+      SUM(CASE WHEN success=1 THEN 1 ELSE 0 END)          AS successes,
+      COALESCE(SUM(total_tokens), 0)                      AS total_tokens
+    FROM llm_calls WHERE created_at >= ?
+    GROUP BY day
+    ORDER BY day DESC
+  `).all(since);
+
+  return { window_days: days, overall, by_provider, by_day };
 }
 
 export function getTransactionStats() {
