@@ -35,6 +35,18 @@ if (!TOKEN || !CHAT_ID) {
   process.exit(1);
 }
 
+// Process-level safety net. Background sockets (IMAP, SMTP) can emit late
+// 'error' events long after the originating call returned. Without these
+// handlers an unhandled emit crashes the container and Railway loops the
+// deploy. The webhook server must stay up so Telegram can reach us.
+process.on("uncaughtException", (err) => {
+  console.error(`[process] uncaughtException: ${err?.message}`);
+  if (err?.stack) console.error(err.stack.split("\n").slice(0, 6).join("\n"));
+});
+process.on("unhandledRejection", (reason) => {
+  console.error(`[process] unhandledRejection: ${reason?.message || reason}`);
+});
+
 // Bot client without polling — we drive it via webhook
 const bot = new TelegramBot(TOKEN, { polling: false });
 
