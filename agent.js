@@ -297,8 +297,8 @@ async function executeTool(name, input) {
 
 const MAX_LOOPS = 6;
 
-export async function runAgent(userMessage) {
-  saveMessage("user", userMessage);
+export async function runAgent(userMessage, { channel = "telegram" } = {}) {
+  saveMessage("user", userMessage, channel);
 
   // Build conversation: system + recent history + new user message
   // (The new message was just saved, so getRecentMessages already includes it)
@@ -328,14 +328,14 @@ export async function runAgent(userMessage) {
     if (!msg) {
       console.error("[agent] LLM returned no message; aborting loop");
       const fallback = "No pude generar respuesta — los providers LLM están todos fallando. Reintenta en un momento.";
-      saveMessage("assistant", fallback);
+      saveMessage("assistant", fallback, channel);
       return fallback;
     }
 
     // No more tool calls → done
     if (!msg.tool_calls || msg.tool_calls.length === 0) {
       const finalText = (msg.content || "").trim();
-      saveMessage("assistant", finalText);
+      saveMessage("assistant", finalText, channel);
       return finalText;
     }
 
@@ -371,6 +371,6 @@ export async function runAgent(userMessage) {
 
   // Hit loop limit — return whatever the last response had
   const finalText = (response?.choices?.[0]?.message?.content || "Llegué al límite de iteraciones.").trim();
-  saveMessage("assistant", finalText);
+  saveMessage("assistant", finalText, channel);
   return finalText;
 }

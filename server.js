@@ -18,6 +18,12 @@ import { runAgent } from "./agent.js";
 import { getTasksDueSoon } from "./memory.js";
 import { fetchAndParseRecent, backfillEmails } from "./email.js";
 import { importCsv, importPdf } from "./transactions.js";
+import {
+  sendWhatsApp,
+  parseEvolutionWebhook,
+  isAllowedSender,
+  isWhatsAppConfigured,
+} from "./whatsapp.js";
 
 // ─── Config ──────────────────────────────────────────────────────────────────
 
@@ -28,7 +34,16 @@ const PUBLIC_DOMAIN      = process.env.RAILWAY_PUBLIC_DOMAIN;
 const WEBHOOK_SECRET     = process.env.TELEGRAM_WEBHOOK_SECRET || "";
 const BACKFILL_ON_BOOT   = process.env.EMAIL_BACKFILL_DAYS;
 
-const WEBHOOK_PATH = "/webhook/telegram";
+// WhatsApp / Evolution API
+const ENABLE_TELEGRAM    = process.env.ENABLE_TELEGRAM !== "false"; // default on
+const ENABLE_WHATSAPP    = process.env.ENABLE_WHATSAPP === "true";  // default off
+const WA_WEBHOOK_SECRET  = process.env.WHATSAPP_WEBHOOK_SECRET || "";
+const WA_OWNER_NUMBER    = (process.env.WHATSAPP_ALLOWED_NUMBER || "").replace(/\D/g, "");
+
+const WEBHOOK_PATH    = "/webhook/telegram";
+const WA_WEBHOOK_PATH = WA_WEBHOOK_SECRET
+  ? `/webhook/whatsapp/${WA_WEBHOOK_SECRET}`
+  : "/webhook/whatsapp";
 
 if (!TOKEN || !CHAT_ID) {
   console.error("Missing TELEGRAM_BOT_TOKEN or TELEGRAM_CHAT_ID");
@@ -49,6 +64,23 @@ process.on("unhandledRejection", (reason) => {
 
 // Bot client without polling — we drive it via webhook
 const bot = new TelegramBot(TOKEN, { polling: false });
+
+// ─── Shared message handler ──────────────────────────────────────────────────
+//
+// Both Telegram and WhatsApp produce the same shape after their channel layer:
+//   { channel: "telegram" | "whatsapp", chatId, text, replyTo }
+// `replyTo` is an async (text) => any function the channel layer provides so
+// the agent doesn't have to know about Telegram/WhatsApp send semantics.
+
+async function handleIncomingMessage({ channel, chatId, text, replyTo }) {
+  try {
+    const reply = await runAgent(text, { channel });
+    await replyTo(reply);
+  } catch (err) {
+    console.error(`[agent] (${channel}) error:`, err);
+    try { await replyTo("⚠️ Error procesando tu mensaje. Mira los logs."); } catch {}
+  }
+}
 
 // ─── Telegram message router ─────────────────────────────────────────────────
 
@@ -72,18 +104,62 @@ async function handleTelegramUpdate(update) {
 
   await bot.sendChatAction(chatId, "typing").catch(() => {});
 
-  try {
-    const reply = await runAgent(text);
-    await bot.sendMessage(chatId, reply, { parse_mode: "Markdown" })
-             .catch(async (err) => {
-               // Markdown parse failure → retry plain
-               console.warn("[bot] markdown send failed, retrying plain:", err.message);
-               await bot.sendMessage(chatId, reply);
-             });
-  } catch (err) {
-    console.error("[agent] error:", err);
-    await bot.sendMessage(chatId, "⚠️ Error procesando tu mensaje. Mira los logs.");
+  // Dev alias: "/wa <text>" lets you test the whatsapp routing without scanning
+  // the QR. The message is processed with channel=whatsapp (so it's tagged in
+  // the DB and `runAgent` sees the right channel), but the reply still comes
+  // back to Telegram since that's where you sent it from.
+  const waPrefix = text.match(/^\/wa(?:\s+([\s\S]+))?$/);
+  if (waPrefix) {
+    const body = (waPrefix[1] || "").trim();
+    if (!body) {
+      await bot.sendMessage(chatId, "Usage: /wa <message>");
+      return;
+    }
+    return handleIncomingMessage({
+      channel: "whatsapp",
+      chatId:  WA_OWNER_NUMBER || "test",
+      text:    body,
+      replyTo: (reply) => bot.sendMessage(chatId, `[wa-test]\n${reply}`)
+                            .catch(() => bot.sendMessage(chatId, reply)),
+    });
   }
+
+  return handleIncomingMessage({
+    channel: "telegram",
+    chatId,
+    text,
+    replyTo: async (reply) => {
+      try {
+        await bot.sendMessage(chatId, reply, { parse_mode: "Markdown" });
+      } catch (err) {
+        console.warn("[bot] markdown send failed, retrying plain:", err.message);
+        await bot.sendMessage(chatId, reply);
+      }
+    },
+  });
+}
+
+// ─── WhatsApp message router ─────────────────────────────────────────────────
+
+async function handleWhatsAppEvent(body) {
+  const parsed = parseEvolutionWebhook(body);
+  if (!parsed) return; // not a text message we care about
+  if (parsed.fromMe) return; // echo of our own outbound — ignore
+
+  if (!isAllowedSender(parsed.from)) {
+    console.log(`[whatsapp] ignored sender ${parsed.from}`);
+    return;
+  }
+
+  return handleIncomingMessage({
+    channel: "whatsapp",
+    chatId:  parsed.from,
+    text:    parsed.text,
+    replyTo: async (reply) => {
+      const r = await sendWhatsApp(parsed.from, reply);
+      if (!r.ok) console.warn(`[whatsapp] reply send failed: ${r.error}`);
+    },
+  });
 }
 
 async function handleDocument(msg) {
@@ -149,6 +225,18 @@ app.post(WEBHOOK_PATH, async (req, res) => {
   });
 });
 
+// WhatsApp via Evolution API. The secret (if set) is in the path, not a header,
+// because some Evolution versions don't let you add custom headers to webhooks.
+// The endpoint is registered unconditionally — Evolution's instance just won't
+// have a target if ENABLE_WHATSAPP=false, in which case no events arrive.
+app.post(WA_WEBHOOK_PATH, async (req, res) => {
+  res.json({ ok: true });
+  if (!ENABLE_WHATSAPP) return;
+  handleWhatsAppEvent(req.body).catch((err) => {
+    console.error("[whatsapp webhook] handler crashed:", err);
+  });
+});
+
 // ─── Webhook self-registration ───────────────────────────────────────────────
 
 async function registerWebhook() {
@@ -174,6 +262,29 @@ async function registerWebhook() {
 
 // ─── Scheduler ───────────────────────────────────────────────────────────────
 
+// Fan-out a notification to all enabled outbound channels. Errors on one
+// channel never block the other — finance/PM notifications are too important
+// to lose because, say, the WhatsApp number got temporarily banned.
+async function broadcast(text, { markdown = true } = {}) {
+  const tasks = [];
+  if (ENABLE_TELEGRAM && CHAT_ID) {
+    tasks.push(
+      bot.sendMessage(CHAT_ID, text, markdown ? { parse_mode: "Markdown" } : {})
+         .catch((err) => bot.sendMessage(CHAT_ID, text).catch(() =>
+           console.error("[broadcast] telegram failed:", err.message)
+         ))
+    );
+  }
+  if (ENABLE_WHATSAPP && WA_OWNER_NUMBER && isWhatsAppConfigured()) {
+    tasks.push(
+      sendWhatsApp(WA_OWNER_NUMBER, text).then((r) => {
+        if (!r.ok) console.warn(`[broadcast] whatsapp failed: ${r.error}`);
+      })
+    );
+  }
+  await Promise.allSettled(tasks);
+}
+
 function startScheduler() {
   // Hourly: pull bank emails and parse new transactions
   cron.schedule("5 * * * *", async () => {
@@ -190,7 +301,7 @@ function startScheduler() {
   cron.schedule("0 8 * * *", async () => {
     try {
       const reply = await runAgent("Dame el briefing del día: tareas pendientes, vencidas, urgentes esta semana, y resumen breve del gasto del mes hasta ahora.");
-      await bot.sendMessage(CHAT_ID, `📋 *Briefing del día*\n\n${reply}`, { parse_mode: "Markdown" });
+      await broadcast(`📋 *Briefing del día*\n\n${reply}`);
     } catch (err) { console.error("[cron] daily briefing:", err.message); }
   }, { timezone: "Europe/Paris" });
 
@@ -202,7 +313,7 @@ function startScheduler() {
       const lines = due.map((t) =>
         `⚡ *${t.title}* (${t.project_name || "sin proyecto"}) — vence ${t.due_date} · ${t.priority}`
       );
-      await bot.sendMessage(CHAT_ID, `*Follow-ups próximas 48h*\n\n${lines.join("\n")}`, { parse_mode: "Markdown" });
+      await broadcast(`*Follow-ups próximas 48h*\n\n${lines.join("\n")}`);
     } catch (err) { console.error("[cron] follow-ups:", err.message); }
   }, { timezone: "Europe/Paris" });
 
@@ -210,7 +321,7 @@ function startScheduler() {
   cron.schedule("0 18 * * 0", async () => {
     try {
       const reply = await runAgent("Hazme el weekly review: qué completé, qué bloqueado, prioridades próxima semana, y desglose de gasto de la semana.");
-      await bot.sendMessage(CHAT_ID, `📊 *Weekly Review*\n\n${reply}`, { parse_mode: "Markdown" });
+      await broadcast(`📊 *Weekly Review*\n\n${reply}`);
     } catch (err) { console.error("[cron] weekly review:", err.message); }
   }, { timezone: "Europe/Paris" });
 
@@ -244,6 +355,14 @@ async function maybeBackfill() {
 
 app.listen(PORT, async () => {
   console.log(`[http] listening on :${PORT}`);
+  if (ENABLE_WHATSAPP) {
+    if (isWhatsAppConfigured()) {
+      const masked = WA_WEBHOOK_SECRET ? "/webhook/whatsapp/<secret>" : "/webhook/whatsapp";
+      console.log(`[whatsapp] enabled — webhook ${masked} · owner ${WA_OWNER_NUMBER || "(any)"}`);
+    } else {
+      console.warn("[whatsapp] ENABLE_WHATSAPP=true but EVOLUTION_* env vars missing — outbound disabled");
+    }
+  }
   await registerWebhook();
   startScheduler();
   maybeBackfill();

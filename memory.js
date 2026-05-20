@@ -19,6 +19,7 @@ db.exec(`
     id          INTEGER PRIMARY KEY AUTOINCREMENT,
     role        TEXT NOT NULL CHECK(role IN ('user', 'assistant')),
     content     TEXT NOT NULL,
+    channel     TEXT NOT NULL DEFAULT 'telegram',
     created_at  TEXT NOT NULL DEFAULT (datetime('now'))
   );
 
@@ -98,12 +99,20 @@ db.exec(`
   CREATE INDEX IF NOT EXISTS idx_llm_calls_provider ON llm_calls(provider);
 `);
 
+// Migration: add channel column for existing DBs that predate multi-channel
+// support. ADD COLUMN is idempotent only if the column doesn't exist; pragma
+// check first to avoid a noisy error on every boot.
+const messageCols = db.prepare(`PRAGMA table_info(messages)`).all().map((c) => c.name);
+if (!messageCols.includes("channel")) {
+  db.exec(`ALTER TABLE messages ADD COLUMN channel TEXT NOT NULL DEFAULT 'telegram'`);
+}
+
 // ─── Messages (conversation history) ─────────────────────────────────────────
 
-export function saveMessage(role, content) {
+export function saveMessage(role, content, channel = "telegram") {
   db.prepare(`
-    INSERT INTO messages (role, content) VALUES (?, ?)
-  `).run(role, content);
+    INSERT INTO messages (role, content, channel) VALUES (?, ?, ?)
+  `).run(role, content, channel);
 }
 
 // Returns last N messages formatted for Claude API
