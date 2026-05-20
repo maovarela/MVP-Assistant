@@ -40,11 +40,15 @@ export async function sendWhatsApp(to, text) {
   if (!number) return { ok: false, error: "empty recipient" };
 
   const url = `${BASE}/message/sendText/${encodeURIComponent(INSTANCE)}`;
+  // Evolution v1.x expects { number, textMessage: { text } }. v2 flattens it
+  // to { number, text }. We send both shapes — Evolution ignores unknown
+  // fields, so this works against either version without sniffing.
+  const payload = { number, text, textMessage: { text } };
   try {
     const res = await fetch(url, {
       method: "POST",
       headers: { "Content-Type": "application/json", apikey: API_KEY },
-      body: JSON.stringify({ number, text }),
+      body: JSON.stringify(payload),
     });
     if (!res.ok) {
       const body = await res.text().catch(() => "");
