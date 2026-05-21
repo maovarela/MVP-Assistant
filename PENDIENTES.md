@@ -1,69 +1,77 @@
 # Pendientes — MVP-Assistant
 
-## Gmail del agente (RESUELTO 2026-05-18)
+## Estado actual
 
-`mauricio.varela.ai@gmail.com` fue deshabilitada por Google el 2026-05-12 (suspected bot). Appeal aceptado el 2026-05-18 y la cuenta está restaurada.
+- **Telegram**: funciona, canal principal del agente
+- **Email (Gmail dedicado)**: funciona — la cuenta fue deshabilitada 2026-05-12 y restaurada vía appeal 2026-05-18
+- **Notion, Calendar (ICS), tasks, projects, transacciones**: funcionando
+- **WhatsApp**: **diferido** — código integrado pero apagado por flag (`ENABLE_WHATSAPP=false` default). Detalles abajo.
 
-Para futuro: si Google la vuelve a flagear, el lenguaje del appeal que funcionó: enfatizar "personal", "myself", "my own data", "real phone number". Nunca usar "bot", "agent", "automation". A largo plazo, considera migrar a Fastmail/Proton/dominio propio para no depender de Google.
+## WhatsApp — por qué quedó diferido
 
-## En vuelo: WhatsApp vía Evolution API
+Se exploró integrar WhatsApp como segundo canal usando Evolution API self-hosted (Baileys bajo el capó). Llegó hasta funcionar pero se descartó por una limitación conceptual de WhatsApp Web, no técnica.
 
-Código integrado en `main` pero **necesita Evolution API desplegado** antes de funcionar. La integración degrada limpiamente: si `ENABLE_WHATSAPP=false` (default) o las env vars faltan, el resto del agente funciona normal.
+### Lo que se hizo y funcionó
+1. Deploy de Evolution API v1.8.2 en Railway (servicio aparte del MVP-Assistant, mismo proyecto)
+2. Auth con `AUTHENTICATION_API_KEY`, instancia `mvp-assistant` creada
+3. QR escaneado, número personal conectado, `state: open`
+4. Send manual via curl funcionó (Evolution → mi número personal, mensaje entregado)
 
-### Steps para activar
+### Por qué se descartó
+WhatsApp Web protocol no tiene concepto de "bot account" separado del usuario humano. Si el bot vive en mi número personal (33685391914):
+- Cualquier mensaje desde mi teléfono sale con `fromMe=true`
+- El código del bot ignora `fromMe=true` para evitar loops infinitos
+- Resultado: el bot nunca ve mis mensajes desde mi propio WhatsApp
+- El chat "Mensaje a ti mismo" cae en el mismo problema
 
-1. **Deploy Evolution API en Railway** (servicio separado)
-   - New Project → Deploy from Docker Image → `atendai/evolution-api:latest`
-   - Variables:
-     ```
-     AUTHENTICATION_TYPE=apikey
-     AUTHENTICATION_API_KEY=<string-random-tuyo>
-     AUTHENTICATION_EXPOSE_IN_FETCH_INSTANCES=true
-     DATABASE_ENABLED=false
-     REDIS_ENABLED=false
-     WEBHOOK_GLOBAL_ENABLED=false
-     CONFIG_SESSION_PHONE_CLIENT=MVP-Assistant
-     CONFIG_SESSION_PHONE_NAME=Chrome
-     PORT=8080
-     ```
-   - Generate public domain en Settings → Networking
+Para que funcione como Telegram (yo le hablo al bot, el bot me responde), el bot necesita **vivir en un número distinto al mío**. Igual que el bot de Telegram tiene su propio token y yo mi chat_id.
 
-2. **Crear instancia** (una vez)
-   ```bash
-   curl -X POST https://<evolution-url>/instance/create \
-     -H "apikey: <tu-api-key>" \
-     -H "Content-Type: application/json" \
-     -d '{"instanceName":"mvp-assistant","qrcode":true,"webhook":"https://mvp-assistant-production.up.railway.app/webhook/whatsapp/<wa-webhook-secret>","webhook_by_events":false,"events":["MESSAGES_UPSERT"]}'
-   ```
+### Para reactivar en el futuro
+Cuando consiga un segundo número (Free Mobile €2/mes en Francia, OnOff app virtual, eSIM Airalo, o SIM secundaria), los pasos son:
 
-3. **Escanear QR**
-   ```bash
-   curl https://<evolution-url>/instance/connect/mvp-assistant \
-     -H "apikey: <tu-api-key>"
-   ```
-   Decodifica el base64 en https://base64.guru/converter/decode/image y escanea desde WhatsApp → Dispositivos vinculados.
-
-4. **Env vars en MVP-Assistant (Railway)**
+1. Re-desplegar evolution-api en Railway (image `atendai/evolution-api:v1.8.2`, env vars en el bloque de abajo)
+2. Crear instancia + escanear QR con el **número nuevo** (no el personal)
+3. Añadir 6 env vars al service MVP-Assistant:
    ```
    ENABLE_WHATSAPP=true
-   EVOLUTION_API_URL=https://<evolution-url>
-   EVOLUTION_API_KEY=<tu-api-key>
+   EVOLUTION_API_URL=http://${{evolution-api.RAILWAY_PRIVATE_DOMAIN}}:8080
+   EVOLUTION_API_KEY=<misma-key-de-evolution>
    EVOLUTION_INSTANCE_NAME=mvp-assistant
-   WHATSAPP_ALLOWED_NUMBER=33XXXXXXXXX   # tu número, solo dígitos
-   WHATSAPP_WEBHOOK_SECRET=<string-random>  # mismo que pusiste en la URL del webhook arriba
+   WHATSAPP_ALLOWED_NUMBER=33685391914
+   WHATSAPP_WEBHOOK_SECRET=<random-string>
    ```
+4. Crear instancia con webhook apuntando a `https://mvp-assistant-production.up.railway.app/webhook/whatsapp/<secret>`
+5. Test: mandar WhatsApp desde mi personal al nuevo número del bot → debe responder
 
-5. **Test sin tocar WhatsApp real**: en Telegram manda `/wa hola, qué tareas tengo?`. Eso fuerza la ruta por `channel=whatsapp` y responde de vuelta en Telegram con prefijo `[wa-test]`. Confirma que el routing funciona antes de probar end-to-end.
+### Env vars del service evolution-api (referencia)
+```
+AUTHENTICATION_TYPE=apikey
+AUTHENTICATION_API_KEY=<random>
+AUTHENTICATION_EXPOSE_IN_FETCH_INSTANCES=true
+DATABASE_ENABLED=false
+REDIS_ENABLED=false
+WEBHOOK_GLOBAL_ENABLED=false
+CONFIG_SESSION_PHONE_CLIENT=MVP-Assistant
+CONFIG_SESSION_PHONE_NAME=Chrome
+PORT=8080
+```
 
-6. **Test end-to-end**: desde tu WhatsApp manda al número del bot. Debe responder vía Evolution.
+### Gotchas que aprendí (para no repetir)
+- **`atendai/evolution-api:latest` apunta a v2**, que requiere PostgreSQL + Redis. Pinear a `v1.8.2` para in-memory.
+- **Schema de send**: v1 usa `{ number, textMessage: { text } }`, v2 usa `{ number, text }`. El código de `whatsapp.js` envía ambos campos para ser tolerante.
+- **Railway "Generate Domain"** se queda gris si el input de puerto no se "registra" en React — borrar y reescribir el puerto a mano lo arregla.
+- **No usar `atendai/evolution-api:latest`** sin saber qué versión apunta — fijar tag siempre.
 
-### Riesgos a recordar
+## Riesgos vigentes / cosas a vigilar
 
-- **Ban de número**: Evolution usa WhatsApp Web reverse-engineered. Meta puede banear el número si detecta patrones automatizados (mucho volumen, mensajes idénticos, horas no-humanas). Usa un número secundario que puedas perder.
-- **Costo**: Evolution API self-hosted en Railway free tier suficiente para uso personal. Si crece, ~$5/mes.
-- **Alternativa oficial**: Twilio WhatsApp / Meta Cloud API — sin riesgo de ban, pero $0.005-$0.05/mensaje y verificación de business. No vale la pena para MVP personal.
+- **Gmail puede volver a ser deshabilitada**: el patrón "cuenta logueada sólo desde datacenter" sigue activando bot-detection. A largo plazo conviene migrar a Fastmail/Proton/custom domain. Si vuelve a pasar, el appeal language que funcionó: "personal", "myself", "my own data", "real phone number". Nunca usar "bot", "agent", "automation".
+- **Secrets pegados en chats**: `GMAIL_APP_PASSWORD` fue pegado en claro durante debugging. Rotarlo cuando sea posible.
 
-## Ya parchado en `main`
+## Para Zentra (referencia, no es este proyecto)
+
+Para WhatsApp en Zentra (B2B SaaS de psicólogos con clientes pagando), **no usar Evolution/Baileys**. Quédate con la integración de Twilio que ya tienes en `package.json`. Detalles del por qué guardados en memoria personal.
+
+## Ya parchado en `main` (queda en el repo)
 
 - Error listener en `ImapFlow` antes de `connect()` — sockets muertos no crashean el proceso (PR #4)
 - `llm.js` detecta response sin `.choices` como fallo de provider, con cooldown 5min tras 429 (PR #4)
@@ -71,11 +79,11 @@ Código integrado en `main` pero **necesita Evolution API desplegado** antes de 
 - Logging detallado del IMAP parser por stage (fetch/parse/store) (PR #4)
 - `server.js`: `uncaughtException` + `unhandledRejection` handlers globales
 - Multi-canal: `messages.channel` column, `runAgent(text, {channel})`, broadcast fanout en cron
-- `whatsapp.js` Evolution API wrapper + endpoint `/webhook/whatsapp/<secret>` + `/wa` alias en Telegram
+- `whatsapp.js` Evolution API wrapper + endpoint `/webhook/whatsapp/<secret>` + `/wa` alias en Telegram (apagado por flag)
+- Send body compatible v1 y v2 de Evolution (envía `text` y `textMessage.text` simultáneo)
 
 ## Notas de arquitectura
 
-- Canales activos: Telegram (siempre), WhatsApp (si `ENABLE_WHATSAPP=true`). Para apagar Telegram poner `ENABLE_TELEGRAM=false`.
-- Webhook WhatsApp: el secreto va en el path porque Evolution no soporta headers custom en todas las versiones.
-- Auth por número: si `WHATSAPP_ALLOWED_NUMBER` está set, sólo ese número puede hablar con el agente. Otros se loguean e ignoran.
-- Si migras email a Fastmail/Proton/custom: revisar también el Calendar (probablemente quieras OAuth en vez de ICS público).
+- Canales activos: Telegram (siempre). WhatsApp queda como capacidad latente — código presente, gateado por `ENABLE_WHATSAPP`.
+- Si migras email a Fastmail/Proton/custom: revisar también el Calendar (probablemente quieras OAuth en vez de ICS público desde una cuenta potencialmente migrada).
+- El patrón multi-canal en `server.js` (`handleIncomingMessage` + `broadcast`) sirve para añadir cualquier canal nuevo (Slack, Discord, segundo Telegram, etc.) con poco esfuerzo.
