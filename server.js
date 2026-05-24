@@ -300,7 +300,7 @@ function startScheduler() {
   // Daily 8:00 Paris — briefing
   cron.schedule("0 8 * * *", async () => {
     try {
-      const reply = await runAgent("Dame el briefing del día: tareas pendientes, vencidas, urgentes esta semana, y resumen breve del gasto del mes hasta ahora.");
+      const reply = await runAgent("Dame el briefing del día. Llama list_calendar_events (days_ahead 1) para eventos de hoy y mañana — menciónalos primero con hora y ubicación si aplica. Luego: tareas pendientes, vencidas, urgentes esta semana, y resumen breve del gasto del mes hasta ahora.");
       await broadcast(`📋 *Briefing del día*\n\n${reply}`);
     } catch (err) { console.error("[cron] daily briefing:", err.message); }
   }, { timezone: "Europe/Paris" });
@@ -320,7 +320,7 @@ function startScheduler() {
   // Sunday 18:00 Paris — weekly review
   cron.schedule("0 18 * * 0", async () => {
     try {
-      const reply = await runAgent("Hazme el weekly review: qué completé, qué bloqueado, prioridades próxima semana, y desglose de gasto de la semana.");
+      const reply = await runAgent("Hazme el weekly review. Llama list_calendar_events (days_ahead 7) para los eventos de la próxima semana — inclúyelos. Luego: qué completé, qué bloqueado, prioridades próxima semana, y desglose de gasto de la semana.");
       await broadcast(`📊 *Weekly Review*\n\n${reply}`);
     } catch (err) { console.error("[cron] weekly review:", err.message); }
   }, { timezone: "Europe/Paris" });
