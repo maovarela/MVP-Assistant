@@ -361,6 +361,82 @@ export function monthlyTotals({ months = 12 } = {}) {
   `).all(months);
 }
 
+/**
+ * Spending pace + category deltas for the daily briefing.
+ *
+ * Returns:
+ *   {
+ *     today, days_elapsed, days_in_month,
+ *     current_month: { from, to, expenses, income },
+ *     prior_month_same_window: { from, to, expenses },
+ *     prior_month_full:        { from, to, expenses },
+ *     projected_month_end_expenses,
+ *     pace_delta_pct,            // vs prior month same-day-count
+ *     categories: [
+ *       { category, current, prior, delta_pct }, ...
+ *     ]
+ *   }
+ *
+ * "Pace" projection = current_expenses * (days_in_month / days_elapsed).
+ * Naive — assumes spending is roughly uniform over the month. Good enough
+ * signal for "am I on track or blowing past last month?".
+ */
+export function getSpendPace() {
+  const now = new Date();
+  const y   = now.getFullYear();
+  const m   = now.getMonth(); // 0-indexed
+  const today = now.toISOString().slice(0, 10);
+  const daysElapsed = now.getDate();
+  const daysInMonth = new Date(y, m + 1, 0).getDate();
+
+  const fmt = (d) => d.toISOString().slice(0, 10);
+  const monthStart = fmt(new Date(y, m, 1));
+  const priorStart = fmt(new Date(y, m - 1, 1));
+  const priorEndFull       = fmt(new Date(y, m, 0));                // last day of prior month
+  const priorEndSameWindow = fmt(new Date(y, m - 1, Math.min(daysElapsed, new Date(y, m, 0).getDate())));
+
+  const flow = (from, to) => db.prepare(`
+    SELECT
+      ROUND(SUM(CASE WHEN amount<0 THEN ABS(amount) ELSE 0 END), 2) AS expenses,
+      ROUND(SUM(CASE WHEN amount>0 THEN amount       ELSE 0 END), 2) AS income
+    FROM transactions WHERE date BETWEEN ? AND ?
+  `).get(from, to);
+
+  const current   = flow(monthStart, today);
+  const priorSame = flow(priorStart, priorEndSameWindow);
+  const priorFull = flow(priorStart, priorEndFull);
+
+  const curExp = current.expenses   || 0;
+  const psExp  = priorSame.expenses || 0;
+  const pfExp  = priorFull.expenses || 0;
+
+  const projected = daysElapsed > 0 ? Math.round((curExp * daysInMonth / daysElapsed) * 100) / 100 : 0;
+  const paceDelta = psExp > 0 ? Math.round(((curExp - psExp) / psExp) * 1000) / 10 : null;
+
+  // Categories: this month so far vs same window prior month, merged.
+  const curCats   = spendByCategory({ from: monthStart, to: today });
+  const priorCats = spendByCategory({ from: priorStart, to: priorEndSameWindow });
+  const priorMap  = new Map(priorCats.map((r) => [r.category, r.total]));
+
+  const categories = curCats.map((c) => {
+    const prior = priorMap.get(c.category) || 0;
+    const delta = prior > 0 ? Math.round(((c.total - prior) / prior) * 1000) / 10 : null;
+    return { category: c.category, current: c.total, prior, delta_pct: delta };
+  });
+
+  return {
+    today,
+    days_elapsed: daysElapsed,
+    days_in_month: daysInMonth,
+    current_month:           { from: monthStart, to: today,             expenses: curExp, income: current.income || 0 },
+    prior_month_same_window: { from: priorStart, to: priorEndSameWindow, expenses: psExp },
+    prior_month_full:        { from: priorStart, to: priorEndFull,       expenses: pfExp },
+    projected_month_end_expenses: projected,
+    pace_delta_pct: paceDelta,
+    categories,
+  };
+}
+
 /** Has this email already been processed? */
 export function isEmailProcessed(messageId) {
   const row = db.prepare(`SELECT 1 FROM processed_emails WHERE message_id = ?`).get(messageId);

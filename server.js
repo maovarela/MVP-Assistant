@@ -25,6 +25,7 @@ import {
   isWhatsAppConfigured,
 } from "./whatsapp.js";
 import { runProactiveScan } from "./proactive.js";
+import db, { getTransactionStats, getSpendPace } from "./memory.js";
 
 // ─── Config ──────────────────────────────────────────────────────────────────
 
@@ -210,6 +211,47 @@ app.use(express.json({ limit: "10mb" }));
 app.get("/", (_req, res) => res.json({ status: "MVP-Assistant running" }));
 app.get("/healthz", (_req, res) => res.json({ ok: true }));
 
+// Visibility into the DB without needing Telegram round-trips. No auth — it
+// only reads aggregates (no PII, no full transaction list), and the URL is
+// public-domain-only. If that becomes a concern later, gate behind ?key=...
+app.get("/debug/stats", (_req, res) => {
+  try {
+    const tx          = getTransactionStats();
+    const bySource    = db.prepare(`SELECT source, COUNT(*) AS n FROM transactions GROUP BY source`).all();
+    const bySign      = db.prepare(`
+      SELECT
+        SUM(CASE WHEN amount<0 THEN 1 ELSE 0 END) AS outflows,
+        SUM(CASE WHEN amount>0 THEN 1 ELSE 0 END) AS inflows,
+        SUM(CASE WHEN amount=0 THEN 1 ELSE 0 END) AS zeros
+      FROM transactions
+    `).get();
+    const byMonth     = db.prepare(`
+      SELECT
+        strftime('%Y-%m', date) AS month,
+        COUNT(*)                 AS count,
+        ROUND(SUM(CASE WHEN amount<0 THEN ABS(amount) ELSE 0 END), 2) AS expenses,
+        ROUND(SUM(CASE WHEN amount>0 THEN amount       ELSE 0 END), 2) AS income
+      FROM transactions
+      GROUP BY month ORDER BY month DESC LIMIT 12
+    `).all();
+    const sample      = db.prepare(`SELECT date, merchant, amount, currency, category, source FROM transactions ORDER BY id DESC LIMIT 10`).all();
+    const taskCount   = db.prepare(`SELECT COUNT(*) AS n FROM tasks`).get().n;
+    const projCount   = db.prepare(`SELECT COUNT(*) AS n FROM projects`).get().n;
+    const msgCount    = db.prepare(`SELECT COUNT(*) AS n FROM messages`).get().n;
+    const dbPath      = process.env.DB_PATH || "./data/pm.db";
+    res.json({
+      db_path:    dbPath,
+      transactions: { ...tx, by_source: bySource, by_sign: bySign, by_month: byMonth, latest_10: sample },
+      tasks:      taskCount,
+      projects:   projCount,
+      messages:   msgCount,
+      spend_pace: getSpendPace(),
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 app.post(WEBHOOK_PATH, async (req, res) => {
   if (WEBHOOK_SECRET) {
     const provided = req.header("x-telegram-bot-api-secret-token") || "";
@@ -301,7 +343,7 @@ function startScheduler() {
   // Daily 8:00 Paris — briefing
   cron.schedule("0 8 * * *", async () => {
     try {
-      const reply = await runAgent("Dame el briefing del día. Llama list_calendar_events (days_ahead 1) para eventos de hoy y mañana — menciónalos primero con hora y ubicación si aplica. Luego: tareas pendientes, vencidas, urgentes esta semana, y resumen breve del gasto del mes hasta ahora.");
+      const reply = await runAgent("Dame el briefing del día. (1) Llama list_calendar_events (days_ahead 1) para eventos de hoy y mañana — menciónalos primero con hora y ubicación si aplica. (2) Tareas vencidas y urgentes esta semana. (3) Llama spend_pace y resume: gasto del mes hasta hoy, proyección fin de mes vs mes pasado, y top 3 categorías con su delta % vs el mismo periodo del mes anterior.");
       await broadcast(`📋 *Briefing del día*\n\n${reply}`);
     } catch (err) { console.error("[cron] daily briefing:", err.message); }
   }, { timezone: "Europe/Paris" });

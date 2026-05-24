@@ -17,6 +17,7 @@ import {
   spendByMerchant,
   monthlyTotals,
   getTransactionStats,
+  getSpendPace,
   getLlmStats,
 } from "./memory.js";
 import { fetchAndParseRecent, searchEmails, readEmailByUid } from "./email.js";
@@ -159,6 +160,9 @@ const TOOLS = [
   fn("transaction_stats", "Total de transacciones y rango de fechas (cobertura histórica)", {
     type: "object", properties: {},
   }),
+  fn("spend_pace", "Spending pace del mes actual: gasto hasta hoy, proyección fin de mes, comparación con mismo periodo del mes anterior, y top categorías con deltas. Úsalo en briefings.", {
+    type: "object", properties: {},
+  }),
   fn("scan_inbox_now", "Fuerza un scan inmediato del inbox para parsear transacciones nuevas", {
     type: "object",
     properties: {
@@ -268,6 +272,7 @@ async function executeTool(name, input) {
     case "spend_by_merchant":   return spendByMerchant(input);
     case "monthly_totals":      return monthlyTotals(input);
     case "transaction_stats":   return getTransactionStats();
+    case "spend_pace":          return getSpendPace();
     case "scan_inbox_now":      return await fetchAndParseRecent({ daysBack: input.days_back || 1 });
     case "search_emails":       return await searchEmails({ query: input.query, daysBack: input.days_back, limit: input.limit });
     case "read_email":          return await readEmailByUid(input.uid);
