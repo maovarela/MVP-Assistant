@@ -317,6 +317,20 @@ function startScheduler() {
     } catch (err) { console.error("[cron] follow-ups:", err.message); }
   }, { timezone: "Europe/Paris" });
 
+  // Sunday 10:00 Paris — Revolut CSV upload nudge.
+  // Revolut killed per-transaction email alerts, so the only way to ingest its
+  // transactions in-month is via manual CSV/PDF upload. This reminder lands
+  // before the 18:00 weekly review so the data is fresh when the review runs.
+  cron.schedule("0 10 * * 0", async () => {
+    try {
+      await broadcast(
+        "💳 *Revolut weekly upload*\n\n" +
+        "Sube el CSV de Revolut de esta semana para que el weekly review de las 18:00 tenga los gastos al día.\n\n" +
+        "App Revolut → avatar → Statements → cuenta → últimos 7 días → Excel/CSV → compartir al bot."
+      );
+    } catch (err) { console.error("[cron] revolut nudge:", err.message); }
+  }, { timezone: "Europe/Paris" });
+
   // Sunday 18:00 Paris — weekly review
   cron.schedule("0 18 * * 0", async () => {
     try {
@@ -325,7 +339,7 @@ function startScheduler() {
     } catch (err) { console.error("[cron] weekly review:", err.message); }
   }, { timezone: "Europe/Paris" });
 
-  console.log("[scheduler] started — hourly inbox scan + daily/weekly briefings");
+  console.log("[scheduler] started — hourly inbox scan + daily/weekly briefings + sunday revolut nudge");
 
   // Boot kick: scan inbox 30s after startup so each redeploy gives quick feedback
   setTimeout(async () => {
