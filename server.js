@@ -24,6 +24,7 @@ import {
   isAllowedSender,
   isWhatsAppConfigured,
 } from "./whatsapp.js";
+import { runProactiveScan } from "./proactive.js";
 
 // ─── Config ──────────────────────────────────────────────────────────────────
 
@@ -317,6 +318,18 @@ function startScheduler() {
     } catch (err) { console.error("[cron] follow-ups:", err.message); }
   }, { timezone: "Europe/Paris" });
 
+  // Proactive scan — every 2h between 08:00 and 22:00 Paris. The agent decides
+  // on its own whether to interrupt; we only broadcast if interrupt=true.
+  cron.schedule("0 8,10,12,14,16,18,20,22 * * *", async () => {
+    try {
+      const decision = await runProactiveScan();
+      console.log(`[cron] proactive scan — interrupt=${decision.interrupt} why=${decision.why}`);
+      if (decision.interrupt && decision.message) {
+        await broadcast(`🛎️ ${decision.message}`);
+      }
+    } catch (err) { console.error("[cron] proactive scan:", err.message); }
+  }, { timezone: "Europe/Paris" });
+
   // Sunday 10:00 Paris — Revolut CSV upload nudge.
   // Revolut killed per-transaction email alerts, so the only way to ingest its
   // transactions in-month is via manual CSV/PDF upload. This reminder lands
@@ -339,7 +352,7 @@ function startScheduler() {
     } catch (err) { console.error("[cron] weekly review:", err.message); }
   }, { timezone: "Europe/Paris" });
 
-  console.log("[scheduler] started — hourly inbox scan + daily/weekly briefings + sunday revolut nudge");
+  console.log("[scheduler] started — hourly inbox scan + daily/weekly briefings + sunday revolut nudge + 2h proactive scan");
 
   // Boot kick: scan inbox 30s after startup so each redeploy gives quick feedback
   setTimeout(async () => {
