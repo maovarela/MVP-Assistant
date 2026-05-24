@@ -17,7 +17,7 @@ import path from "path";
 import { runAgent } from "./agent.js";
 import { getTasksDueSoon } from "./memory.js";
 import { fetchAndParseRecent, backfillEmails } from "./email.js";
-import { importCsv, importPdf } from "./transactions.js";
+import { importCsv, importPdf, importNormalized } from "./transactions.js";
 import {
   sendWhatsApp,
   parseEvolutionWebhook,
@@ -248,6 +248,30 @@ app.get("/debug/stats", (_req, res) => {
       spend_pace: getSpendPace(),
     });
   } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// One-shot bulk import. Accepts the pre-normalized CSV produced by
+// scripts/import-local.mjs. Guarded by INTERNAL_IMPORT_KEY env var — we don't
+// want random callers stuffing rows into the spending DB.
+//
+// Usage:
+//   curl -sf https://<host>/import/normalized?key=$KEY \
+//     -H "content-type: text/csv" \
+//     --data-binary @scripts/normalized-transactions.csv
+app.post("/import/normalized", express.text({ type: "*/*", limit: "20mb" }), async (req, res) => {
+  const expected = process.env.INTERNAL_IMPORT_KEY;
+  if (!expected) return res.status(503).json({ error: "INTERNAL_IMPORT_KEY not set on server" });
+  if (req.query.key !== expected) return res.status(403).json({ error: "invalid key" });
+  try {
+    const tmpPath = path.join(os.tmpdir(), `normalized-${Date.now()}.csv`);
+    fs.writeFileSync(tmpPath, req.body || "");
+    const stats = importNormalized(tmpPath);
+    fs.unlinkSync(tmpPath);
+    res.json({ ok: true, ...stats });
+  } catch (err) {
+    console.error("[import/normalized]", err);
     res.status(500).json({ error: err.message });
   }
 });

@@ -6,3 +6,12 @@ node_modules/
 *.sqlite3
 .DS_Store
 npm-debug.log*
+
+# Personal financial data produced by scripts/import-local.mjs
+scripts/normalized-*.csv
+
+# Obsidian workspace state (committed accidentally once — keep out of repo)
+.obsidian/
+
+# Stale WhatsApp QR captured during the parked Evolution API setup
+qr.png

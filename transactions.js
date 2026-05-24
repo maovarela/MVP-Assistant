@@ -13,6 +13,7 @@ import {
   markEmailProcessed,
 } from "./memory.js";
 import { callLLMText, callLLM, getProviders } from "./llm.js";
+import { detectBankFormat, parseAmexCsv, parseRevolutCsv, categorize as keywordCategorize } from "./bankCsv.js";
 
 // ─── Categories — single source of truth ─────────────────────────────────────
 const CATEGORIES = [
@@ -111,6 +112,32 @@ ${(body || "").slice(0, 8000)}`;
 export async function importCsv(filePath) {
   const content = fs.readFileSync(filePath, "utf8");
 
+  // Try a deterministic per-bank parser first (no LLM cost, no sign bugs).
+  // Falls back to the generic LLM-batch path if format is unknown.
+  const fmt = detectBankFormat(content);
+  if (fmt) {
+    console.log(`[csv] detected format=${fmt} for ${filePath}`);
+    const parsed = fmt === "amex" ? parseAmexCsv(content) : parseRevolutCsv(content);
+    let inserted = 0, skipped = 0;
+    for (const tx of parsed) {
+      const extId = tx.external_id || hashTx(tx);
+      const id = insertTransaction({
+        external_id: `${fmt}:${extId}`,
+        source:      "csv",
+        date:        tx.date,
+        merchant:    tx.merchant,
+        amount:      tx.amount,
+        currency:    tx.currency || "EUR",
+        category:    tx.category || keywordCategorize(tx.description || tx.merchant),
+        description: tx.description,
+        raw:         null,
+      });
+      if (id) inserted++; else skipped++;
+    }
+    return { inserted, skipped, errors: 0, total: parsed.length };
+  }
+
+  // Generic fallback — LLM batch parser
   let rows;
   try {
     rows = parseCsv(content, {
@@ -202,6 +229,43 @@ async function parseCsvBatch(batch) {
     temperature: 0.2,
   });
   return JSON.parse(extractJson(text));
+}
+
+/**
+ * Bulk-import a pre-normalized CSV produced by scripts/import-local.mjs.
+ * Schema: date,merchant,amount,currency,category,description,external_id,source_file
+ * No LLM call — rows already have correct shape + signs. Just inserts with dedup.
+ */
+export function importNormalized(filePath) {
+  const content = fs.readFileSync(filePath, "utf8");
+  const rows = parseCsv(content, {
+    columns: true, skip_empty_lines: true, bom: true, relax_quotes: true, relax_column_count: true, trim: true,
+  });
+
+  let inserted = 0, skipped = 0, errors = 0;
+  for (const r of rows) {
+    try {
+      const amount = parseFloat(r.amount);
+      if (!r.date || !Number.isFinite(amount)) { skipped++; continue; }
+      const extId = r.external_id || hashTx({ date: r.date, merchant: r.merchant, amount });
+      const id = insertTransaction({
+        external_id: extId.startsWith("amex:") || extId.startsWith("revolut:") ? extId : `csv:${extId}`,
+        source:      "csv",
+        date:        r.date,
+        merchant:    r.merchant || null,
+        amount,
+        currency:    r.currency || "EUR",
+        category:    r.category || keywordCategorize(r.description || r.merchant),
+        description: r.description || null,
+        raw:         null,
+      });
+      if (id) inserted++; else skipped++;
+    } catch (err) {
+      console.error("[normalized import] row error:", err.message);
+      errors++;
+    }
+  }
+  return { inserted, skipped, errors, total: rows.length };
 }
 
 // ─── PDF import (uses Claude vision via document input) ──────────────────────
