@@ -28,6 +28,7 @@ import { callLLM } from "./llm.js";
 import { searchNotion, readNotionPage, queryNotionDatabase } from "./notion.js";
 import { listEvents, searchEvents } from "./calendar.js";
 import { sendEmail } from "./mailer.js";
+import { runAdvisorReview } from "./advisor.js";
 
 // ─── System Prompt ────────────────────────────────────────────────────────────
 
@@ -73,6 +74,7 @@ PLANIFICACIÓN FINANCIERA (Cuentas MVP):
 - "tengo una inversion de 500 este mes" → add_variable_expense(label:"Inversion", amount_eur:500, category:"transfers").
 - "mi prestamo en Colombia son 9 millones COP" → set_debt(label:"Préstamo COP", amount_src:9000000, currency:"COP", kind:"loan"). Requiere FX seteado primero.
 - "cómo voy este mes" o "resumen del presupuesto" → get_budget_summary.
+- "dame consejos" / "analiza mis finanzas" / "qué opinas de mi mes" / "revisión financiera" → financial_advisor_review (análisis CFO con tendencias y recomendaciones, devuelve markdown ya formateado — pásaselo al usuario tal cual).
 - Siempre confirma con UNA línea: "✓ Arriendo: €1600 (housing) para 2026-05". No expandas.
 
 DECISIÓN DE TOOLS:
@@ -236,6 +238,13 @@ const TOOLS = [
       period: { type: "string", description: "YYYY-MM. Default: mes actual." },
     },
   }),
+  fn("financial_advisor_review", "Análisis CFO del mes: resumen ejecutivo + alertas + patrones + 3 recomendaciones accionables. Pasa por LLM con prompt de asesor financiero personal. Úsalo cuando el usuario pida 'dame consejos', 'analiza mis finanzas', 'qué opinas de mi mes', 'revisión financiera'. NO lo uses para queries simples como 'cuánto gasté' — para eso usa get_budget_summary o spend_pace.", {
+    type: "object",
+    properties: {
+      period:           { type: "string", description: "YYYY-MM. Default: mes actual." },
+      lookback_months:  { type: "number", description: "Cuántos meses pasados para detectar tendencias. Default 6." },
+    },
+  }),
   fn("scan_inbox_now", "Fuerza un scan inmediato del inbox para parsear transacciones nuevas", {
     type: "object",
     properties: {
@@ -353,6 +362,8 @@ async function executeTool(name, input) {
     case "add_variable_expense":return insertVariableExpense(input);
     case "set_debt":            return upsertDebt(input);
     case "get_budget_summary":  return getDashboardSummary(input.period);
+    case "financial_advisor_review":
+      return await runAdvisorReview({ period: input.period, lookbackMonths: input.lookback_months });
     case "scan_inbox_now":      return await fetchAndParseRecent({ daysBack: input.days_back || 1 });
     case "search_emails":       return await searchEmails({ query: input.query, daysBack: input.days_back, limit: input.limit });
     case "read_email":          return await readEmailByUid(input.uid);

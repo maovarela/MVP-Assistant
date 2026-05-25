@@ -14,7 +14,7 @@ import {
   markEmailProcessed,
 } from "./memory.js";
 import { callLLMText, callLLM, getProviders } from "./llm.js";
-import { detectBankFormat, parseAmexCsv, parseRevolutCsv, categorize as keywordCategorize } from "./bankCsv.js";
+import { detectBankFormat, parseAmexCsv, parseRevolutCsv, parseBnpPdfText, categorize as keywordCategorize } from "./bankCsv.js";
 
 // ─── Categories — single source of truth ─────────────────────────────────────
 const CATEGORIES = [
@@ -327,7 +327,32 @@ export async function importPdf(filePath) {
     console.error("[pdf] extracted text too short — probably a scanned PDF");
     return { inserted: 0, skipped: 0, errors: 1, total: 0 };
   }
-  console.log(`[pdf] extracted ${text.length} chars from ${filePath.split(/[\\/]/).pop()}`);
+  const filename = filePath.split(/[\\/]/).pop();
+  console.log(`[pdf] extracted ${text.length} chars from ${filename}`);
+
+  // Fast path: deterministic BNP parser — zero LLM cost. Returns null if the
+  // text doesn't look like a BNP statement, in which case we fall through to
+  // the generic LLM path (Amex monthly PDFs, other banks).
+  const bnpTxs = parseBnpPdfText(text);
+  if (bnpTxs && bnpTxs.length > 0) {
+    console.log(`[pdf] BNP fast-path: ${bnpTxs.length} transactions (no LLM)`);
+    let inserted = 0, skipped = 0;
+    for (const tx of bnpTxs) {
+      const id = insertTransaction({
+        external_id: `bnp:${hashTx(tx)}`,
+        source:      "pdf",
+        date:        tx.date,
+        merchant:    tx.merchant,
+        amount:      tx.amount,
+        currency:    tx.currency,
+        category:    keywordCategorize(tx.description || tx.merchant),
+        description: tx.description,
+        raw:         null,
+      });
+      if (id) inserted++; else skipped++;
+    }
+    return { inserted, skipped, errors: 0, total: bnpTxs.length };
+  }
 
   const resp = await callLLM({
     messages: [

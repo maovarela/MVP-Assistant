@@ -13,6 +13,9 @@ scripts/normalized-*.csv
 # Budget seed with real numbers (committed template is budget-seed.example.json)
 scripts/budget-seed.json
 
+# Hash cache for sync-bank-folders.mjs (per-machine state)
+scripts/.processed.json
+
 # Obsidian workspace state (committed accidentally once — keep out of repo)
 .obsidian/
 

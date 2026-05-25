@@ -33,6 +33,7 @@ import db, {
 } from "./memory.js";
 import { refreshCurrentMonthFx } from "./fx.js";
 import { renderDashboard } from "./dashboard.js";
+import { runWeeklyAdvisorBriefing } from "./advisor.js";
 
 // ─── Config ──────────────────────────────────────────────────────────────────
 
@@ -512,7 +513,16 @@ function startScheduler() {
     } catch (err) { console.error("[cron] weekly review:", err.message); }
   }, { timezone: "Europe/Paris" });
 
-  console.log("[scheduler] started — hourly inbox scan + daily/weekly briefings + sunday revolut nudge + 2h proactive scan");
+  // Sunday 19:00 Paris — CFO weekly briefing (after the weekly review at 18:00).
+  // Single LLM call via advisor.js, deterministic snapshot + structured advice.
+  cron.schedule("0 19 * * 0", async () => {
+    try {
+      const text = await runWeeklyAdvisorBriefing();
+      await broadcast(text);
+    } catch (err) { console.error("[cron] cfo weekly:", err.message); }
+  }, { timezone: "Europe/Paris" });
+
+  console.log("[scheduler] started — hourly inbox scan + daily/weekly briefings + sunday revolut nudge + 2h proactive scan + monthly FX + sunday 19:00 CFO");
 
   // Boot kick: scan inbox 30s after startup so each redeploy gives quick feedback
   setTimeout(async () => {
