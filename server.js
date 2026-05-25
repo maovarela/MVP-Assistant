@@ -31,6 +31,7 @@ import db, {
   upsertIncome, upsertFixedExpense, insertVariableExpense, upsertDebt,
   getDashboardSummary, listBudgetPeriods,
 } from "./memory.js";
+import { categorize as keywordCategorize } from "./bankCsv.js";
 import { refreshCurrentMonthFx } from "./fx.js";
 import { renderDashboard } from "./dashboard.js";
 import { runWeeklyAdvisorBriefing } from "./advisor.js";
@@ -255,6 +256,52 @@ app.get("/debug/stats", (_req, res) => {
       messages:   msgCount,
       spend_pace: getSpendPace(),
     });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Inspection: list the transactions in a given category for a period, sorted
+// by amount. Use it to figure out what's polluting 'other' so we can add
+// keyword rules.
+app.get("/debug/category-detail", (req, res) => {
+  if (!requireKey(req, res, "DASH_KEY")) return;
+  const category = (req.query.category || "other").toString();
+  const period   = (req.query.period   || "").toString().match(/^\d{4}-\d{2}$/) ? req.query.period : null;
+  try {
+    const rows = period
+      ? db.prepare(`SELECT date, merchant, amount, currency, source FROM transactions WHERE category = ? AND strftime('%Y-%m', date) = ? ORDER BY ABS(amount) DESC LIMIT 200`).all(category, period)
+      : db.prepare(`SELECT date, merchant, amount, currency, source FROM transactions WHERE category = ? ORDER BY ABS(amount) DESC LIMIT 200`).all(category);
+    const total = rows.reduce((s, r) => s + Math.abs(r.amount), 0);
+    res.json({ category, period, count: rows.length, total: Math.round(total * 100) / 100, rows });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Re-apply the current keyword categorizer to every transaction in a period
+// (or all-time if period omitted). Only rows whose new category differs from
+// the stored one are updated. No LLM cost — pure SQL + regex.
+app.post("/api/recategorize", (req, res) => {
+  if (!requireKey(req, res, "DASH_KEY")) return;
+  const period = (req.query.period || "").toString().match(/^\d{4}-\d{2}$/) ? req.query.period : null;
+  try {
+    const rows = period
+      ? db.prepare(`SELECT id, merchant, description, category FROM transactions WHERE strftime('%Y-%m', date) = ?`).all(period)
+      : db.prepare(`SELECT id, merchant, description, category FROM transactions`).all();
+    const upd = db.prepare(`UPDATE transactions SET category = ? WHERE id = ?`);
+    let changed = 0;
+    const changes = {};
+    for (const r of rows) {
+      const newCat = keywordCategorize(r.description || r.merchant || "");
+      if (newCat !== r.category) {
+        upd.run(newCat, r.id);
+        changed++;
+        const key = `${r.category || "(null)"} → ${newCat}`;
+        changes[key] = (changes[key] || 0) + 1;
+      }
+    }
+    res.json({ period: period || "all", scanned: rows.length, changed, changes });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
