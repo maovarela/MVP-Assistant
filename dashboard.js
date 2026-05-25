@@ -234,6 +234,25 @@ export function renderDashboard(period) {
   </div>
 </div>
 
+<!-- Match-keyword edit modal -->
+<div id="kwModal" class="hidden fixed inset-0 z-[100] bg-black/40 flex items-center justify-center p-4">
+  <div class="bg-surface-container-lowest w-full max-w-md rounded-2xl overflow-hidden">
+    <div class="px-5 py-4 border-b border-outline-variant/20">
+      <div class="font-headline font-bold text-lg">Match keyword</div>
+      <div class="text-xs text-outline mt-0.5" id="kwLabel">—</div>
+    </div>
+    <div class="p-5 space-y-3">
+      <p class="text-sm text-on-surface">Regex case-insensitive sobre merchant o descripción. Solo cuenta las transacciones que matchean. Vacío = comportamiento por defecto (split proporcional).</p>
+      <input id="kwInput" type="text" placeholder="ej. navigo|ratp|sncf" class="w-full px-3 py-2 bg-surface-container rounded-lg border border-outline-variant/30 focus:ring-2 focus:ring-primary focus:outline-none font-mono text-sm" />
+      <div class="text-[11px] text-outline">Aplicado a TODOS los periodos donde existe la línea con el mismo label.</div>
+    </div>
+    <div class="px-5 py-3 border-t border-outline-variant/20 flex justify-end gap-2">
+      <button id="kwCancel" class="px-4 py-2 rounded-lg text-sm font-medium text-on-surface hover:bg-surface-container">Cancelar</button>
+      <button id="kwSave"   class="px-4 py-2 rounded-lg text-sm font-semibold bg-primary text-on-primary hover:opacity-90">Guardar</button>
+    </div>
+  </div>
+</div>
+
 <!-- BOTTOM NAV -->
 <nav class="fixed bottom-0 left-0 right-0 z-50 bg-surface/90 backdrop-blur-xl px-6 py-2.5 border-t border-outline-variant/20">
   <div class="max-w-md mx-auto flex items-center justify-between">
@@ -360,6 +379,32 @@ export function renderDashboard(period) {
   window.openYearDrill = (cat) => openCategoryDrill(cat === "all" ? "income" : cat, document.getElementById("ytdYearLabel").textContent);
   document.getElementById("drillClose").onclick = () => document.getElementById("drillModal").classList.add("hidden");
   document.getElementById("drillModal").onclick = (e) => { if (e.target.id === "drillModal") e.currentTarget.classList.add("hidden"); };
+
+  // ─── Match-keyword editor ─────────────────────────────────────────────────
+  let kwEditingLabel = null;
+  function openKeywordEdit(label, currentKw) {
+    kwEditingLabel = label;
+    document.getElementById("kwLabel").textContent = label;
+    document.getElementById("kwInput").value = currentKw || "";
+    document.getElementById("kwModal").classList.remove("hidden");
+    setTimeout(() => document.getElementById("kwInput").focus(), 50);
+  }
+  window.openKeywordEdit = openKeywordEdit;
+  document.getElementById("kwCancel").onclick = () => document.getElementById("kwModal").classList.add("hidden");
+  document.getElementById("kwSave").onclick = async () => {
+    const kw = document.getElementById("kwInput").value.trim();
+    const r = await fetch("/api/match-keyword?key=" + encodeURIComponent(key), {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ label: kwEditingLabel, match_keyword: kw || null }),
+    });
+    if (r.ok) {
+      document.getElementById("kwModal").classList.add("hidden");
+      load(currentData.period);  // refresh dashboard
+    } else {
+      alert("Error guardando: " + r.status);
+    }
+  };
 
   function populatePeriodSelectors(periods, current) {
     const periodSet = new Set(periods);
@@ -522,6 +567,10 @@ export function renderDashboard(period) {
     if (!filtered.length) {
       tbl.innerHTML = \`<tr><td colspan="6" class="px-3 py-8 text-outline italic text-center">Sin gastos en \${activeFilter} para \${d.period}</td></tr>\`;
     } else {
+      // Build leftover rows (only for "fijos" or "todos" view — they don't apply to variables)
+      const showLeftovers = activeFilter !== "variables";
+      const leftoverRows = showLeftovers && d.leftovers ? d.leftovers.filter((l) => l.total > 0.5) : [];
+
       tbl.innerHTML = filtered.map((r) => {
         const typeBadge = r.type === "fijo"
           ? \`<span class="px-2 py-0.5 rounded text-[10px] font-bold uppercase tracking-wider bg-primary-container text-on-primary-container">Fijo</span>\`
@@ -531,15 +580,25 @@ export function renderDashboard(period) {
                        r.pct_used > 80  ? "bg-warn-container text-warn"   : "bg-primary-container text-on-primary-container";
         const real = r.type === "fijo" ? fmt(r.actual_eur) : "—";
         const pct  = r.type === "fijo" ? \`<span class="px-2 py-0.5 rounded-full text-[10px] font-semibold \${pctClr}">\${fmtPct(r.pct_used)}</span>\` : \`<span class="text-outline">—</span>\`;
+        const kwBadge = r.match_keyword ? \`<span title="\${r.match_keyword}" class="text-[9px] text-outline font-mono">/\${r.match_keyword.slice(0,18)}\${r.match_keyword.length > 18 ? "…" : ""}/</span>\` : "";
+        const editBtn = r.type === "fijo" ? \`<button class="ml-1.5 opacity-40 hover:opacity-100 transition-opacity" onclick="openKeywordEdit('\${r.label.replace(/'/g, "\\\\'")}', '\${(r.match_keyword || '').replace(/'/g, "\\\\'")}')" title="Editar match keyword"><span class="material-symbols-outlined" style="font-size:13px;">edit</span></button>\` : "";
         return \`<tr class="border-b border-outline-variant/15 last:border-0">
           <td class="px-3 py-2.5">\${typeBadge}</td>
-          <td class="px-3 py-2.5 text-on-surface font-medium">\${r.label}</td>
+          <td class="px-3 py-2.5 text-on-surface font-medium">\${r.label}\${editBtn}<div class="mt-0.5">\${kwBadge}</div></td>
           <td class="px-3 py-2.5"><span class="inline-flex items-center gap-1 text-outline"><span class="material-symbols-outlined" style="font-size: 14px">\${ICON[r.category] || ICON.other}</span>\${r.category || "—"}</span></td>
           <td class="px-3 py-2.5 text-right tabular-nums">\${fmt(r.budget_eur)}</td>
           <td class="px-3 py-2.5 text-right tabular-nums">\${real}</td>
           <td class="px-3 py-2.5 text-right">\${pct}</td>
         </tr>\`;
-      }).join("");
+      }).join("") + leftoverRows.map((l) => \`
+        <tr class="border-b border-outline-variant/15 last:border-0 bg-warn-container/30">
+          <td class="px-3 py-2.5"><span class="px-2 py-0.5 rounded text-[10px] font-bold uppercase tracking-wider bg-warn-container text-warn">Sin asignar</span></td>
+          <td class="px-3 py-2.5 text-on-surface italic">(otros \${l.category})</td>
+          <td class="px-3 py-2.5"><span class="inline-flex items-center gap-1 text-outline"><span class="material-symbols-outlined" style="font-size: 14px">\${ICON[l.category] || ICON.other}</span>\${l.category}</span></td>
+          <td class="px-3 py-2.5 text-right tabular-nums text-outline">—</td>
+          <td class="px-3 py-2.5 text-right tabular-nums">\${fmt(l.total)}</td>
+          <td class="px-3 py-2.5 text-right"><button class="text-[10px] text-primary font-semibold hover:underline" onclick="openCategoryDrill('\${l.category}', '\${d.period}')">ver</button></td>
+        </tr>\`).join("");
     }
 
     // Donut

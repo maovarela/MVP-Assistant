@@ -201,13 +201,14 @@ const TOOLS = [
     },
     required: ["label", "amount_eur"],
   }),
-  fn("set_fixed_expense", "Registra un gasto fijo planeado del mes (Arriendo, Internet, Gym...). UPSERT por (period, label). 'category' lo enlaza con las transacciones reales para calcular % consumido.", {
+  fn("set_fixed_expense", "Registra un gasto fijo planeado del mes (Arriendo, Internet, Gym...). UPSERT por (period, label). 'category' lo enlaza por categoría. 'match_keyword' (opcional regex) restringe la attribution solo a merchants que matcheen — útil cuando varias líneas comparten categoría (ej. Metro+Velib en transport, Gym+Therapy en health) para evitar que una línea absorba el gasto de la otra.", {
     type: "object",
     properties: {
-      period:     { type: "string", description: "YYYY-MM. Default: mes actual." },
-      label:      { type: "string", description: "Ej. 'Arriendo'" },
-      budget_eur: { type: "number" },
-      category:   { type: "string", description: `Categoría para matching con transacciones: ${CATEGORIES.join(", ")}` },
+      period:        { type: "string", description: "YYYY-MM. Default: mes actual." },
+      label:         { type: "string", description: "Ej. 'Arriendo'" },
+      budget_eur:    { type: "number" },
+      category:      { type: "string", description: `Categoría para matching con transacciones: ${CATEGORIES.join(", ")}` },
+      match_keyword: { type: "string", description: "Opcional. Regex case-insensitive sobre merchant/description. Ej. para Metro: 'navigo|ratp|sncf'. Para Gym: 'neoness|gym|fitness'." },
     },
     required: ["label", "budget_eur"],
   }),

@@ -31,6 +31,7 @@ import db, {
   upsertIncome, upsertFixedExpense, insertVariableExpense, upsertDebt,
   getDashboardSummary, listBudgetPeriods,
   getYearSummary, listYears, listCategoryTransactions,
+  setMatchKeyword,
 } from "./memory.js";
 import { categorize as keywordCategorize } from "./bankCsv.js";
 import { refreshCurrentMonthFx } from "./fx.js";
@@ -340,6 +341,25 @@ app.get("/api/year.json", (req, res) => {
     res.json({ ...getYearSummary(year), available_years: listYears() });
   } catch (err) {
     console.error("[year json]", err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Set or clear the match_keyword on a fixed_expense across all periods sharing
+// the same label. Called by the dashboard's keyword-edit modal.
+app.post("/api/match-keyword", express.json({ limit: "10kb" }), (req, res) => {
+  if (!requireKey(req, res, "DASH_KEY")) return;
+  try {
+    const { label, match_keyword, period } = req.body || {};
+    if (!label) return res.status(400).json({ error: "label required" });
+    if (match_keyword) {
+      try { new RegExp(match_keyword, "i"); }
+      catch (e) { return res.status(400).json({ error: "invalid regex: " + e.message }); }
+    }
+    const updated = setMatchKeyword({ label, match_keyword: match_keyword || null, period });
+    res.json({ ok: true, updated });
+  } catch (err) {
+    console.error("[match-keyword]", err);
     res.status(500).json({ error: err.message });
   }
 });
