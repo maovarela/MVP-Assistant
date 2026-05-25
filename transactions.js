@@ -273,17 +273,31 @@ export function importNormalized(filePath) {
 const PDF_PARSE_PROMPT = `You're reading a bank statement PDF. Extract every individual transaction
 in the document as a JSON array. Do not include opening/closing balances or summary lines.
 
+CRITICAL — skip rows that are INTERNAL TRANSFERS between the user's own accounts:
+- "PRELEVEMENT AMEX" / "AMERICAN EXPRESS" / "AMEX" debits → SKIP (Amex purchases are tracked separately on the Amex statement)
+- "VIREMENT REVOLUT" / "REVOLUT" / "REVOLUT BANK" transfers → SKIP (Revolut transactions are tracked separately)
+- "PRELEVEMENT MASTERCARD" / "VISA" credit-card-payment debits → SKIP
+- Any explicit "remboursement carte" / "card balance payment" → SKIP
+Including these would double-count spending because the underlying purchases are already in the DB.
+
+KEEP everything else:
+- Direct debits to utilities, rent, insurance, subscriptions (EDF, Orange, Free, Sogeprom...)
+- Card payments made directly from this account (BNP debit card transactions)
+- Salary credits, refunds, incoming transfers → positive amount
+- Cash withdrawals, fees
+- Transfers to investment accounts (PERCO, etc.) → keep, category=transfers
+
 Each transaction:
 {
   "date":         "YYYY-MM-DD",
   "merchant":     "clean merchant name",
-  "amount":       -12.34,                  // negative=outflow
+  "amount":       -12.34,                  // negative=outflow, positive=inflow
   "currency":     "EUR",
   "category":     "one of: ${CATEGORIES.join(", ")}",
   "description":  "optional brief note"
 }
 
-Return ONLY the JSON array.`;
+Return ONLY the JSON array. If after filtering nothing remains, return [].`;
 
 export async function importPdf(filePath) {
   const base64 = fs.readFileSync(filePath).toString("base64");

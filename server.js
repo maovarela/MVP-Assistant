@@ -329,6 +329,26 @@ function requireKey(req, res, envName) {
 //   curl -sf https://<host>/import/normalized?key=$KEY \
 //     -H "content-type: text/csv" \
 //     --data-binary @scripts/normalized-transactions.csv
+// Single-PDF upload — sends one bank statement through the same Gemini-based
+// parser as the Telegram document handler. Useful for bulk-loading historic
+// statements with a local script that iterates a folder.
+app.post("/import/pdf", express.raw({ type: "application/pdf", limit: "20mb" }), async (req, res) => {
+  if (!requireKey(req, res, "INTERNAL_IMPORT_KEY")) return;
+  let tmpPath;
+  try {
+    if (!req.body || !req.body.length) return res.status(400).json({ error: "empty body" });
+    tmpPath = path.join(os.tmpdir(), `pdfimport-${Date.now()}.pdf`);
+    fs.writeFileSync(tmpPath, req.body);
+    const stats = await importPdf(tmpPath);
+    res.json({ ok: true, ...stats });
+  } catch (err) {
+    console.error("[import/pdf]", err);
+    res.status(500).json({ error: err.message });
+  } finally {
+    if (tmpPath && fs.existsSync(tmpPath)) { try { fs.unlinkSync(tmpPath); } catch {} }
+  }
+});
+
 app.post("/import/normalized", express.text({ type: "*/*", limit: "20mb" }), async (req, res) => {
   if (!requireKey(req, res, "INTERNAL_IMPORT_KEY")) return;
   try {
