@@ -73,9 +73,26 @@ export function renderDashboard(period) {
     </div>
     <div class="font-headline font-bold text-base tracking-tight text-on-surface">Cuentas MVP</div>
   </div>
-  <div class="flex items-center gap-1.5">
-    <select id="yearSel"  class="bg-surface-container border-0 rounded-full text-sm font-medium text-on-surface px-3 py-1.5 focus:ring-2 focus:ring-primary"></select>
-    <select id="monthSel" class="bg-surface-container border-0 rounded-full text-sm font-medium text-on-surface px-3 py-1.5 focus:ring-2 focus:ring-primary"></select>
+
+  <!-- Period picker: single button that opens a popover with year tabs + month grid -->
+  <div class="relative">
+    <button id="periodBtn" class="flex items-center gap-2 bg-primary-container text-on-primary-container rounded-full pl-4 pr-3 py-2 text-sm font-semibold hover:opacity-90 transition-opacity">
+      <span id="periodBtnLabel">—</span>
+      <span class="material-symbols-outlined" style="font-size: 18px;">expand_more</span>
+    </button>
+
+    <div id="periodPopover" class="hidden absolute right-0 top-full mt-2 z-50 w-80 bg-surface-container-lowest border border-outline-variant/30 rounded-2xl shadow-2xl overflow-hidden">
+      <div class="px-4 py-3 border-b border-outline-variant/20 flex items-center justify-between">
+        <button id="periodPrev" class="w-8 h-8 rounded-full hover:bg-surface-container flex items-center justify-center">
+          <span class="material-symbols-outlined" style="font-size: 18px;">chevron_left</span>
+        </button>
+        <div id="periodYearLabel" class="font-headline font-bold text-lg tabular-nums">—</div>
+        <button id="periodNext" class="w-8 h-8 rounded-full hover:bg-surface-container flex items-center justify-center">
+          <span class="material-symbols-outlined" style="font-size: 18px;">chevron_right</span>
+        </button>
+      </div>
+      <div id="periodMonths" class="grid grid-cols-3 gap-1.5 p-3"></div>
+    </div>
   </div>
 </header>
 
@@ -235,39 +252,66 @@ export function renderDashboard(period) {
   }
 
   function populatePeriodSelectors(periods, current) {
-    const yearSel  = document.getElementById("yearSel");
-    const monthSel = document.getElementById("monthSel");
-
     const periodSet = new Set(periods);
-    const years = [...new Set(periods.map((p) => p.split("-")[0]))].sort().reverse();
+    const years = [...new Set(periods.map((p) => p.split("-")[0]))].sort();
     const [curY, curM] = current.split("-");
 
-    yearSel.innerHTML = years.map((y) =>
-      \`<option value="\${y}" \${y === curY ? "selected" : ""}>\${y}</option>\`
-    ).join("");
+    const btn        = document.getElementById("periodBtn");
+    const btnLabel   = document.getElementById("periodBtnLabel");
+    const popover    = document.getElementById("periodPopover");
+    const yearLabel  = document.getElementById("periodYearLabel");
+    const monthsEl   = document.getElementById("periodMonths");
+    const prevBtn    = document.getElementById("periodPrev");
+    const nextBtn    = document.getElementById("periodNext");
+
+    let viewedYear = curY;  // year currently shown inside the popover
+
+    btnLabel.textContent = MONTH_LONG[parseInt(curM, 10) - 1] + " " + curY;
 
     function paintMonths() {
-      const y = yearSel.value;
-      const months = periods.filter((p) => p.startsWith(y + "-")).map((p) => p.split("-")[1]).sort();
-      // Always show all 12 months; disable those without data
-      monthSel.innerHTML = Array.from({length:12}, (_, i) => {
+      yearLabel.textContent = viewedYear;
+      const yearIdx = years.indexOf(viewedYear);
+      prevBtn.disabled = yearIdx <= 0;
+      nextBtn.disabled = yearIdx >= years.length - 1;
+      prevBtn.classList.toggle("opacity-30", prevBtn.disabled);
+      nextBtn.classList.toggle("opacity-30", nextBtn.disabled);
+
+      monthsEl.innerHTML = Array.from({length: 12}, (_, i) => {
         const mm = String(i + 1).padStart(2, "0");
-        const enabled = periodSet.has(y + "-" + mm);
-        const selected = (y === curY && mm === curM) || (y !== curY && mm === months[months.length - 1]);
-        return \`<option value="\${mm}" \${enabled ? "" : "disabled"} \${selected ? "selected" : ""}>\${MONTH_NAMES[i]}\${enabled ? "" : " ·"}</option>\`;
+        const period = viewedYear + "-" + mm;
+        const enabled = periodSet.has(period);
+        const isCurrent = period === current;
+        const base = "h-12 rounded-xl text-sm font-semibold transition-colors flex items-center justify-center";
+        const cls = isCurrent
+          ? base + " bg-primary text-on-primary"
+          : enabled
+            ? base + " bg-surface-container hover:bg-primary-container hover:text-on-primary-container text-on-surface cursor-pointer"
+            : base + " text-outline/40 cursor-not-allowed";
+        return \`<button data-period="\${period}" \${enabled ? "" : "disabled"} class="\${cls}">\${MONTH_NAMES[i]}</button>\`;
       }).join("");
+      monthsEl.querySelectorAll("button[data-period]").forEach((b) => {
+        b.onclick = () => {
+          const p = b.dataset.period;
+          popover.classList.add("hidden");
+          history.replaceState(null, "", "?key=" + key + "&period=" + p);
+          load(p);
+        };
+      });
     }
     paintMonths();
 
-    yearSel.onchange = () => { paintMonths(); navigate(); };
-    monthSel.onchange = navigate;
+    prevBtn.onclick = () => { const i = years.indexOf(viewedYear); if (i > 0) { viewedYear = years[i - 1]; paintMonths(); } };
+    nextBtn.onclick = () => { const i = years.indexOf(viewedYear); if (i < years.length - 1) { viewedYear = years[i + 1]; paintMonths(); } };
 
-    function navigate() {
-      const p = yearSel.value + "-" + monthSel.value;
-      if (!periodSet.has(p)) return; // no data
-      history.replaceState(null, "", "?key=" + key + "&period=" + p);
-      load(p);
-    }
+    btn.onclick = (e) => {
+      e.stopPropagation();
+      popover.classList.toggle("hidden");
+      viewedYear = curY;
+      paintMonths();
+    };
+    document.addEventListener("click", (e) => {
+      if (!popover.contains(e.target) && e.target !== btn) popover.classList.add("hidden");
+    });
   }
 
   function render(d) {
