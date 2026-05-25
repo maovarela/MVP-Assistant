@@ -1,42 +1,73 @@
 # MVP-Assistant
 
-Personal PM + finance agent. Telegram bot powered by Claude Sonnet 4.5 with persistent SQLite memory and automated bank-statement ingestion.
+Personal PM + finance agent. Telegram bot backed by an OpenAI-compatible LLM (Gemini/Groq/DeepSeek fallback chain) with persistent SQLite memory and automated bank-statement ingestion.
 
 ## What it does
 
 - 📋 **Project & task tracking** — projects, tasks with priorities, due dates, status
-- 💰 **Spending intelligence** — auto-parses bank notification emails (Amex, Revolut, BNP) and lets you bulk-import historical CSV/PDF statements
+- 💰 **Spending intelligence** — auto-parses bank notification emails (Amex, Revolut, BNP) + bulk import of historical CSV/PDF statements with **per-bank deterministic parsers** (no LLM call, no sign bugs)
 - 🤖 **Conversational** — ask anything in Spanish/English, agent uses tools to query DB
-- 📅 **Daily briefings** — 8 AM Paris brief, 9 AM follow-ups, Sunday 6 PM weekly review
+- 📅 **Daily briefings** — 8 AM Paris brief (now includes calendar + spending pace), 9 AM follow-ups, Sunday 6 PM weekly review, Sunday 10 AM Revolut upload nudge
+- 🛎️ **Proactive watchman** — scans every 2h between 08:00 and 22:00 Paris; stays silent by default, only interrupts for anomalous charges, deadlines today, calendar conflicts, etc.
 - ⚡ **Webhook-based** — instant Telegram replies, no polling lag
 
-## Architecture
+## Architecture (3-agent split)
 
 ```
-Telegram  ──webhook──►  Express server  ──►  Claude Sonnet 4.5  ──►  SQLite
-                              │                        ▲
-                              ▼                        │
-                        Cron jobs                  Tool calls
-                        (hourly inbox scan,
-                         daily brief, weekly)
-                              │
-                              ▼
-                       Gmail IMAP ──► Claude parser ──► transactions table
+                    ┌──────────────────────────────────────┐
+                    │   SOURCES                            │
+                    │   Gmail · CSV/PDF · Notion           │
+                    │   Calendar (ICS) · Telegram          │
+                    └──────┬─────────────────┬─────────────┘
+                           │                 │
+              ┌────────────▼──────┐    ┌─────▼────────────────┐
+              │ ① INGESTOR        │    │ ③ PROACTIVE           │
+              │ cheap LLM         │    │ smart LLM, 2h cron    │
+              │ cron + uploads    │    │ snapshot → JSON       │
+              │ parse → categorise│    │ "interrupt? msg?"     │
+              └────────┬──────────┘    └──────┬────────────────┘
+                       │                      │ only if YES
+                       ▼                      ▼
+              ┌────────────────────────────────────────────────┐
+              │   SQLite (single source of truth)              │
+              │   /data/pm.db on Railway volume                │
+              └────────┬────────────────────────┬──────────────┘
+                       │                        │
+              ┌────────▼──────────┐             │
+              │ ② ANALYST         │             │
+              │ smart LLM         │             │
+              │ user msg + cron   │             │
+              │ tool-loop         │             │
+              └────────┬──────────┘             │
+                       │                        │
+                       ▼                        ▼
+              ┌────────────────────────────────────────────────┐
+              │ OUTBOUND (broadcast → Telegram + WhatsApp*)    │
+              └────────────────────────────────────────────────┘
 ```
+
+See `Notion → MVP-Assistant repo` page for full Mermaid diagrams.
 
 ## Project structure
 
 ```
 MVP-Assistant/
-├── server.js         # Express + webhook + scheduler (entry point)
-├── agent.js          # Claude tool-use loop (PM + finance tools)
-├── memory.js         # SQLite layer: messages, projects, tasks, transactions
-├── transactions.js   # Email/CSV/PDF parsing via Claude
-├── email.js          # IMAP reader (Gmail app password)
-├── google.js         # Calendar (legacy Gmail code unused — IMAP supersedes)
-├── notion.js         # Notion sync (Phase 3, optional)
-├── railway.json      # Railway deploy config
-├── Procfile          # web: node server.js
+├── server.js                # Express + webhooks + scheduler + /debug/stats + /import/normalized
+├── agent.js                 # ② Analyst — conversational tool-use loop
+├── proactive.js             # ③ Proactive watchman — 2h scans, strict-JSON output
+├── transactions.js          # ① Ingestor entrypoint — email/CSV/PDF
+├── bankCsv.js               # Deterministic Amex/Revolut CSV parsers (sign-correct, multi-section)
+├── memory.js                # SQLite layer: messages, projects, tasks, transactions, llm_calls
+├── email.js                 # IMAP reader (Gmail app password)
+├── calendar.js              # Read-only Google Calendar via ICS
+├── notion.js                # Notion read access
+├── mailer.js                # SMTP send (Gmail)
+├── whatsapp.js              # Evolution API wrapper (gated by ENABLE_WHATSAPP, default off)
+├── llm.js                   # OpenAI-compatible client w/ provider fallback chain + cooldown
+├── scripts/
+│   └── import-local.mjs     # One-shot local importer for historic Amex/Revolut CSVs
+├── railway.json
+├── Procfile                 # web: node server.js
 └── package.json
 ```
 
@@ -84,10 +115,28 @@ npm run dev           # starts server.js with file watch
    TELEGRAM_WEBHOOK_SECRET=any-long-random-string
    GMAIL_USER=mauricio.varela.ai@gmail.com
    GMAIL_APP_PASSWORD=...
+
+   # SQLite persistence — MUST point at the mounted Railway volume.
+   # Without this, every redeploy wipes the DB silently. See "Critical: persistence" below.
    DB_PATH=/data/pm.db
-   EMAIL_BACKFILL_DAYS=90
+
+   # Auth for POST /import/normalized (bulk-load historic CSV — set to any random string)
+   INTERNAL_IMPORT_KEY=...
+
+   # OPTIONAL — one-shot inbox backfill on first deploy. Unset after first successful run.
+   # EMAIL_BACKFILL_DAYS=90
    ```
 5. Deploy → check logs for `[webhook] registered at https://...`
+
+### Critical: persistence
+
+The bot's SQLite DB **must** live on a mounted Railway volume or every redeploy wipes everything (transactions, tasks, conversation history). Verify by curling:
+
+```
+curl https://<your-domain>/debug/stats
+# → "db_path": "/data/pm.db"   ← correct
+# → "db_path": "./data/pm.db"  ← BROKEN, ephemeral, fix immediately
+```
 
 ## Bank statement ingestion
 
@@ -116,6 +165,38 @@ For everything older than today, send the bot statements as **PDF or CSV attachm
 | **BNP** | mabanque.bnpparibas → Comptes → "Relevés de compte" (PDF). Or "Mes opérations → Télécharger" → CSV/Excel. |
 
 **Bulk:** download every month you want, send each file to the bot. ~30 sec each. Dedup is automatic — safe to re-send.
+
+### One-shot historical bulk import (faster than file-by-file)
+
+For years of statements, the per-message Telegram flow is slow. Use the local importer:
+
+```bash
+node scripts/import-local.mjs \
+  "/path/to/Amex/" \
+  "/path/to/Revolut/"
+```
+
+Prints a JSON summary (total / by month / by category / top merchants) and writes `scripts/normalized-transactions.csv` (gitignored — financial data).
+
+Bulk-load all rows into the bot DB in one HTTP call:
+
+```bash
+curl -sf "https://<your-domain>/import/normalized?key=$INTERNAL_IMPORT_KEY" \
+  -H "content-type: text/csv" \
+  --data-binary @scripts/normalized-transactions.csv
+# → { "ok": true, "inserted": N, "skipped": M, "errors": 0, "total": N+M }
+```
+
+Dedup is keyed by Amex transaction reference / Revolut row hash, so re-running is safe.
+
+### Why deterministic per-bank parsers (and not just LLM)
+
+[bankCsv.js](bankCsv.js) ships hand-written parsers for Amex FR + Revolut consolidated exports because two real bugs surfaced with LLM-only parsing:
+
+1. **Amex CSV signs are inverted** vs the bot's convention (positive = charge in Amex; negative = outflow in our DB). LLM batch parsing was silently storing every Amex spend as income, so spend queries returned zero.
+2. **Revolut consolidated statements** contain multiple per-currency transaction tables concatenated into one file with account-summary headers in between. `csv-parse` with `columns: true` chokes on the mixed layout.
+
+`importCsv` now auto-detects format and uses the deterministic parser when it matches; falls back to the LLM batch path for unknown banks.
 
 ## Bot commands & natural language
 
@@ -162,6 +243,28 @@ For everything older than today, send the bot statements as **PDF or CSV attachm
 - `tasks` — linked to projects, priority, status, due_date, owner
 - `transactions` — date, merchant, amount (signed), currency, category, source (email/csv/pdf/manual)
 - `processed_emails` — Gmail message IDs already parsed (dedup)
+
+## HTTP endpoints
+
+| Method | Path | Purpose |
+|---|---|---|
+| GET  | `/` | Liveness — `{ status }` |
+| GET  | `/healthz` | Railway healthcheck |
+| GET  | `/debug/stats` | Aggregates: tx count, by_source, by_sign, by_month, latest_10, spend_pace, `db_path`. Read-only, no PII. |
+| POST | `/webhook/telegram` | Telegram update webhook (HMAC-secret-validated) |
+| POST | `/webhook/whatsapp/<secret>` | Evolution API webhook (gated by `ENABLE_WHATSAPP`) |
+| POST | `/import/normalized?key=$KEY` | Bulk-load `text/csv` produced by `scripts/import-local.mjs`. Body limit 20 MB. |
+
+## Scheduled jobs (Europe/Paris)
+
+| Cron | What |
+|---|---|
+| `5 * * * *` | Hourly IMAP scan for bank transaction emails (ingestor) |
+| `0 8 * * *` | Daily briefing — calendar (1d ahead) + tasks + spending pace + top categories |
+| `0 9 * * *` | Follow-ups for tasks due in next 48h |
+| `0 10 * * 0` | Sunday Revolut CSV upload nudge (per-tx alerts not supported) |
+| `0 18 * * 0` | Sunday weekly review — calendar (7d ahead) + completions/blockers + week spend |
+| `0 8,10,12,14,16,18,20,22 * * *` | Proactive scan — silent by default, broadcasts only if `interrupt=true` |
 
 ## Operating notes
 

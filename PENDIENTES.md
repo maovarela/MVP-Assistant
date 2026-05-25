@@ -4,8 +4,34 @@
 
 - **Telegram**: funciona, canal principal del agente
 - **Email (Gmail dedicado)**: funciona — la cuenta fue deshabilitada 2026-05-12 y restaurada vía appeal 2026-05-18
-- **Notion, Calendar (ICS), tasks, projects, transacciones**: funcionando
+- **Notion, Calendar (ICS), tasks, projects**: funcionando
+- **Transacciones**: parsers deterministas para Amex FR + Revolut (`bankCsv.js`). El parser viejo basado solo en LLM tenía dos bugs grandes (ver "Aprendizajes 2026-05-24" abajo).
+- **3-agent split shipped 2026-05-24**: Ingestor (`transactions.js`/`email.js`) + Analyst (`agent.js`) + Proactive (`proactive.js`). Notion: organigram → `MVP-Assistant — Organigram` page.
+- **Proactive watchman**: corre cada 2h entre 08:00–22:00 Paris. Default silencio. Snapshot → JSON estricto → `broadcast()` solo si `interrupt=true`.
+- **Daily briefing**: ahora incluye calendario (1d ahead) + `spend_pace` (gasto MTD, proyección fin de mes, top 3 categorías con delta % vs mismo periodo mes anterior).
+- **Bulk import histórico**: `scripts/import-local.mjs` + endpoint `POST /import/normalized?key=$INTERNAL_IMPORT_KEY`. Soporta cargar años de CSV en un solo curl.
 - **WhatsApp**: **diferido** — código integrado pero apagado por flag (`ENABLE_WHATSAPP=false` default). Detalles abajo.
+
+## ⚠️ Aprendizajes 2026-05-24 (no repetir)
+
+### Railway volume / persistencia
+- El bot perdió **todos los datos uploadeados** porque el volumen no estaba montado en Railway. El código hace fallback silencioso a `./data/pm.db` (efímero) si `DB_PATH` no está seteado.
+- **Mitigación**: el endpoint `GET /debug/stats` devuelve `db_path` en la respuesta. Si dice `./data/pm.db`, está roto — fix inmediato: montar volume en `/data` + setear `DB_PATH=/data/pm.db`.
+- **TODO opcional**: añadir un guard al boot que abortee el proceso (o mande un broadcast crítico) si `DB_PATH` no apunta a un volumen montado. Evita perder horas de uploads otra vez.
+
+### Amex CSV sign convention
+- Amex FR exporta cargos como **positivos** y pagos de factura como **negativos** — al revés de lo que asume el bot (`amount < 0` = gasto).
+- Cuando se usaba solo el parser LLM, los cargos se almacenaban como ingresos. Las queries de gasto devolvían 0 aunque hubiera datos.
+- **Solución**: `bankCsv.js` parser determinista que flippea signo. `importCsv` ahora detecta formato Amex y usa esta ruta sin LLM.
+
+### Revolut consolidated statements multi-section
+- Un solo CSV "consolidated statement" de Revolut contiene 3+ tablas de transacciones (una por cuenta/moneda) concatenadas con headers de account-summary en medio.
+- `csv-parse` con `columns: true` no puede digerir el layout mixto — se rompe o devuelve fragmentos.
+- **Solución**: parser custom en `bankCsv.js` que escanea línea por línea, trackea la moneda activa por header `Personal Account (XXX)`, y parsea cada bloque como CSV independiente.
+
+### Revolut no tiene email-on-transaction
+- Lo mataron hace ~2 años. Solo push notification. Para tener gastos en-mes hay que subir CSV manual.
+- Mitigación: cron de domingo a las 10:00 Paris que pinge "sube el CSV de Revolut" antes del weekly review de las 18:00.
 
 ## WhatsApp — por qué quedó diferido
 
@@ -81,6 +107,18 @@ Para WhatsApp en Zentra (B2B SaaS de psicólogos con clientes pagando), **no usa
 - Multi-canal: `messages.channel` column, `runAgent(text, {channel})`, broadcast fanout en cron
 - `whatsapp.js` Evolution API wrapper + endpoint `/webhook/whatsapp/<secret>` + `/wa` alias en Telegram (apagado por flag)
 - Send body compatible v1 y v2 de Evolution (envía `text` y `textMessage.text` simultáneo)
+
+### Shipped 2026-05-24
+- Briefings ahora incluyen calendario (daily 1d, weekly 7d)
+- Cron domingo 10:00 Paris — nudge para subir CSV de Revolut
+- `proactive.js` watchman + cron cada 2h con strict-JSON output (`{interrupt, message, why}`)
+- `memory.getSpendPace()` + tool `spend_pace` en analyst
+- `GET /debug/stats` — visibilidad sin Telegram round-trips
+- `bankCsv.js` con parsers deterministas Amex FR + Revolut consolidated
+- `transactions.importCsv` detecta formato y usa parser determinista (sin LLM) cuando matchea
+- `transactions.importNormalized()` + endpoint `POST /import/normalized?key=...` para bulk-load histórico
+- `scripts/import-local.mjs` — importador local que normaliza CSVs y produce `normalized-transactions.csv` (gitignored)
+- `.gitignore` ahora cubre `scripts/normalized-*.csv`, `.obsidian/`, `qr.png`
 
 ## Notas de arquitectura
 
