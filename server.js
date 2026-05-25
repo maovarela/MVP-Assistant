@@ -25,7 +25,14 @@ import {
   isWhatsAppConfigured,
 } from "./whatsapp.js";
 import { runProactiveScan } from "./proactive.js";
-import db, { getTransactionStats, getSpendPace } from "./memory.js";
+import db, {
+  getTransactionStats, getSpendPace,
+  setFxRate, getFxRate,
+  upsertIncome, upsertFixedExpense, insertVariableExpense, upsertDebt,
+  getDashboardSummary, listBudgetPeriods,
+} from "./memory.js";
+import { refreshCurrentMonthFx } from "./fx.js";
+import { renderDashboard } from "./dashboard.js";
 
 // ─── Config ──────────────────────────────────────────────────────────────────
 
@@ -252,6 +259,68 @@ app.get("/debug/stats", (_req, res) => {
   }
 });
 
+// ─── Budget dashboard ───────────────────────────────────────────────────────
+// Replaces the manual "Cuentas MVP" Google Sheet. Single-user, key-gated.
+// HTML shell + Chart.js + JSON API, all served from the same Express app.
+
+app.get("/dashboard", (req, res) => {
+  if (!requireKey(req, res, "DASH_KEY")) return;
+  const period = (req.query.period || "").toString().match(/^\d{4}-\d{2}$/) ? req.query.period : null;
+  res.set("content-type", "text/html; charset=utf-8");
+  res.send(renderDashboard(period));
+});
+
+app.get("/api/dashboard.json", (req, res) => {
+  if (!requireKey(req, res, "DASH_KEY")) return;
+  try {
+    const period = (req.query.period || "").toString().match(/^\d{4}-\d{2}$/) ? req.query.period : undefined;
+    const summary = getDashboardSummary(period);
+    const periods = listBudgetPeriods();
+    res.json({ ...summary, available_periods: periods });
+  } catch (err) {
+    console.error("[dashboard json]", err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Single mutation endpoint — body picks which table.
+// kind: 'income' | 'fixed' | 'variable' | 'debt' | 'fx'
+app.post("/api/budget", express.json({ limit: "100kb" }), (req, res) => {
+  if (!requireKey(req, res, "DASH_KEY")) return;
+  try {
+    const { period, kind, payload } = req.body || {};
+    if (!kind || !payload) return res.status(400).json({ error: "kind + payload required" });
+    let row;
+    switch (kind) {
+      case "income":   row = upsertIncome({ period, ...payload });          break;
+      case "fixed":    row = upsertFixedExpense({ period, ...payload });    break;
+      case "variable": row = insertVariableExpense({ period, ...payload }); break;
+      case "debt":     row = upsertDebt({ period, ...payload });            break;
+      case "fx":       row = setFxRate(period, payload);                    break;
+      default: return res.status(400).json({ error: `unknown kind: ${kind}` });
+    }
+    res.json({ ok: true, row });
+  } catch (err) {
+    console.error("[budget mutate]", err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Shared key-gate for non-Telegram endpoints. Same pattern for /import/* and
+// /api/* and /dashboard — keeps the auth surface small and consistent.
+function requireKey(req, res, envName) {
+  const expected = process.env[envName];
+  if (!expected) {
+    res.status(503).json({ error: `${envName} not set on server` });
+    return false;
+  }
+  if (req.query.key !== expected) {
+    res.status(403).json({ error: "invalid key" });
+    return false;
+  }
+  return true;
+}
+
 // One-shot bulk import. Accepts the pre-normalized CSV produced by
 // scripts/import-local.mjs. Guarded by INTERNAL_IMPORT_KEY env var — we don't
 // want random callers stuffing rows into the spending DB.
@@ -261,9 +330,7 @@ app.get("/debug/stats", (_req, res) => {
 //     -H "content-type: text/csv" \
 //     --data-binary @scripts/normalized-transactions.csv
 app.post("/import/normalized", express.text({ type: "*/*", limit: "20mb" }), async (req, res) => {
-  const expected = process.env.INTERNAL_IMPORT_KEY;
-  if (!expected) return res.status(503).json({ error: "INTERNAL_IMPORT_KEY not set on server" });
-  if (req.query.key !== expected) return res.status(403).json({ error: "invalid key" });
+  if (!requireKey(req, res, "INTERNAL_IMPORT_KEY")) return;
   try {
     const tmpPath = path.join(os.tmpdir(), `normalized-${Date.now()}.csv`);
     fs.writeFileSync(tmpPath, req.body || "");
@@ -396,6 +463,13 @@ function startScheduler() {
     } catch (err) { console.error("[cron] proactive scan:", err.message); }
   }, { timezone: "Europe/Paris" });
 
+  // Monthly FX refresh — 1st of month, 06:00 Paris. Auto rates never overwrite
+  // manual ones (setFxRate skips when existing source='manual').
+  cron.schedule("0 6 1 * *", async () => {
+    try { await refreshCurrentMonthFx(setFxRate); }
+    catch (err) { console.error("[cron] fx refresh:", err.message); }
+  }, { timezone: "Europe/Paris" });
+
   // Sunday 10:00 Paris — Revolut CSV upload nudge.
   // Revolut killed per-transaction email alerts, so the only way to ingest its
   // transactions in-month is via manual CSV/PDF upload. This reminder lands
@@ -427,6 +501,16 @@ function startScheduler() {
       console.log("[boot] inbox scan", stats);
     } catch (err) { console.error("[boot] inbox scan failed:", err.message); }
   }, 30_000);
+
+  // Boot kick: if no FX rate exists for current month, fetch one. Idempotent on
+  // every redeploy because setFxRate respects manual entries.
+  setTimeout(async () => {
+    try {
+      if (!getFxRate(new Date().toISOString().slice(0, 7))) {
+        await refreshCurrentMonthFx(setFxRate);
+      }
+    } catch (err) { console.error("[boot] fx refresh failed:", err.message); }
+  }, 45_000);
 }
 
 // ─── Optional one-shot historical email backfill ─────────────────────────────

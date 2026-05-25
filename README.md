@@ -57,6 +57,8 @@ MVP-Assistant/
 ├── proactive.js             # ③ Proactive watchman — 2h scans, strict-JSON output
 ├── transactions.js          # ① Ingestor entrypoint — email/CSV/PDF
 ├── bankCsv.js               # Deterministic Amex/Revolut CSV parsers (sign-correct, multi-section)
+├── dashboard.js             # HTML shell for /dashboard (Chart.js via CDN, mobile-first)
+├── fx.js                    # Free FX rate fetch (exchangerate.host + open.er-api fallback)
 ├── memory.js                # SQLite layer: messages, projects, tasks, transactions, llm_calls
 ├── email.js                 # IMAP reader (Gmail app password)
 ├── calendar.js              # Read-only Google Calendar via ICS
@@ -65,7 +67,9 @@ MVP-Assistant/
 ├── whatsapp.js              # Evolution API wrapper (gated by ENABLE_WHATSAPP, default off)
 ├── llm.js                   # OpenAI-compatible client w/ provider fallback chain + cooldown
 ├── scripts/
-│   └── import-local.mjs     # One-shot local importer for historic Amex/Revolut CSVs
+│   ├── import-local.mjs     # One-shot local importer for historic Amex/Revolut CSVs
+│   ├── seed-budget.mjs      # One-shot seed for the budget dashboard (uses budget-seed.json)
+│   └── budget-seed.example.json # Template — copy to budget-seed.json (gitignored) and edit
 ├── railway.json
 ├── Procfile                 # web: node server.js
 └── package.json
@@ -122,6 +126,9 @@ npm run dev           # starts server.js with file watch
 
    # Auth for POST /import/normalized (bulk-load historic CSV — set to any random string)
    INTERNAL_IMPORT_KEY=...
+
+   # Auth for the budget dashboard at GET /dashboard and the /api/budget mutation endpoint
+   DASH_KEY=...
 
    # OPTIONAL — one-shot inbox backfill on first deploy. Unset after first successful run.
    # EMAIL_BACKFILL_DAYS=90
@@ -198,6 +205,33 @@ Dedup is keyed by Amex transaction reference / Revolut row hash, so re-running i
 
 `importCsv` now auto-detects format and uses the deterministic parser when it matches; falls back to the LLM batch path for unknown banks.
 
+## Budget dashboard (Cuentas MVP)
+
+Open `https://<your-host>/dashboard?key=$DASH_KEY` on your phone. Replaces the manual monthly Google Sheet.
+
+**Blocks:**
+- KPIs: Ingresos · Planeado (fijos+variables) · Gasto real (transacciones) · Residual + % gastado
+- Tabla de gastos fijos con budget vs actual + bar de % consumido + pill (verde/ámbar/rojo)
+- Lista de gastos variables planeados
+- Donut chart: gastos reales por categoría
+- Bar chart: budget vs real por categoría
+- Deuda: original + EUR, con total
+- FOREX: USD-COP, EUR-USD, tax FR
+
+**Cómo lo alimentas:**
+1. **Inicial (una vez):** copia `scripts/budget-seed.example.json` a `scripts/budget-seed.json`, edita con tus valores del mes, luego:
+   ```powershell
+   $env:DASH_KEY = "tu-key"
+   node scripts/seed-budget.mjs
+   ```
+2. **Día a día por Telegram:** habla con el bot.
+   - `"mi arriendo este mes son 1600€"` → `set_fixed_expense`
+   - `"el dolar está a 4100"` → `set_fx_rate`
+   - `"mi salario neto este mes fueron 3700"` → `set_income`
+   - `"añade gasto variable: medicina 70"` → `add_variable_expense`
+   - `"cómo voy este mes"` → `get_budget_summary` con totales + top categorías
+3. **FX automático:** un cron del 1 de cada mes a las 06:00 Paris pulla `exchangerate.host` y guarda el row. Tus entradas manuales (source='manual') nunca son sobrescritas.
+
 ## Bot commands & natural language
 
 ```
@@ -215,7 +249,9 @@ Dedup is keyed by Amex transaction reference / Revolut row hash, so re-running i
 
 **Tasks/projects:** `create_project`, `list_projects`, `create_task`, `update_task_status`, `list_tasks`, `get_daily_summary`
 
-**Finance:** `list_transactions`, `spend_by_category`, `spend_by_merchant`, `monthly_totals`, `transaction_stats`, `scan_inbox_now`
+**Finance:** `list_transactions`, `spend_by_category`, `spend_by_merchant`, `monthly_totals`, `transaction_stats`, `spend_pace`, `scan_inbox_now`
+
+**Budget planning:** `set_fx_rate`, `set_income`, `set_fixed_expense`, `add_variable_expense`, `set_debt`, `get_budget_summary`
 
 **Notion:** `search_notion`, `read_notion_page`, `query_notion_database`
 
@@ -251,14 +287,18 @@ Dedup is keyed by Amex transaction reference / Revolut row hash, so re-running i
 | GET  | `/` | Liveness — `{ status }` |
 | GET  | `/healthz` | Railway healthcheck |
 | GET  | `/debug/stats` | Aggregates: tx count, by_source, by_sign, by_month, latest_10, spend_pace, `db_path`. Read-only, no PII. |
+| GET  | `/dashboard?key=$DASH_KEY[&period=YYYY-MM]` | Budget dashboard HTML (replaces the "Cuentas MVP" Sheet). Mobile-friendly. |
+| GET  | `/api/dashboard.json?key=$DASH_KEY[&period=YYYY-MM]` | Dashboard JSON payload (incomes, fixed/variable expenses, debts, FX, totals, donut data). |
+| POST | `/api/budget?key=$DASH_KEY` | Mutate a budget row. JSON body `{period, kind: 'income'\|'fixed'\|'variable'\|'debt'\|'fx', payload}`. |
 | POST | `/webhook/telegram` | Telegram update webhook (HMAC-secret-validated) |
 | POST | `/webhook/whatsapp/<secret>` | Evolution API webhook (gated by `ENABLE_WHATSAPP`) |
-| POST | `/import/normalized?key=$KEY` | Bulk-load `text/csv` produced by `scripts/import-local.mjs`. Body limit 20 MB. |
+| POST | `/import/normalized?key=$INTERNAL_IMPORT_KEY` | Bulk-load `text/csv` produced by `scripts/import-local.mjs`. Body limit 20 MB. |
 
 ## Scheduled jobs (Europe/Paris)
 
 | Cron | What |
 |---|---|
+| `0 6 1 * *` | Monthly FX rate refresh (skips months whose row is `source='manual'`) |
 | `5 * * * *` | Hourly IMAP scan for bank transaction emails (ingestor) |
 | `0 8 * * *` | Daily briefing — calendar (1d ahead) + tasks + spending pace + top categories |
 | `0 9 * * *` | Follow-ups for tasks due in next 48h |

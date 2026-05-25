@@ -10,6 +10,9 @@ npm-debug.log*
 # Personal financial data produced by scripts/import-local.mjs
 scripts/normalized-*.csv
 
+# Budget seed with real numbers (committed template is budget-seed.example.json)
+scripts/budget-seed.json
+
 # Obsidian workspace state (committed accidentally once — keep out of repo)
 .obsidian/
 

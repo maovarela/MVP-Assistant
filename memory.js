@@ -97,6 +97,71 @@ db.exec(`
 
   CREATE INDEX IF NOT EXISTS idx_llm_calls_created  ON llm_calls(created_at);
   CREATE INDEX IF NOT EXISTS idx_llm_calls_provider ON llm_calls(provider);
+
+  -- ─── Budget tables ────────────────────────────────────────────────────────
+  -- All keyed by period (YYYY-MM string) so each month is an independent
+  -- snapshot — matches the user's monthly "Cuentas MVP" Sheet model.
+
+  CREATE TABLE IF NOT EXISTS incomes (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    period     TEXT NOT NULL,
+    label      TEXT NOT NULL,
+    amount_eur REAL NOT NULL,
+    amount_src REAL,
+    currency   TEXT NOT NULL DEFAULT 'EUR',
+    kind       TEXT NOT NULL DEFAULT 'other' CHECK(kind IN ('salary_bruto','salary_neto','other')),
+    notes      TEXT,
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    UNIQUE(period, label)
+  );
+
+  CREATE TABLE IF NOT EXISTS fixed_expenses (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    period     TEXT NOT NULL,
+    label      TEXT NOT NULL,
+    budget_eur REAL NOT NULL,
+    category   TEXT,
+    notes      TEXT,
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    UNIQUE(period, label)
+  );
+
+  CREATE TABLE IF NOT EXISTS variable_expenses (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    period     TEXT NOT NULL,
+    label      TEXT NOT NULL,
+    amount_eur REAL NOT NULL,
+    category   TEXT,
+    notes      TEXT,
+    created_at TEXT NOT NULL DEFAULT (datetime('now'))
+  );
+
+  CREATE TABLE IF NOT EXISTS debts (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    period     TEXT NOT NULL,
+    label      TEXT NOT NULL,
+    amount_src REAL NOT NULL,
+    currency   TEXT NOT NULL,
+    amount_eur REAL NOT NULL,
+    kind       TEXT CHECK(kind IN ('loan','card_balance','other')),
+    notes      TEXT,
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    UNIQUE(period, label)
+  );
+
+  CREATE TABLE IF NOT EXISTS fx_rates (
+    period     TEXT PRIMARY KEY,
+    usd_cop    REAL NOT NULL,
+    eur_usd    REAL NOT NULL,
+    tax_fr_pct REAL NOT NULL DEFAULT 0,
+    source     TEXT NOT NULL DEFAULT 'manual',
+    updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+  );
+
+  CREATE INDEX IF NOT EXISTS idx_incomes_period           ON incomes(period);
+  CREATE INDEX IF NOT EXISTS idx_fixed_expenses_period    ON fixed_expenses(period);
+  CREATE INDEX IF NOT EXISTS idx_variable_expenses_period ON variable_expenses(period);
+  CREATE INDEX IF NOT EXISTS idx_debts_period             ON debts(period);
 `);
 
 // Migration: add channel column for existing DBs that predate multi-channel
@@ -520,6 +585,227 @@ export function getTransactionStats() {
   const earliest = db.prepare(`SELECT MIN(date) AS d FROM transactions`).get().d;
   const latest = db.prepare(`SELECT MAX(date) AS d FROM transactions`).get().d;
   return { total, earliest, latest };
+}
+
+// ─── Budget layer ───────────────────────────────────────────────────────────
+// Mirrors the user's monthly "Cuentas MVP" Sheet:
+//   incomes + fixed_expenses + variable_expenses + debts + fx_rates per period
+// `period` is a 'YYYY-MM' string. Defaults to current month when omitted.
+
+function currentPeriod() {
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
+}
+
+/** Insert/replace FX rates for a period. Manual entries are never overwritten
+ *  by auto-fetched ones — this protects user-entered rates from the cron. */
+export function setFxRate(period, { usd_cop, eur_usd, tax_fr_pct = 0, source = "manual" }) {
+  const p = period || currentPeriod();
+  const existing = db.prepare(`SELECT source FROM fx_rates WHERE period = ?`).get(p);
+  if (existing && existing.source === "manual" && source !== "manual") return existing;
+  db.prepare(`
+    INSERT INTO fx_rates (period, usd_cop, eur_usd, tax_fr_pct, source, updated_at)
+    VALUES (?, ?, ?, ?, ?, datetime('now'))
+    ON CONFLICT(period) DO UPDATE SET
+      usd_cop = excluded.usd_cop, eur_usd = excluded.eur_usd,
+      tax_fr_pct = excluded.tax_fr_pct, source = excluded.source,
+      updated_at = datetime('now')
+  `).run(p, usd_cop, eur_usd, tax_fr_pct, source);
+  return getFxRate(p);
+}
+
+/** Get FX rates for a period. Falls back to the most recent row available. */
+export function getFxRate(period) {
+  const p = period || currentPeriod();
+  const exact = db.prepare(`SELECT * FROM fx_rates WHERE period = ?`).get(p);
+  if (exact) return exact;
+  return db.prepare(`SELECT * FROM fx_rates ORDER BY period DESC LIMIT 1`).get() || null;
+}
+
+export function upsertIncome({ period, label, amount_eur, amount_src, currency, kind, notes }) {
+  const p = period || currentPeriod();
+  db.prepare(`
+    INSERT INTO incomes (period, label, amount_eur, amount_src, currency, kind, notes)
+    VALUES (@period, @label, @amount_eur, @amount_src, @currency, @kind, @notes)
+    ON CONFLICT(period, label) DO UPDATE SET
+      amount_eur = excluded.amount_eur, amount_src = excluded.amount_src,
+      currency   = excluded.currency,   kind       = excluded.kind,
+      notes      = excluded.notes
+  `).run({
+    period: p, label, amount_eur,
+    amount_src: amount_src ?? null,
+    currency:   currency   || "EUR",
+    kind:       kind       || "other",
+    notes:      notes      ?? null,
+  });
+  return db.prepare(`SELECT * FROM incomes WHERE period = ? AND label = ?`).get(p, label);
+}
+
+export function upsertFixedExpense({ period, label, budget_eur, category, notes }) {
+  const p = period || currentPeriod();
+  db.prepare(`
+    INSERT INTO fixed_expenses (period, label, budget_eur, category, notes)
+    VALUES (@period, @label, @budget_eur, @category, @notes)
+    ON CONFLICT(period, label) DO UPDATE SET
+      budget_eur = excluded.budget_eur,
+      category   = excluded.category,
+      notes      = excluded.notes
+  `).run({
+    period: p, label, budget_eur,
+    category: category ?? null,
+    notes:    notes    ?? null,
+  });
+  return db.prepare(`SELECT * FROM fixed_expenses WHERE period = ? AND label = ?`).get(p, label);
+}
+
+/** Variable expenses are one-offs — no unique constraint, plain INSERT. */
+export function insertVariableExpense({ period, label, amount_eur, category, notes }) {
+  const p = period || currentPeriod();
+  const r = db.prepare(`
+    INSERT INTO variable_expenses (period, label, amount_eur, category, notes)
+    VALUES (?, ?, ?, ?, ?)
+  `).run(p, label, amount_eur, category ?? null, notes ?? null);
+  return db.prepare(`SELECT * FROM variable_expenses WHERE id = ?`).get(r.lastInsertRowid);
+}
+
+/** Insert a debt row. amount_eur is computed from current FX if missing.
+ *  Uses ON CONFLICT to replace prior snapshot for the same (period, label). */
+export function upsertDebt({ period, label, amount_src, currency, amount_eur, kind, notes }) {
+  const p = period || currentPeriod();
+  let eur = amount_eur;
+  if (eur == null) {
+    const fx = getFxRate(p);
+    if (!fx) throw new Error("Cannot compute debt amount_eur — no fx_rates row exists. Set FX first.");
+    if (currency === "EUR") eur = amount_src;
+    else if (currency === "USD") eur = amount_src / fx.eur_usd;
+    else if (currency === "COP") eur = (amount_src / fx.usd_cop) / fx.eur_usd;
+    else throw new Error(`Unsupported debt currency: ${currency}`);
+  }
+  db.prepare(`
+    INSERT INTO debts (period, label, amount_src, currency, amount_eur, kind, notes)
+    VALUES (@period, @label, @amount_src, @currency, @amount_eur, @kind, @notes)
+    ON CONFLICT(period, label) DO UPDATE SET
+      amount_src = excluded.amount_src, currency   = excluded.currency,
+      amount_eur = excluded.amount_eur, kind       = excluded.kind,
+      notes      = excluded.notes
+  `).run({
+    period: p, label, amount_src, currency,
+    amount_eur: Math.round(eur * 100) / 100,
+    kind:  kind  ?? null,
+    notes: notes ?? null,
+  });
+  return db.prepare(`SELECT * FROM debts WHERE period = ? AND label = ?`).get(p, label);
+}
+
+/** Raw rows for a period — used by the dashboard JSON endpoint. */
+export function listBudgetPeriod(period) {
+  const p = period || currentPeriod();
+  return {
+    period:   p,
+    fx:       getFxRate(p),
+    incomes:  db.prepare(`SELECT * FROM incomes           WHERE period = ? ORDER BY kind, label`).all(p),
+    fixed:    db.prepare(`SELECT * FROM fixed_expenses    WHERE period = ? ORDER BY budget_eur DESC`).all(p),
+    variable: db.prepare(`SELECT * FROM variable_expenses WHERE period = ? ORDER BY amount_eur DESC`).all(p),
+    debts:    db.prepare(`SELECT * FROM debts             WHERE period = ? ORDER BY amount_eur DESC`).all(p),
+  };
+}
+
+/** Join planned fixed_expenses against real transactions for the period.
+ *  Match key is `category` (one fixed-expense line ⇔ many transactions).
+ *  Returns one row per fixed-expense line with the spend so far + delta. */
+export function getActualSpendVsBudget(period) {
+  const p = period || currentPeriod();
+  const fixed = db.prepare(`SELECT * FROM fixed_expenses WHERE period = ?`).all(p);
+  const actuals = db.prepare(`
+    SELECT COALESCE(category, 'uncategorised') AS category,
+           ROUND(SUM(ABS(amount)), 2)          AS total
+    FROM transactions
+    WHERE amount < 0 AND strftime('%Y-%m', date) = ?
+    GROUP BY category
+  `).all(p);
+  const actualByCat = Object.fromEntries(actuals.map((r) => [r.category, r.total]));
+  return fixed.map((f) => {
+    const actual = f.category ? (actualByCat[f.category] || 0) : 0;
+    const delta  = Math.round((actual - f.budget_eur) * 100) / 100;
+    const pct    = f.budget_eur > 0 ? Math.round((actual / f.budget_eur) * 1000) / 10 : null;
+    return {
+      label:      f.label,
+      budget_eur: f.budget_eur,
+      category:   f.category,
+      actual_eur: actual,
+      delta_eur:  delta,
+      pct_used:   pct,
+    };
+  });
+}
+
+/** Full payload for the dashboard JSON endpoint. */
+export function getDashboardSummary(period) {
+  const p = period || currentPeriod();
+  const raw = listBudgetPeriod(p);
+  const fixedWithActual = getActualSpendVsBudget(p);
+
+  const incomeTotal   = raw.incomes.reduce((s, r) => s + (r.kind === "salary_neto" || r.kind === "other" ? r.amount_eur : 0), 0);
+  const fixedTotal    = raw.fixed.reduce((s, r) => s + r.budget_eur, 0);
+  const variableTotal = raw.variable.reduce((s, r) => s + r.amount_eur, 0);
+  // "Actual" = real outflows this period from the transactions table.
+  const actualRow = db.prepare(`
+    SELECT ROUND(SUM(ABS(amount)), 2) AS total
+    FROM transactions
+    WHERE amount < 0 AND strftime('%Y-%m', date) = ?
+  `).get(p);
+  const actualTotal = actualRow?.total || 0;
+  const residual    = Math.round((incomeTotal - fixedTotal - variableTotal) * 100) / 100;
+  const pctSpent    = incomeTotal > 0 ? Math.round(((fixedTotal + variableTotal) / incomeTotal) * 1000) / 10 : null;
+
+  const byCategoryActual = db.prepare(`
+    SELECT COALESCE(category, 'uncategorised') AS category,
+           ROUND(SUM(ABS(amount)), 2)          AS total
+    FROM transactions
+    WHERE amount < 0 AND strftime('%Y-%m', date) = ?
+    GROUP BY category ORDER BY total DESC
+  `).all(p);
+
+  const byCategoryBudget = db.prepare(`
+    SELECT COALESCE(category, 'uncategorised') AS category,
+           ROUND(SUM(budget_eur), 2)            AS total
+    FROM fixed_expenses WHERE period = ?
+    GROUP BY category ORDER BY total DESC
+  `).all(p);
+
+  return {
+    period: p,
+    fx:     raw.fx,
+    incomes:  raw.incomes,
+    fixed:    fixedWithActual,
+    variable: raw.variable,
+    debts:    raw.debts,
+    totals: {
+      income_eur:   Math.round(incomeTotal * 100) / 100,
+      fixed_eur:    Math.round(fixedTotal * 100) / 100,
+      variable_eur: Math.round(variableTotal * 100) / 100,
+      actual_eur:   actualTotal,
+      residual_eur: residual,
+      pct_spent:    pctSpent,
+      debt_total_eur: Math.round(raw.debts.reduce((s, r) => s + r.amount_eur, 0) * 100) / 100,
+    },
+    by_category_actual: byCategoryActual,
+    by_category_budget: byCategoryBudget,
+    spend_pace: getSpendPace(),
+  };
+}
+
+/** Distinct periods present across budget tables — for the period selector. */
+export function listBudgetPeriods() {
+  return db.prepare(`
+    SELECT period FROM (
+      SELECT period FROM incomes
+      UNION SELECT period FROM fixed_expenses
+      UNION SELECT period FROM variable_expenses
+      UNION SELECT period FROM debts
+      UNION SELECT period FROM fx_rates
+    ) GROUP BY period ORDER BY period DESC
+  `).all().map((r) => r.period);
 }
 
 export default db;

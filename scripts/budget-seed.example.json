@@ -1,0 +1,42 @@
+{
+  "_comment": "Copy this file to scripts/budget-seed.json (gitignored), edit values, then run: node scripts/seed-budget.mjs. Values below are from the Cuentas MVP Sheet screenshot for 2026-05 — adjust before running.",
+
+  "period": "2026-05",
+
+  "fx": {
+    "usd_cop":    4050,
+    "eur_usd":    1.17,
+    "tax_fr_pct": 34
+  },
+
+  "incomes": [
+    { "label": "Salary Bruto", "amount_eur": 5720,    "kind": "salary_bruto" },
+    { "label": "Salary Neto",  "amount_eur": 3700.35, "kind": "salary_neto"  }
+  ],
+
+  "fixed": [
+    { "label": "Arriendo",        "budget_eur": 1604, "category": "housing" },
+    { "label": "Comida",          "budget_eur": 400,  "category": "groceries" },
+    { "label": "Electricidad",    "budget_eur": 60,   "category": "housing" },
+    { "label": "Internet + Tel",  "budget_eur": 50,   "category": "housing" },
+    { "label": "Seguro",          "budget_eur": 18,   "category": "fees" },
+    { "label": "Metro",           "budget_eur": 60,   "category": "transport" },
+    { "label": "Velib",           "budget_eur": 0,    "category": "transport" },
+    { "label": "Therapy",         "budget_eur": 70,   "category": "health" },
+    { "label": "Gym",             "budget_eur": 50,   "category": "health" }
+  ],
+
+  "variable": [
+    { "label": "Comision Banco",         "amount_eur": 10,  "category": "fees" },
+    { "label": "Pago tarjeta Colombia",  "amount_eur": 0,   "category": "transfers" },
+    { "label": "Inversion PERCO",        "amount_eur": 507, "category": "transfers" },
+    { "label": "Pago Deuda",             "amount_eur": 600, "category": "transfers" },
+    { "label": "Cleopatra",              "amount_eur": 16,  "category": "other" },
+    { "label": "Uniqlo",                 "amount_eur": 70,  "category": "shopping" },
+    { "label": "Medicina",               "amount_eur": 70,  "category": "health" }
+  ],
+
+  "debts": [
+    { "label": "Prestamo COP",  "amount_src": 9104795, "currency": "COP", "kind": "loan" }
+  ]
+}

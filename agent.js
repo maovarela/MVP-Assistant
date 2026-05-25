@@ -19,6 +19,8 @@ import {
   getTransactionStats,
   getSpendPace,
   getLlmStats,
+  setFxRate, upsertIncome, upsertFixedExpense, insertVariableExpense, upsertDebt,
+  getDashboardSummary,
 } from "./memory.js";
 import { fetchAndParseRecent, searchEmails, readEmailByUid } from "./email.js";
 import { CATEGORIES } from "./transactions.js";
@@ -62,6 +64,16 @@ INTEGRACIONES EXTERNAS:
   - Si una búsqueda por keyword devuelve 0 resultados, search_emails ya hace fallback a "los emails recientes de la ventana" — revisa siempre el resultado completo (subject + snippet) antes de decir "no encontré". Una reserva con subject "Confirmation de réservation : Barcelone - RBP5XC" no matcheará "Barcelona" pero SÍ aparecerá en el fallback.
   - Antes de concluir que algo no existe, prueba al menos: query vacía (lista recientes), variantes de idioma (Barcelona/Barcelone/Barcelone), y sintaxis Gmail (from:varelaperezmauricio para emails que tú forwardeaste).
   - El parseo de transacciones bancarias corre solo en background — NO llames scan_inbox_now salvo que el usuario lo pida explícitamente.
+
+PLANIFICACIÓN FINANCIERA (Cuentas MVP):
+- El usuario lleva un presupuesto mensual replicando su sheet "Cuentas MVP". Tablas: ingresos, gastos_fijos, gastos_variables, deudas, FX rates — todas keyed por periodo YYYY-MM.
+- Si dice "mi arriendo este mes son 1600€" → set_fixed_expense(label:"Arriendo", budget_eur:1600, category:"housing").
+- "el dolar está a 4100" → set_fx_rate(usd_cop:4100, eur_usd: <usa el último valor conocido o pregúntale>).
+- "mi salario este mes fueron 3700 netos" → set_income(label:"Salary Neto", amount_eur:3700, kind:"salary_neto").
+- "tengo una inversion de 500 este mes" → add_variable_expense(label:"Inversion", amount_eur:500, category:"transfers").
+- "mi prestamo en Colombia son 9 millones COP" → set_debt(label:"Préstamo COP", amount_src:9000000, currency:"COP", kind:"loan"). Requiere FX seteado primero.
+- "cómo voy este mes" o "resumen del presupuesto" → get_budget_summary.
+- Siempre confirma con UNA línea: "✓ Arriendo: €1600 (housing) para 2026-05". No expandas.
 
 DECISIÓN DE TOOLS:
 - Si la pregunta es sobre fechas/eventos → calendar primero
@@ -162,6 +174,67 @@ const TOOLS = [
   }),
   fn("spend_pace", "Spending pace del mes actual: gasto hasta hoy, proyección fin de mes, comparación con mismo periodo del mes anterior, y top categorías con deltas. Úsalo en briefings.", {
     type: "object", properties: {},
+  }),
+
+  // ── Budget planning (dashboard / Cuentas MVP) ─────────────────────────────
+  fn("set_fx_rate", "Setea/actualiza tasas de cambio del mes (sobrescribe manual). usd_cop = pesos por 1 USD. eur_usd = USD por 1 EUR. tax_fr_pct opcional.", {
+    type: "object",
+    properties: {
+      period:     { type: "string", description: "YYYY-MM. Default: mes actual." },
+      usd_cop:    { type: "number" },
+      eur_usd:    { type: "number" },
+      tax_fr_pct: { type: "number" },
+    },
+    required: ["usd_cop", "eur_usd"],
+  }),
+  fn("set_income", "Registra un ingreso del mes (salario bruto/neto, note de frais, etc.). UPSERT por (period, label).", {
+    type: "object",
+    properties: {
+      period:     { type: "string", description: "YYYY-MM. Default: mes actual." },
+      label:      { type: "string", description: "Ej. 'Salary Neto', 'Note de frais'" },
+      amount_eur: { type: "number" },
+      amount_src: { type: "number", description: "Monto en moneda original si distinto a EUR" },
+      currency:   { type: "string", description: "Default EUR" },
+      kind:       { type: "string", enum: ["salary_bruto","salary_neto","other"], description: "Default: other" },
+    },
+    required: ["label", "amount_eur"],
+  }),
+  fn("set_fixed_expense", "Registra un gasto fijo planeado del mes (Arriendo, Internet, Gym...). UPSERT por (period, label). 'category' lo enlaza con las transacciones reales para calcular % consumido.", {
+    type: "object",
+    properties: {
+      period:     { type: "string", description: "YYYY-MM. Default: mes actual." },
+      label:      { type: "string", description: "Ej. 'Arriendo'" },
+      budget_eur: { type: "number" },
+      category:   { type: "string", description: `Categoría para matching con transacciones: ${CATEGORIES.join(", ")}` },
+    },
+    required: ["label", "budget_eur"],
+  }),
+  fn("add_variable_expense", "Añade un gasto variable planeado del mes (Inversion, Comision, etc.). Permite múltiples con mismo label — siempre INSERT, no UPSERT.", {
+    type: "object",
+    properties: {
+      period:     { type: "string" },
+      label:      { type: "string" },
+      amount_eur: { type: "number" },
+      category:   { type: "string" },
+    },
+    required: ["label", "amount_eur"],
+  }),
+  fn("set_debt", "Registra una deuda (préstamo COP, balance USD de tarjeta, etc.). UPSERT por (period, label). El monto en EUR se calcula automáticamente desde fx_rates — debe existir un row de FX antes.", {
+    type: "object",
+    properties: {
+      period:     { type: "string" },
+      label:      { type: "string", description: "Ej. 'Prestamo COP', 'Amex USD'" },
+      amount_src: { type: "number", description: "Monto en moneda original" },
+      currency:   { type: "string", enum: ["EUR","USD","COP"] },
+      kind:       { type: "string", enum: ["loan","card_balance","other"] },
+    },
+    required: ["label", "amount_src", "currency"],
+  }),
+  fn("get_budget_summary", "Resumen completo del mes (igual que el dashboard): ingresos, gastos fijos planeados vs real, gastos variables, deuda, FX, totales, residual, % gastado, top categorías. Úsalo para 'cómo voy este mes'.", {
+    type: "object",
+    properties: {
+      period: { type: "string", description: "YYYY-MM. Default: mes actual." },
+    },
   }),
   fn("scan_inbox_now", "Fuerza un scan inmediato del inbox para parsear transacciones nuevas", {
     type: "object",
@@ -273,6 +346,13 @@ async function executeTool(name, input) {
     case "monthly_totals":      return monthlyTotals(input);
     case "transaction_stats":   return getTransactionStats();
     case "spend_pace":          return getSpendPace();
+
+    case "set_fx_rate":         return setFxRate(input.period, input);
+    case "set_income":          return upsertIncome(input);
+    case "set_fixed_expense":   return upsertFixedExpense(input);
+    case "add_variable_expense":return insertVariableExpense(input);
+    case "set_debt":            return upsertDebt(input);
+    case "get_budget_summary":  return getDashboardSummary(input.period);
     case "scan_inbox_now":      return await fetchAndParseRecent({ daysBack: input.days_back || 1 });
     case "search_emails":       return await searchEmails({ query: input.query, daysBack: input.days_back, limit: input.limit });
     case "read_email":          return await readEmailByUid(input.uid);
