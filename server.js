@@ -31,7 +31,8 @@ import db, {
   upsertIncome, upsertFixedExpense, insertVariableExpense, upsertDebt,
   getDashboardSummary, listBudgetPeriods,
   getYearSummary, listYears, listCategoryTransactions,
-  setMatchKeyword,
+  setMatchKeyword, appendToMatchKeyword,
+  getAuditReport,
 } from "./memory.js";
 import { categorize as keywordCategorize } from "./bankCsv.js";
 import { refreshCurrentMonthFx } from "./fx.js";
@@ -347,11 +348,17 @@ app.get("/api/year.json", (req, res) => {
 
 // Set or clear the match_keyword on a fixed_expense across all periods sharing
 // the same label. Called by the dashboard's keyword-edit modal.
+// If mode === 'append', the merchant_snippet is regex-escaped and appended
+// (used by the audit modal "asignar [merchant] a [fijo]" flow).
 app.post("/api/match-keyword", express.json({ limit: "10kb" }), (req, res) => {
   if (!requireKey(req, res, "DASH_KEY")) return;
   try {
-    const { label, match_keyword, period } = req.body || {};
+    const { label, match_keyword, period, mode, merchant_snippet } = req.body || {};
     if (!label) return res.status(400).json({ error: "label required" });
+    if (mode === "append") {
+      const updated = appendToMatchKeyword({ label, merchant_snippet, period });
+      return res.json({ ok: true, updated });
+    }
     if (match_keyword) {
       try { new RegExp(match_keyword, "i"); }
       catch (e) { return res.status(400).json({ error: "invalid regex: " + e.message }); }
@@ -360,6 +367,19 @@ app.post("/api/match-keyword", express.json({ limit: "10kb" }), (req, res) => {
     res.json({ ok: true, updated });
   } catch (err) {
     console.error("[match-keyword]", err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Audit report for a period: orphan transactions, conflicts, and what each
+// fixed line claimed. Used by the dashboard audit modal.
+app.get("/api/audit.json", (req, res) => {
+  if (!requireKey(req, res, "DASH_KEY")) return;
+  try {
+    const period = (req.query.period || "").toString().match(/^\d{4}-\d{2}$/) ? req.query.period : undefined;
+    res.json(getAuditReport(period));
+  } catch (err) {
+    console.error("[audit]", err);
     res.status(500).json({ error: err.message });
   }
 });

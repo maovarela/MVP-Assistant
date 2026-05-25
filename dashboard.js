@@ -178,8 +178,13 @@ export function renderDashboard(period) {
 
   <!-- COMBINED GASTOS TABLE with filter chips -->
   <section class="space-y-3">
-    <div class="flex items-center justify-between px-1">
-      <h2 class="font-headline text-lg font-bold tracking-tight text-on-surface">Gastos</h2>
+    <div class="flex items-center justify-between px-1 flex-wrap gap-2">
+      <div class="flex items-center gap-3">
+        <h2 class="font-headline text-lg font-bold tracking-tight text-on-surface">Gastos</h2>
+        <button id="auditBtn" onclick="openAudit()" class="hidden text-xs font-semibold px-3 py-1 rounded-full bg-warn-container text-warn hover:opacity-90">
+          🔍 Auditar (<span id="auditCount">0</span>)
+        </button>
+      </div>
       <div class="flex items-center gap-2" id="filterChips">
         <!-- populated by JS -->
       </div>
@@ -231,6 +236,26 @@ export function renderDashboard(period) {
       </button>
     </div>
     <div id="drillBody" class="flex-1 overflow-y-auto"></div>
+  </div>
+</div>
+
+<!-- Audit modal -->
+<div id="auditModal" class="hidden fixed inset-0 z-[100] bg-black/40 flex items-end md:items-center justify-center p-0 md:p-4">
+  <div class="bg-surface-container-lowest w-full md:max-w-3xl md:rounded-2xl rounded-t-2xl max-h-[90vh] overflow-hidden flex flex-col">
+    <div class="px-5 py-4 border-b border-outline-variant/20">
+      <div class="flex items-center justify-between">
+        <div>
+          <div class="font-headline font-bold text-lg">Auditoría</div>
+          <div class="text-xs text-outline" id="auditSub">—</div>
+        </div>
+        <button id="auditClose" class="w-9 h-9 rounded-full hover:bg-surface-container flex items-center justify-center">
+          <span class="material-symbols-outlined">close</span>
+        </button>
+      </div>
+      <!-- Totals strip -->
+      <div class="grid grid-cols-3 gap-2 mt-3" id="auditTotals"></div>
+    </div>
+    <div class="flex-1 overflow-y-auto" id="auditBody"></div>
   </div>
 </div>
 
@@ -308,6 +333,23 @@ export function renderDashboard(period) {
     // Fire-and-forget the YTD load using the period's year
     const year = (period || currentData.period).slice(0, 4);
     loadYear(year);
+    // Fire-and-forget audit summary for the button badge
+    loadAuditBadge(currentData.period);
+  }
+
+  let auditData = null;
+  async function loadAuditBadge(period) {
+    const r = await fetch("/api/audit.json?key=" + encodeURIComponent(key) + "&period=" + period);
+    if (!r.ok) return;
+    auditData = await r.json();
+    const btn = document.getElementById("auditBtn");
+    const cnt = document.getElementById("auditCount");
+    if (auditData.totals.orphan_count > 0) {
+      btn.classList.remove("hidden");
+      cnt.textContent = auditData.totals.orphan_count + " · " + fmt(auditData.totals.total_orphan);
+    } else {
+      btn.classList.add("hidden");
+    }
   }
 
   async function loadYear(year) {
@@ -405,6 +447,94 @@ export function renderDashboard(period) {
       alert("Error guardando: " + r.status);
     }
   };
+
+  // ─── Audit modal ──────────────────────────────────────────────────────────
+  function openAudit() {
+    if (!auditData) return;
+    renderAudit(auditData);
+    document.getElementById("auditModal").classList.remove("hidden");
+  }
+  window.openAudit = openAudit;
+  document.getElementById("auditClose").onclick = () => document.getElementById("auditModal").classList.add("hidden");
+  document.getElementById("auditModal").onclick = (e) => { if (e.target.id === "auditModal") e.currentTarget.classList.add("hidden"); };
+
+  function renderAudit(a) {
+    document.getElementById("auditSub").textContent = "Periodo " + a.period + " · " + a.totals.orphan_pct + "% sin asignar de €" + a.totals.total_outflow;
+
+    document.getElementById("auditTotals").innerHTML = [
+      \`<div class="bg-surface-container rounded-lg p-2.5"><div class="text-[10px] uppercase tracking-wider text-outline">Total mes</div><div class="font-headline font-bold text-base tabular-nums mt-0.5">\${fmt(a.totals.total_outflow)}</div></div>\`,
+      \`<div class="bg-primary-container rounded-lg p-2.5"><div class="text-[10px] uppercase tracking-wider text-on-primary-container/80">Asignado</div><div class="font-headline font-bold text-base tabular-nums mt-0.5 text-on-primary-container">\${fmt(a.totals.total_claimed)}</div></div>\`,
+      \`<div class="bg-warn-container rounded-lg p-2.5"><div class="text-[10px] uppercase tracking-wider text-warn">Huérfano</div><div class="font-headline font-bold text-base tabular-nums mt-0.5 text-warn">\${fmt(a.totals.total_orphan)} · \${a.totals.orphan_pct}%</div></div>\`,
+    ].join("");
+
+    const fixedOpts = a.fixed_labels.map((f) => \`<option value="\${f.label}">\${f.label} · \${f.category || "—"}</option>\`).join("");
+
+    // Group orphans by category for visual clarity
+    const byCat = {};
+    for (const o of a.orphans) {
+      const c = o.category || "uncategorised";
+      byCat[c] = byCat[c] || [];
+      byCat[c].push(o);
+    }
+
+    const conflictsBlock = a.conflicts.length ? \`
+      <div class="px-5 py-3 bg-error-container/30 border-b border-outline-variant/20">
+        <div class="text-xs font-semibold text-error mb-1">\${a.conflicts.length} conflicto(s) — transacciones que matchean varios fijos</div>
+        \${a.conflicts.slice(0, 5).map((c) => \`<div class="text-xs text-on-surface">\${c.merchant} \${fmt(c.amount)} → asignado a <b>\${c.assigned_to}</b> (también matchea: \${c.matched_by.filter((m) => m !== c.assigned_to).join(", ")})</div>\`).join("")}
+      </div>\` : "";
+
+    const body = conflictsBlock + Object.entries(byCat).map(([cat, rows]) => {
+      const catTotal = rows.reduce((s, r) => s + r.amount, 0);
+      return \`<div class="border-b border-outline-variant/20">
+        <div class="sticky top-0 bg-surface-container px-5 py-2 flex items-center justify-between">
+          <div class="flex items-center gap-2">
+            <span class="material-symbols-outlined text-outline" style="font-size:16px">\${ICON[cat] || ICON.other}</span>
+            <span class="font-semibold text-on-surface">\${cat}</span>
+            <span class="text-xs text-outline">\${rows.length} tx</span>
+          </div>
+          <span class="font-headline font-bold tabular-nums text-warn">\${fmt(catTotal)}</span>
+        </div>
+        \${rows.map((o) => \`
+          <div class="px-5 py-2 flex items-center gap-2 hover:bg-surface-container-low">
+            <div class="flex-1 min-w-0">
+              <div class="text-sm truncate"><span class="text-outline tabular-nums mr-2">\${o.date.slice(5)}</span>\${o.merchant || "—"}</div>
+            </div>
+            <span class="font-mono tabular-nums text-sm">\${fmt(o.amount)}</span>
+            <select data-merchant="\${(o.merchant || "").replace(/"/g, "&quot;")}" class="auditAssign text-xs bg-surface-container border-0 rounded px-2 py-1 max-w-[150px]">
+              <option value="">Asignar a…</option>
+              \${fixedOpts}
+            </select>
+          </div>\`).join("")}
+      </div>\`;
+    }).join("");
+
+    document.getElementById("auditBody").innerHTML = body || "<div class='p-8 text-center text-outline'>Sin huérfanos 🎉</div>";
+
+    // Hook up assign dropdowns
+    document.querySelectorAll(".auditAssign").forEach((sel) => {
+      sel.onchange = async () => {
+        const label = sel.value;
+        const merchant = sel.dataset.merchant;
+        if (!label || !merchant) return;
+        // Take first 2 distinctive words of merchant (skip generic prefixes)
+        const skip = /^(prelevement|virement|vir\\b|paiement|payment|transfer|sepa|emi|recu|carte)/i;
+        const snippet = merchant.split(/\\s+/).filter((w) => w && !skip.test(w)).slice(0, 2).join(" ").trim() || merchant.slice(0, 15);
+        sel.disabled = true;
+        const r = await fetch("/api/match-keyword?key=" + encodeURIComponent(key), {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ label, mode: "append", merchant_snippet: snippet }),
+        });
+        if (r.ok) {
+          sel.parentElement.style.opacity = "0.4";
+          sel.parentElement.innerHTML = \`<div class="flex-1 text-xs text-primary">✓ Añadido "\${snippet}" → \${label}. Refresca para ver cambios.</div>\`;
+        } else {
+          alert("Error: " + r.status);
+          sel.disabled = false;
+        }
+      };
+    });
+  }
 
   function populatePeriodSelectors(periods, current) {
     const periodSet = new Set(periods);

@@ -681,6 +681,19 @@ export function setMatchKeyword({ label, match_keyword, period }) {
   return db.prepare(`SELECT period, label, match_keyword FROM fixed_expenses WHERE label = ?`).all(label);
 }
 
+/** Append a regex-escaped chunk of a merchant name to an existing match_keyword.
+ *  Used by the audit UI: user clicks "asignar [merchant] a [Arriendo]" → we
+ *  add a literal match for that merchant to Arriendo's keyword. */
+export function appendToMatchKeyword({ label, merchant_snippet, period }) {
+  if (!merchant_snippet || !merchant_snippet.trim()) throw new Error("merchant_snippet required");
+  // Escape regex specials so the snippet matches literally
+  const escaped = merchant_snippet.trim().replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const current = db.prepare(`SELECT match_keyword FROM fixed_expenses WHERE label = ? LIMIT 1`).get(label);
+  const cur = (current?.match_keyword || "").trim();
+  const next = cur ? `${cur}|${escaped}` : escaped;
+  return setMatchKeyword({ label, match_keyword: next, period });
+}
+
 /** Variable expenses are one-offs — no unique constraint, plain INSERT. */
 export function insertVariableExpense({ period, label, amount_eur, category, notes }) {
   const p = period || currentPeriod();
@@ -733,19 +746,22 @@ export function listBudgetPeriod(period) {
   };
 }
 
-/** Join planned fixed_expenses against real transactions for the period using
- *  a two-stage matching strategy:
+/** Attribute period transactions to fixed-expense budget lines.
  *
- *  1. If a fixed-expense line has `match_keyword` (regex), it claims any
- *     transaction in its category whose merchant or description matches that
- *     regex. First match wins when multiple keyword lines could match.
- *  2. Transactions in a category that aren't claimed by any keyword line are
- *     distributed proportionally across the line(s) without keywords in that
- *     category. If there are NO unkeyed lines, the leftover stays unattributed
- *     and surfaces as a separate "(sin matchear)" row per category.
+ *  Strategy (MECE-oriented):
  *
- *  Solves the "Metro at 199% €119 of €60 planned" surprise where Metro was
- *  the only non-zero budget in 'transport' and absorbed all Uber/Cabify/Vélib.
+ *  1. CROSS-CATEGORY keyword match. Every fixed line with `match_keyword`
+ *     (regex) sees ALL outflow transactions for the period, regardless of the
+ *     transaction's stored category. This lets "Arriendo" claim a
+ *     "VIR INSTANTANE VARELA" transfer that was tagged 'other', etc.
+ *     First match wins; if multiple keyword lines match the same transaction,
+ *     it's flagged in the audit but assigned to the first one.
+ *
+ *  2. PROPORTIONAL fallback for unmatched transactions WITHIN their stored
+ *     category. If the category has unkeyed budget lines, the transaction is
+ *     split across them by budget weight. If the category has only keyword
+ *     lines (none matched) or no budget lines at all, the transaction becomes
+ *     a leftover under its stored category.
  *
  *  Returns: { rows: [...], leftovers: [{category, total, count}, ...] }
  */
@@ -755,25 +771,24 @@ export function getActualSpendVsBudget(period) {
 
   // All outflow transactions for the period
   const txs = db.prepare(`
-    SELECT category, merchant, description, ABS(amount) AS amt
+    SELECT id, category, merchant, description, ABS(amount) AS amt
     FROM transactions
     WHERE amount < 0 AND strftime('%Y-%m', date) = ?
   `).all(p);
 
-  // Group budget lines by category, split into keyed / unkeyed
-  const byCat = {};
+  // Compile keyword regexes once; build cross-category list and per-category unkeyed groups
+  const keyedAll  = [];     // flat list of all keyword-bearing budget lines
+  const byCatUnkeyed = {};  // category → [unkeyed lines]
   for (const f of fixed) {
-    const cat = f.category || "__nocat__";
-    byCat[cat] = byCat[cat] || { keyed: [], unkeyed: [] };
     if (f.match_keyword) {
-      try { f._rx = new RegExp(f.match_keyword, "i"); byCat[cat].keyed.push(f); }
-      catch { byCat[cat].unkeyed.push(f); }   // malformed regex → treat as unkeyed
+      try { f._rx = new RegExp(f.match_keyword, "i"); keyedAll.push(f); }
+      catch { byCatUnkeyed[f.category || "__nocat__"] = (byCatUnkeyed[f.category || "__nocat__"] || []).concat(f); }
     } else {
-      byCat[cat].unkeyed.push(f);
+      const cat = f.category || "__nocat__";
+      byCatUnkeyed[cat] = (byCatUnkeyed[cat] || []).concat(f);
     }
   }
 
-  // Bucket transactions
   const actualById = new Map(fixed.map((f) => [f.id, 0]));
   const leftover   = {};   // category → { total, count }
 
@@ -785,13 +800,9 @@ export function getActualSpendVsBudget(period) {
   }
 
   for (const tx of txs) {
-    const cat   = tx.category || "uncategorised";
-    const group = byCat[cat];
-    if (!group) { addLeftover(cat, tx.amt); continue; }
-
-    // 1. Keyword match (first wins)
+    // 1. Cross-category keyword match (first wins)
     let matched = null;
-    for (const f of group.keyed) {
+    for (const f of keyedAll) {
       if (f._rx.test(tx.merchant || "") || f._rx.test(tx.description || "")) {
         matched = f; break;
       }
@@ -801,20 +812,21 @@ export function getActualSpendVsBudget(period) {
       continue;
     }
 
-    // 2. Distribute among unkeyed
-    if (group.unkeyed.length) {
-      const totalBudget = group.unkeyed.reduce((s, f) => s + (f.budget_eur || 0), 0);
+    // 2. Proportional fallback within the transaction's own category
+    const cat = tx.category || "uncategorised";
+    const unkeyed = byCatUnkeyed[cat];
+    if (unkeyed && unkeyed.length) {
+      const totalBudget = unkeyed.reduce((s, f) => s + (f.budget_eur || 0), 0);
       if (totalBudget > 0) {
-        for (const f of group.unkeyed) {
+        for (const f of unkeyed) {
           const share = tx.amt * (f.budget_eur / totalBudget);
           actualById.set(f.id, actualById.get(f.id) + share);
         }
       } else {
-        const share = tx.amt / group.unkeyed.length;
-        for (const f of group.unkeyed) actualById.set(f.id, actualById.get(f.id) + share);
+        const share = tx.amt / unkeyed.length;
+        for (const f of unkeyed) actualById.set(f.id, actualById.get(f.id) + share);
       }
     } else {
-      // All lines in this category have keywords but none matched → leftover
       addLeftover(cat, tx.amt);
     }
   }
@@ -897,6 +909,87 @@ export function getDashboardSummary(period) {
     by_category_actual: byCategoryActual,
     by_category_budget: byCategoryBudget,
     spend_pace: getSpendPace(),
+  };
+}
+
+/** Audit report for a period: which transactions are orphans (no fijo keyword
+ *  matches), which match multiple keywords (conflicts), how much per
+ *  fixed line was claimed by keyword vs distributed by fallback. The dashboard
+ *  uses this to surface "you have €X of un-attributable spending" with an
+ *  actionable list. */
+export function getAuditReport(period) {
+  const p = period || currentPeriod();
+  const fixed = db.prepare(`SELECT * FROM fixed_expenses WHERE period = ?`).all(p);
+  const txs = db.prepare(`
+    SELECT id, date, category, merchant, description, ABS(amount) AS amt
+    FROM transactions
+    WHERE amount < 0 AND strftime('%Y-%m', date) = ?
+    ORDER BY amt DESC
+  `).all(p);
+
+  // Compile regexes
+  const keyed = [];
+  for (const f of fixed) {
+    if (!f.match_keyword) continue;
+    try { f._rx = new RegExp(f.match_keyword, "i"); keyed.push(f); }
+    catch { /* skip malformed */ }
+  }
+
+  const orphans = [];
+  const conflicts = [];
+  const claimedByLine = new Map(fixed.map((f) => [f.id, { count: 0, total: 0, label: f.label }]));
+  const orphansByCategory = {};
+
+  for (const tx of txs) {
+    const matches = [];
+    for (const f of keyed) {
+      if (f._rx.test(tx.merchant || "") || f._rx.test(tx.description || "")) {
+        matches.push(f);
+      }
+    }
+    if (matches.length === 0) {
+      orphans.push({ id: tx.id, date: tx.date, merchant: tx.merchant, category: tx.category, amount: tx.amt });
+      const c = tx.category || "uncategorised";
+      orphansByCategory[c] = orphansByCategory[c] || { total: 0, count: 0 };
+      orphansByCategory[c].total += tx.amt;
+      orphansByCategory[c].count += 1;
+    } else {
+      // First match wins for assignment
+      const winner = matches[0];
+      const acc = claimedByLine.get(winner.id);
+      acc.count += 1;
+      acc.total += tx.amt;
+      if (matches.length > 1) {
+        conflicts.push({
+          id: tx.id, date: tx.date, merchant: tx.merchant, amount: tx.amt,
+          matched_by: matches.map((m) => m.label),
+          assigned_to: winner.label,
+        });
+      }
+    }
+  }
+
+  const totalOutflow = txs.reduce((s, t) => s + t.amt, 0);
+  const totalOrphan  = orphans.reduce((s, t) => s + t.amount, 0);
+  const totalClaimed = [...claimedByLine.values()].reduce((s, l) => s + l.total, 0);
+
+  return {
+    period: p,
+    totals: {
+      total_outflow:    Math.round(totalOutflow * 100) / 100,
+      total_claimed:    Math.round(totalClaimed * 100) / 100,
+      total_orphan:     Math.round(totalOrphan * 100) / 100,
+      orphan_pct:       totalOutflow > 0 ? Math.round((totalOrphan / totalOutflow) * 1000) / 10 : 0,
+      orphan_count:     orphans.length,
+      conflict_count:   conflicts.length,
+    },
+    orphans_by_category: Object.entries(orphansByCategory)
+      .map(([category, v]) => ({ category, total: Math.round(v.total * 100) / 100, count: v.count }))
+      .sort((a, b) => b.total - a.total),
+    orphans:   orphans.slice(0, 200),  // cap so JSON doesn't bloat
+    conflicts: conflicts.slice(0, 50),
+    claimed_by_line: [...claimedByLine.values()].filter((l) => l.count > 0).sort((a, b) => b.total - a.total),
+    fixed_labels: fixed.map((f) => ({ label: f.label, category: f.category, match_keyword: f.match_keyword || null })),
   };
 }
 
