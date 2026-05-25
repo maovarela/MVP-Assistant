@@ -299,8 +299,8 @@ const RULES = [
   // Groceries — chains + supermarkets
   [/monoprix|intermarche|lidl|carrefour|super dominique|suc bosquet|nicolas|fnac monop|inglesa|dollarcity|plaza de andres|bold co|olimpica|ol\W?mpica|aldi|jumbo|farmatodo|miniso|casaideas|mercadona|picard|supermercat|autoservice|bonpreu|consum|day\s*by\s*day/i, "groceries"],
 
-  // Health — pharmacies + drugstore chains
-  [/pharmacie|aquaboulevard|ideal optic|santé|sante|neoness|gym|deca|hospital|medico|farmacia|farmacie|drugstore|\bnormal\b/i, "health"],
+  // Health — pharmacies + drugstore chains. \\bfarm catches Farmacia / Farmacie / Farmàcia even with mangled UTF-8 ("FarmÃ cia").
+  [/pharmacie|aquaboulevard|ideal optic|santé|sante|neoness|gym|deca|hospital|medico|\bfarm[aàã]|drugstore|\bnormal\b/i, "health"],
 
   // Shopping
   [/uniqlo|zara|lego|grande recre|el ganso|zalando|fnac|taschen|monoprix les champs|licencia|sodicma|lenovo|apple|samsung|tienda|bara store|camp nou|h&m|hm\b|primark|sephora|nespresso/i, "shopping"],
