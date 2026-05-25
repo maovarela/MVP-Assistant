@@ -278,7 +278,7 @@ const RULES = [
   [/free\s*telecom|free\s*mobile|free\s*haut\s*debit|free mobile|orange|sfr|sosh|bouygues/i, "housing"],
   [/totalenergies|edf|engie|electricite|electricidad|gaz|water|veolia|suez/i, "housing"],
   [/cardif|swisslife|assurance|allianz|axa\b|matmut|maaf|seguro/i,            "fees"],
-  [/navigo|comutitres|sncf|ratp|metro|velib|free now/i,                       "transport"],
+  [/navigo|comutitres|sncf|ratp|metro|velib|free now|\btmb\b|transmilenio|aerolinea/i, "transport"],
   [/amende\.gouv|amende|impots|tresor public/i,                               "fees"],
   [/vir sepa recu|edenred|salaire|paie\b/i,                                   "income"],
   [/taptap send|wise|moneygram|western union/i,                               "transfers"],
@@ -287,25 +287,26 @@ const RULES = [
   // Subscriptions (specific so they win over broad rules)
   [/google\*google|openai|chatgpt|claude\.ai|netflix|spotify|notion|vercel|railway|github|cursor|imagineart|myheritage|twilio|uber one|cotisation/i, "subscriptions"],
 
-  // Food / restaurants
-  [/uber\s*eats|deliveroo|just\s*eat/i,                                       "restaurants"],
-  [/restaurant|asado|casa de tapas|club sauvage|empanadas|sushi|pizza|tacos|burger|pret a manger|seggali|chez\b|brasserie|tapas|teriyaki|crepes|pizzardi|du pain|two tails|bcs co|grupo cob|naturalia/i, "restaurants"],
+  // Food / restaurants — be generous on European restaurants/bars/cafes
+  [/uber\s*eats|deliveroo|just\s*eat|too good to go/i,                        "restaurants"],
+  [/\bcafe\b|\bcafé\b|\bbar\b|bistro|bistrot|brasserie|restaurant|resto\b|trattoria|pizzeria|sushi|pizza|tacos|burger|kebab|asador|asado/i, "restaurants"],
+  [/breizh|bouillon|mazarine|relais\b|sea you|kaapeh|be issy|rosa bonheur|bodega|amorino|tko barna|macvol|pret a manger|seggali|teriyaki|crepes|pizzardi|du pain|two tails|bcs co|grupo cob|naturalia|casa de tapas|club sauvage|empanadas|chez\b|tapas/i, "restaurants"],
 
   // Travel & transport
   [/iberia|transavia|air europa|airbnb|hotel|booking|aeropuerto|trainline|ouigo|easyjet|ryanair|wizz/i, "travel"],
   [/uber(?!\s*eats)|bolt|cabify|smovengo|fpx |paris paris|relay|aeroport|cdg|orly|taxi/i,               "transport"],
 
-  // Groceries
-  [/monoprix|intermarche|lidl|carrefour|super dominique|suc bosquet|nicolas|fnac monop|inglesa|dollarcity|plaza de andres|bold co|olimpica|ol\W?mpica|aldi|jumbo|farmatodo|miniso|casaideas/i, "groceries"],
+  // Groceries — chains + supermarkets
+  [/monoprix|intermarche|lidl|carrefour|super dominique|suc bosquet|nicolas|fnac monop|inglesa|dollarcity|plaza de andres|bold co|olimpica|ol\W?mpica|aldi|jumbo|farmatodo|miniso|casaideas|mercadona|picard|supermercat|autoservice|bonpreu|consum|day\s*by\s*day/i, "groceries"],
 
-  // Health
-  [/pharmacie|aquaboulevard|ideal optic|santé|sante|neoness|gym|deca|hospital|medico|farmacia/i, "health"],
+  // Health — pharmacies + drugstore chains
+  [/pharmacie|aquaboulevard|ideal optic|santé|sante|neoness|gym|deca|hospital|medico|farmacia|farmacie|drugstore|\bnormal\b/i, "health"],
 
   // Shopping
-  [/uniqlo|zara|lego|grande recre|el ganso|zalando|fnac|taschen|monoprix les champs|licencia|sodicma|lenovo|apple|samsung|tienda/i, "shopping"],
+  [/uniqlo|zara|lego|grande recre|el ganso|zalando|fnac|taschen|monoprix les champs|licencia|sodicma|lenovo|apple|samsung|tienda|bara store|camp nou|h&m|hm\b|primark|sephora|nespresso/i, "shopping"],
 
   // Entertainment
-  [/ticketnet|ticketmaster|cinema|theatre|spectacle|concert|museo|museum/i, "entertainment"],
+  [/ticketnet|ticketmaster|cinema|theatre|spectacle|concert|museo|museum|opera|ballet/i, "entertainment"],
 
   // Top-ups / transfers / fees (generic fallbacks)
   [/top.?up|topup/i,           "income"],
