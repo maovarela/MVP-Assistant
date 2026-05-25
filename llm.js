@@ -61,10 +61,20 @@ export function getProviders() {
  * opts: { messages, tools?, tool_choice?, max_tokens?, temperature?, model? }
  */
 export async function callLLM(opts) {
-  const { messages, tools, tool_choice, max_tokens = 2048, temperature = 0.7 } = opts;
+  const { messages, tools, tool_choice, max_tokens = 2048, temperature = 0.7, providers } = opts;
   let lastError = null;
 
-  for (const p of getProviders()) {
+  // Optional filter — useful when a call needs a multimodal-capable provider
+  // (PDF, audio) and we don't want to waste time/get confusing errors from
+  // text-only fallbacks. Pass providers: ['primary'] to lock to Gemini.
+  const candidates = providers
+    ? getProviders().filter((p) => providers.includes(p.name))
+    : getProviders();
+  if (!candidates.length) {
+    throw new Error(`No LLM provider matches filter ${JSON.stringify(providers)}`);
+  }
+
+  for (const p of candidates) {
     const cd = cooldownUntil.get(p.name);
     if (cd && Date.now() < cd) {
       const remaining = Math.ceil((cd - Date.now()) / 1000);

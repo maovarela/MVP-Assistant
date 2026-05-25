@@ -301,12 +301,17 @@ Return ONLY the JSON array. If after filtering nothing remains, return [].`;
 
 export async function importPdf(filePath) {
   const base64 = fs.readFileSync(filePath).toString("base64");
+  const filename = filePath.split(/[\\/]/).pop() || "statement.pdf";
 
-  // PDF inline support is uneven across OpenAI-compat providers. Gemini's
-  // OpenAI-compat endpoint accepts files as image_url with PDF data URIs.
-  // Groq Llama and DeepSeek text don't support PDFs — they will fail and the
-  // chain will fall through to whichever provider is left.
+  // PDF support across OpenAI-compatible endpoints:
+  //   - Gemini (primary): accepts the OpenAI `file` content type with a
+  //     base64 data URI in `file_data`. The legacy image_url+PDF trick stopped
+  //     working in 2026.
+  //   - Groq Llama / DeepSeek (fallbacks): text-only, can't read PDFs.
+  // Locking to the primary provider prevents fallback to text-only providers
+  // returning the misleading "Only image types are supported" error.
   const resp = await callLLM({
+    providers: ["primary"],
     messages: [
       { role: "system", content: PDF_PARSE_PROMPT },
       {
@@ -314,8 +319,11 @@ export async function importPdf(filePath) {
         content: [
           { type: "text", text: "Extract all transactions from this statement." },
           {
-            type: "image_url",
-            image_url: { url: `data:application/pdf;base64,${base64}` },
+            type: "file",
+            file: {
+              filename,
+              file_data: `data:application/pdf;base64,${base64}`,
+            },
           },
         ],
       },
