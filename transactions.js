@@ -4,6 +4,7 @@
 // works for Amex, Revolut, BNP, and anything else with sensible formatting.
 
 import { parse as parseCsv } from "csv-parse/sync";
+import { PDFParse } from "pdf-parse";
 import fs from "fs";
 import crypto from "crypto";
 
@@ -270,8 +271,18 @@ export function importNormalized(filePath) {
 
 // ─── PDF import (uses Claude vision via document input) ──────────────────────
 
-const PDF_PARSE_PROMPT = `You're reading a bank statement PDF. Extract every individual transaction
-in the document as a JSON array. Do not include opening/closing balances or summary lines.
+const PDF_PARSE_PROMPT = `You're reading the extracted text of a bank statement. Extract every individual transaction
+as a JSON array. Do not include opening/closing balances or summary lines.
+
+IMPORTANT — text comes from a PDF extractor and may have quirks:
+- French amounts can be split across tab characters in column-aligned PDFs.
+  Example: "84\\t,\\t3 713" actually means "3 713,84" i.e. 3713.84. Look for
+  the "X\\t,\\tY" pattern and read it as Y,X. Spaces inside Y are thousand
+  separators (drop them).
+- Negative/positive is determined by which column the amount appears under:
+  "DEBIT" column → outflow (negative). "CREDIT" column → inflow (positive).
+- Dates may be "DD.MM" or "DD.MM.YYYY". If year missing, infer from the
+  statement period printed at the top ("du DD month YYYY au DD month YYYY").
 
 CRITICAL — skip rows that are INTERNAL TRANSFERS between the user's own accounts:
 - "PRELEVEMENT AMEX" / "AMERICAN EXPRESS" / "AMEX" debits → SKIP (Amex purchases are tracked separately on the Amex statement)
@@ -300,44 +311,39 @@ Each transaction:
 Return ONLY the JSON array. If after filtering nothing remains, return [].`;
 
 export async function importPdf(filePath) {
-  const base64 = fs.readFileSync(filePath).toString("base64");
-  const filename = filePath.split(/[\\/]/).pop() || "statement.pdf";
+  // Extract text locally with pdf-parse instead of sending the PDF binary to
+  // an LLM. Reasons:
+  //   - Gemini's OpenAI-compat endpoint stopped accepting our PDF format
+  //     (returns 400 with no body in 2026).
+  //   - Text is ~10x smaller than base64-PDF → cheaper LLM calls.
+  //   - Plain text works with any provider, so the full fallback chain is
+  //     available again instead of being pinned to one multimodal provider.
+  //   - BNP/Amex/Revolut statements are text-based PDFs (not scanned), so
+  //     text extraction is lossless.
+  const buf = fs.readFileSync(filePath);
+  const parser = new PDFParse({ data: new Uint8Array(buf) });
+  const { text } = await parser.getText();
+  if (!text || text.trim().length < 100) {
+    console.error("[pdf] extracted text too short — probably a scanned PDF");
+    return { inserted: 0, skipped: 0, errors: 1, total: 0 };
+  }
+  console.log(`[pdf] extracted ${text.length} chars from ${filePath.split(/[\\/]/).pop()}`);
 
-  // PDF support across OpenAI-compatible endpoints:
-  //   - Gemini (primary): accepts the OpenAI `file` content type with a
-  //     base64 data URI in `file_data`. The legacy image_url+PDF trick stopped
-  //     working in 2026.
-  //   - Groq Llama / DeepSeek (fallbacks): text-only, can't read PDFs.
-  // Locking to the primary provider prevents fallback to text-only providers
-  // returning the misleading "Only image types are supported" error.
   const resp = await callLLM({
-    providers: ["primary"],
     messages: [
       { role: "system", content: PDF_PARSE_PROMPT },
-      {
-        role: "user",
-        content: [
-          { type: "text", text: "Extract all transactions from this statement." },
-          {
-            type: "file",
-            file: {
-              filename,
-              file_data: `data:application/pdf;base64,${base64}`,
-            },
-          },
-        ],
-      },
+      { role: "user",   content: `Statement text below — extract transactions:\n\n${text}` },
     ],
     max_tokens: 8000,
     temperature: 0.2,
   });
 
-  const text = resp.choices[0]?.message?.content || "";
+  const replyText = resp.choices[0]?.message?.content || "";
   let txs;
   try {
-    txs = JSON.parse(extractJson(text));
+    txs = JSON.parse(extractJson(replyText));
   } catch (err) {
-    console.error("[pdf parse]", err.message, text.slice(0, 500));
+    console.error("[pdf parse]", err.message, replyText.slice(0, 500));
     return { inserted: 0, skipped: 0, errors: 1 };
   }
 
