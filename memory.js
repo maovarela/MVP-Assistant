@@ -924,7 +924,9 @@ export function listCategoryTransactions({ category, period }) {
   };
 }
 
-/** Distinct periods present across budget tables — for the period selector. */
+/** Distinct periods present across budget tables AND the transactions table.
+ *  Includes months that only have actuals (no planned budget) so the user can
+ *  still navigate to them in the picker and see what was spent. */
 export function listBudgetPeriods() {
   return db.prepare(`
     SELECT period FROM (
@@ -933,6 +935,7 @@ export function listBudgetPeriods() {
       UNION SELECT period FROM variable_expenses
       UNION SELECT period FROM debts
       UNION SELECT period FROM fx_rates
+      UNION SELECT strftime('%Y-%m', date) AS period FROM transactions WHERE date IS NOT NULL
     ) GROUP BY period ORDER BY period DESC
   `).all().map((r) => r.period);
 }
