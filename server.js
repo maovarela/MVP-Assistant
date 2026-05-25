@@ -30,6 +30,7 @@ import db, {
   setFxRate, getFxRate,
   upsertIncome, upsertFixedExpense, insertVariableExpense, upsertDebt,
   getDashboardSummary, listBudgetPeriods,
+  getYearSummary, listYears, listCategoryTransactions,
 } from "./memory.js";
 import { categorize as keywordCategorize } from "./bankCsv.js";
 import { refreshCurrentMonthFx } from "./fx.js";
@@ -327,6 +328,33 @@ app.get("/api/dashboard.json", (req, res) => {
     res.json({ ...summary, available_periods: periods });
   } catch (err) {
     console.error("[dashboard json]", err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Annual / YTD consolidated view. ?year=YYYY (default: current year).
+app.get("/api/year.json", (req, res) => {
+  if (!requireKey(req, res, "DASH_KEY")) return;
+  try {
+    const year = (req.query.year || "").toString().match(/^\d{4}$/) ? req.query.year : undefined;
+    res.json({ ...getYearSummary(year), available_years: listYears() });
+  } catch (err) {
+    console.error("[year json]", err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Per-category drilldown. ?category=travel&period=2026-05 or &period=2026
+// (year). Returns all transactions in that category sorted by amount.
+app.get("/api/category.json", (req, res) => {
+  if (!requireKey(req, res, "DASH_KEY")) return;
+  try {
+    const category = (req.query.category || "").toString();
+    const period   = (req.query.period   || "").toString();
+    if (!category) return res.status(400).json({ error: "category required" });
+    res.json(listCategoryTransactions({ category, period: period || undefined }));
+  } catch (err) {
+    console.error("[category json]", err);
     res.status(500).json({ error: err.message });
   }
 });

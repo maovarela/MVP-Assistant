@@ -156,6 +156,24 @@ export function renderDashboard(period) {
     <!-- populated by JS -->
   </section>
 
+  <!-- YTD strip — consolidado del año hasta ahora -->
+  <section class="rounded-2xl bg-surface-container-lowest border border-outline-variant/15 overflow-hidden">
+    <div class="flex items-center justify-between px-4 py-3 border-b border-outline-variant/15">
+      <div class="flex items-center gap-2">
+        <span class="material-symbols-outlined text-primary" style="font-size: 18px;">calendar_view_month</span>
+        <h3 class="font-headline font-bold text-sm tracking-tight">Consolidado <span id="ytdYearLabel" class="text-outline">—</span></h3>
+      </div>
+      <div id="ytdMonthsLabel" class="text-xs text-outline">—</div>
+    </div>
+    <div class="grid grid-cols-2 md:grid-cols-4 gap-px bg-outline-variant/20" id="ytdCards">
+      <!-- populated by JS -->
+    </div>
+    <div class="px-4 py-3 border-t border-outline-variant/15">
+      <div class="text-[10px] font-bold uppercase tracking-wider text-outline mb-2">Top categorías YTD</div>
+      <div id="ytdTopCats" class="flex flex-wrap gap-1.5"></div>
+    </div>
+  </section>
+
   <!-- ═══════════════════ BELOW THE FOLD ═══════════════════ -->
 
   <!-- COMBINED GASTOS TABLE with filter chips -->
@@ -186,7 +204,10 @@ export function renderDashboard(period) {
   <!-- CHARTS -->
   <section class="grid grid-cols-1 md:grid-cols-2 gap-4">
     <div class="rounded-2xl bg-surface-container-lowest p-5 border border-outline-variant/15">
-      <div class="text-sm font-semibold text-on-surface mb-2">Gasto real por categoría</div>
+      <div class="flex items-center justify-between mb-2">
+        <div class="text-sm font-semibold text-on-surface">Gasto real por categoría</div>
+        <div class="text-[10px] text-outline">Click para detalle</div>
+      </div>
       <canvas id="donut" style="max-height:260px"></canvas>
     </div>
     <div class="rounded-2xl bg-surface-container-lowest p-5 border border-outline-variant/15">
@@ -196,6 +217,22 @@ export function renderDashboard(period) {
   </section>
 
 </main>
+
+<!-- Category drilldown modal -->
+<div id="drillModal" class="hidden fixed inset-0 z-[100] bg-black/40 flex items-end md:items-center justify-center p-0 md:p-4">
+  <div class="bg-surface-container-lowest w-full md:max-w-2xl md:rounded-2xl rounded-t-2xl max-h-[85vh] overflow-hidden flex flex-col">
+    <div class="px-5 py-4 border-b border-outline-variant/20 flex items-center justify-between">
+      <div>
+        <div class="font-headline font-bold text-lg" id="drillTitle">—</div>
+        <div class="text-xs text-outline" id="drillSub">—</div>
+      </div>
+      <button id="drillClose" class="w-9 h-9 rounded-full hover:bg-surface-container flex items-center justify-center">
+        <span class="material-symbols-outlined">close</span>
+      </button>
+    </div>
+    <div id="drillBody" class="flex-1 overflow-y-auto"></div>
+  </div>
+</div>
 
 <!-- BOTTOM NAV -->
 <nav class="fixed bottom-0 left-0 right-0 z-50 bg-surface/90 backdrop-blur-xl px-6 py-2.5 border-t border-outline-variant/20">
@@ -249,7 +286,80 @@ export function renderDashboard(period) {
     if (!r.ok) { document.body.innerHTML = "<p class='p-8 text-error'>Error " + r.status + "</p>"; return; }
     currentData = await r.json();
     render(currentData);
+    // Fire-and-forget the YTD load using the period's year
+    const year = (period || currentData.period).slice(0, 4);
+    loadYear(year);
   }
+
+  async function loadYear(year) {
+    const r = await fetch("/api/year.json?key=" + encodeURIComponent(key) + "&year=" + year);
+    if (!r.ok) return;
+    renderYTD(await r.json());
+  }
+
+  function renderYTD(y) {
+    document.getElementById("ytdYearLabel").textContent = y.year;
+    document.getElementById("ytdMonthsLabel").textContent = y.months_with_data + " " + (y.months_with_data === 1 ? "mes" : "meses") + " con datos · " + y.tx_count + " tx";
+    const t = y.totals;
+    const net = t.net_actual_eur;
+    const netCls = net >= 0 ? "text-primary" : "text-error";
+    document.getElementById("ytdCards").innerHTML = [
+      \`<div class="bg-surface-container-lowest p-3 cursor-pointer" onclick="openYearDrill('all')"><div class="text-[10px] font-bold uppercase tracking-wider text-outline">Ingresos YTD</div><div class="font-headline text-lg font-bold tabular-nums mt-0.5 text-on-surface">\${fmt(t.income_actual_eur)}</div></div>\`,
+      \`<div class="bg-surface-container-lowest p-3"><div class="text-[10px] font-bold uppercase tracking-wider text-outline">Gasto YTD</div><div class="font-headline text-lg font-bold tabular-nums mt-0.5 text-on-surface">\${fmt(t.expenses_actual_eur)}</div></div>\`,
+      \`<div class="bg-surface-container-lowest p-3"><div class="text-[10px] font-bold uppercase tracking-wider text-outline">Neto YTD</div><div class="font-headline text-lg font-bold tabular-nums mt-0.5 \${netCls}">\${fmt(net)}</div></div>\`,
+      \`<div class="bg-surface-container-lowest p-3"><div class="text-[10px] font-bold uppercase tracking-wider text-outline">Media/mes</div><div class="font-headline text-lg font-bold tabular-nums mt-0.5 text-on-surface">\${fmt(t.avg_monthly_expense)}</div></div>\`,
+    ].join("");
+
+    // Top categories as clickable chips
+    const topCats = (y.by_category || []).slice(0, 8);
+    const ytdTotal = topCats.reduce((s, c) => s + c.total, 0) || 1;
+    document.getElementById("ytdTopCats").innerHTML = topCats.map((c) => {
+      const pct = Math.round((c.total / ytdTotal) * 100);
+      return \`<button onclick="openCategoryDrill('\${c.category}', '\${y.year}')" class="flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-surface-container hover:bg-primary-container hover:text-on-primary-container text-xs font-medium transition-colors">
+        <span class="material-symbols-outlined" style="font-size: 13px">\${ICON[c.category] || ICON.other}</span>
+        <span>\${c.category}</span>
+        <span class="text-outline tabular-nums">\${fmt(c.total)} · \${pct}%</span>
+      </button>\`;
+    }).join("");
+  }
+
+  // ─── Category drilldown modal ─────────────────────────────────────────────
+  async function openCategoryDrill(category, period) {
+    const modal = document.getElementById("drillModal");
+    const body  = document.getElementById("drillBody");
+    document.getElementById("drillTitle").textContent = category;
+    document.getElementById("drillSub").textContent   = "Periodo " + period + " · cargando…";
+    body.innerHTML = "<div class='p-8 text-center text-outline'>Cargando…</div>";
+    modal.classList.remove("hidden");
+
+    const url = "/api/category.json?key=" + encodeURIComponent(key) + "&category=" + encodeURIComponent(category) + "&period=" + encodeURIComponent(period);
+    const r = await fetch(url);
+    if (!r.ok) { body.innerHTML = "<div class='p-8 text-error'>Error " + r.status + "</div>"; return; }
+    const d = await r.json();
+    document.getElementById("drillSub").textContent = d.count + " transacciones · " + fmt(d.total) + " · " + d.period;
+    body.innerHTML = d.rows.length ? \`
+      <table class="w-full text-sm">
+        <thead class="bg-surface-container sticky top-0">
+          <tr class="text-left text-[10px] uppercase tracking-wider text-outline">
+            <th class="px-4 py-2">Fecha</th>
+            <th class="px-4 py-2">Comercio</th>
+            <th class="px-4 py-2 text-right">Monto</th>
+          </tr>
+        </thead>
+        <tbody>
+          \${d.rows.map((r) => \`<tr class="border-b border-outline-variant/15 last:border-0">
+            <td class="px-4 py-2 text-outline tabular-nums">\${r.date}</td>
+            <td class="px-4 py-2 text-on-surface">\${r.merchant || "—"}</td>
+            <td class="px-4 py-2 text-right tabular-nums \${r.amount < 0 ? "" : "text-primary"}">\${fmt(r.amount)}</td>
+          </tr>\`).join("")}
+        </tbody>
+      </table>\` : "<div class='p-8 text-center text-outline italic'>Sin transacciones</div>";
+  }
+  // expose to inline onclicks
+  window.openCategoryDrill = openCategoryDrill;
+  window.openYearDrill = (cat) => openCategoryDrill(cat === "all" ? "income" : cat, document.getElementById("ytdYearLabel").textContent);
+  document.getElementById("drillClose").onclick = () => document.getElementById("drillModal").classList.add("hidden");
+  document.getElementById("drillModal").onclick = (e) => { if (e.target.id === "drillModal") e.currentTarget.classList.add("hidden"); };
 
   function populatePeriodSelectors(periods, current) {
     const periodSet = new Set(periods);
@@ -445,8 +555,14 @@ export function renderDashboard(period) {
         }],
       },
       options: {
-        plugins: { legend: { position: "right", labels: { boxWidth: 10, font: { size: 11, family: "Inter" } } } },
+        plugins: { legend: { position: "right", labels: { boxWidth: 10, font: { size: 11, family: "Inter" } }, onClick: (e, item) => openCategoryDrill(item.text, d.period) } },
         cutout: "60%", responsive: true, maintainAspectRatio: false,
+        onClick: (evt, elements) => {
+          if (!elements.length) return;
+          const idx = elements[0].index;
+          const cat = d.by_category_actual[idx].category;
+          openCategoryDrill(cat, d.period);
+        },
       },
     });
 

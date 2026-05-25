@@ -711,8 +711,11 @@ export function listBudgetPeriod(period) {
 }
 
 /** Join planned fixed_expenses against real transactions for the period.
- *  Match key is `category` (one fixed-expense line ⇔ many transactions).
- *  Returns one row per fixed-expense line with the spend so far + delta. */
+ *  Match key is `category`. When multiple fixed-expense lines share the same
+ *  category (e.g. Gym + Therapy both 'health'), the category's actual spend
+ *  is split across the lines proportionally to their budget weights — without
+ *  this, each line would show the FULL category total, inflating everything.
+ *  Returns one row per fixed-expense line with attributed spend + delta. */
 export function getActualSpendVsBudget(period) {
   const p = period || currentPeriod();
   const fixed = db.prepare(`SELECT * FROM fixed_expenses WHERE period = ?`).all(p);
@@ -724,10 +727,30 @@ export function getActualSpendVsBudget(period) {
     GROUP BY category
   `).all(p);
   const actualByCat = Object.fromEntries(actuals.map((r) => [r.category, r.total]));
+
+  // Sum of budgets per category — for proportional split.
+  const budgetByCat = {};
+  for (const f of fixed) {
+    if (!f.category) continue;
+    budgetByCat[f.category] = (budgetByCat[f.category] || 0) + (f.budget_eur || 0);
+  }
+
   return fixed.map((f) => {
-    const actual = f.category ? (actualByCat[f.category] || 0) : 0;
-    const delta  = Math.round((actual - f.budget_eur) * 100) / 100;
-    const pct    = f.budget_eur > 0 ? Math.round((actual / f.budget_eur) * 1000) / 10 : null;
+    let actual = 0;
+    if (f.category && actualByCat[f.category] != null) {
+      const catBudget = budgetByCat[f.category] || 0;
+      const catActual = actualByCat[f.category];
+      if (catBudget > 0) {
+        // Weighted share. Single-line categories get the full amount unchanged.
+        actual = Math.round(catActual * (f.budget_eur / catBudget) * 100) / 100;
+      } else {
+        // All sibling budgets are 0 — split equally.
+        const siblings = fixed.filter((x) => x.category === f.category).length;
+        actual = Math.round((catActual / siblings) * 100) / 100;
+      }
+    }
+    const delta = Math.round((actual - f.budget_eur) * 100) / 100;
+    const pct   = f.budget_eur > 0 ? Math.round((actual / f.budget_eur) * 1000) / 10 : null;
     return {
       label:      f.label,
       budget_eur: f.budget_eur,
@@ -792,6 +815,112 @@ export function getDashboardSummary(period) {
     by_category_actual: byCategoryActual,
     by_category_budget: byCategoryBudget,
     spend_pace: getSpendPace(),
+  };
+}
+
+/** Year-to-date (or any year) consolidated summary across all months of the
+ *  given year. Aggregates transactions + budgets monthly and rolls up. */
+export function getYearSummary(year) {
+  const y = year || String(new Date().getFullYear());
+
+  // Annual totals from transactions
+  const totals = db.prepare(`
+    SELECT
+      ROUND(SUM(CASE WHEN amount<0 THEN ABS(amount) ELSE 0 END), 2) AS expenses,
+      ROUND(SUM(CASE WHEN amount>0 THEN amount       ELSE 0 END), 2) AS income,
+      COUNT(*) AS tx_count
+    FROM transactions WHERE strftime('%Y', date) = ?
+  `).get(y);
+
+  // Top categories actuals
+  const byCategory = db.prepare(`
+    SELECT COALESCE(category, 'uncategorised') AS category,
+           ROUND(SUM(ABS(amount)), 2)          AS total,
+           COUNT(*)                            AS count
+    FROM transactions
+    WHERE amount < 0 AND strftime('%Y', date) = ?
+    GROUP BY category ORDER BY total DESC
+  `).all(y);
+
+  // Monthly trend
+  const byMonth = db.prepare(`
+    SELECT
+      strftime('%Y-%m', date)                                        AS month,
+      ROUND(SUM(CASE WHEN amount<0 THEN ABS(amount) ELSE 0 END), 2)  AS expenses,
+      ROUND(SUM(CASE WHEN amount>0 THEN amount       ELSE 0 END), 2) AS income,
+      COUNT(*)                                                       AS count
+    FROM transactions WHERE strftime('%Y', date) = ?
+    GROUP BY month ORDER BY month
+  `).all(y);
+
+  // Top merchants
+  const topMerchants = db.prepare(`
+    SELECT COALESCE(merchant, 'unknown')   AS merchant,
+           ROUND(SUM(ABS(amount)), 2)      AS total,
+           COUNT(*)                        AS count
+    FROM transactions
+    WHERE amount < 0 AND strftime('%Y', date) = ?
+    GROUP BY merchant ORDER BY total DESC LIMIT 20
+  `).all(y);
+
+  // Annual budget aggregates (sum of monthly planned)
+  const budgetTotals = db.prepare(`
+    SELECT
+      (SELECT ROUND(SUM(amount_eur), 2) FROM incomes           WHERE substr(period, 1, 4) = ?) AS income_planned,
+      (SELECT ROUND(SUM(budget_eur), 2) FROM fixed_expenses    WHERE substr(period, 1, 4) = ?) AS fixed_planned,
+      (SELECT ROUND(SUM(amount_eur), 2) FROM variable_expenses WHERE substr(period, 1, 4) = ?) AS variable_planned
+  `).get(y, y, y);
+
+  const expenses = totals.expenses || 0;
+  const income   = totals.income   || 0;
+  const monthsCount = byMonth.length || 1;
+
+  return {
+    year: y,
+    tx_count: totals.tx_count || 0,
+    months_with_data: monthsCount,
+    totals: {
+      income_actual_eur:    income,
+      expenses_actual_eur:  expenses,
+      net_actual_eur:       Math.round((income - expenses) * 100) / 100,
+      income_planned_eur:   budgetTotals.income_planned   || 0,
+      fixed_planned_eur:    budgetTotals.fixed_planned    || 0,
+      variable_planned_eur: budgetTotals.variable_planned || 0,
+      avg_monthly_expense:  Math.round((expenses / monthsCount) * 100) / 100,
+      avg_monthly_income:   Math.round((income / monthsCount) * 100) / 100,
+    },
+    by_category: byCategory,
+    by_month:    byMonth,
+    top_merchants: topMerchants,
+  };
+}
+
+/** List distinct years present in the transactions table — for the year picker. */
+export function listYears() {
+  return db.prepare(`SELECT DISTINCT strftime('%Y', date) AS y FROM transactions ORDER BY y DESC`)
+    .all().map((r) => r.y);
+}
+
+/** Transactions in a category for a period (month YYYY-MM or year YYYY).
+ *  Returns the rows + total, sorted by absolute amount desc. */
+export function listCategoryTransactions({ category, period }) {
+  if (!category) throw new Error("category required");
+  const where = period && /^\d{4}-\d{2}$/.test(period)
+    ? `AND strftime('%Y-%m', date) = ?`
+    : period && /^\d{4}$/.test(period)
+      ? `AND strftime('%Y', date) = ?`
+      : "";
+  const args  = period ? [category, period] : [category];
+  const rows  = db.prepare(`
+    SELECT date, merchant, amount, currency, source, description
+    FROM transactions WHERE category = ? ${where}
+    ORDER BY ABS(amount) DESC LIMIT 500
+  `).all(...args);
+  return {
+    category, period: period || "all-time",
+    count: rows.length,
+    total: Math.round(rows.reduce((s, r) => s + Math.abs(r.amount), 0) * 100) / 100,
+    rows,
   };
 }
 
