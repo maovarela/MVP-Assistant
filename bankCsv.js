@@ -147,6 +147,9 @@ export function parseRevolutCsv(content) {
           const id = crypto.createHash("sha1")
             .update(`revolut|${currentCurrency}|${date}|${desc}|${amount}|${r.Balance || ""}`)
             .digest("hex").slice(0, 16);
+          // Top-ups from BNP card (matches BNP "REVOLUT**XXXX FRA" debit) →
+          // flag as internal so they don't count as real income.
+          const isInternal = /\btop-?up\b/i.test(desc);
           out.push({
             date,
             merchant:    desc,
@@ -154,6 +157,8 @@ export function parseRevolutCsv(content) {
             currency:    currentCurrency,
             description: desc,
             external_id: id,
+            is_internal_transfer: isInternal,
+            category:    isInternal ? "transfers" : undefined,
           });
         }
       } catch (err) {
@@ -416,8 +421,9 @@ const RULES = [
   // Groceries — chains + supermarkets
   [/monoprix|intermarche|lidl|carrefour|super dominique|suc bosquet|nicolas|fnac monop|inglesa|dollarcity|plaza de andres|bold co|olimpica|ol\W?mpica|aldi|jumbo|farmatodo|miniso|casaideas|mercadona|picard|supermercat|autoservice|bonpreu|consum|day\s*by\s*day/i, "groceries"],
 
-  // Health — pharmacies + drugstore chains. \\bfarm catches Farmacia / Farmacie / Farmàcia even with mangled UTF-8 ("FarmÃ cia").
-  [/pharmacie|aquaboulevard|ideal optic|santé|sante|neoness|gym|deca|hospital|medico|\bfarm[aàã]|drugstore|\bnormal\b/i, "health"],
+  // Health — pharmacies + drugstore chains + mutuelle reimbursements
+  // (HENNER, AXA SANTE, ALAN, MALAKOFF) which arrive as positive credits.
+  [/pharmacie|aquaboulevard|ideal optic|santé|sante|neoness|gym|deca|hospital|medico|\bfarm[aàã]|drugstore|\bnormal\b|henner|axa\s*sant|malakoff|alan\s*sant|\bcpam\b|\bameli\b|s[eé]curit[eé]\s*sociale|carlos antonio melchor/i, "health"],
 
   // Shopping
   [/uniqlo|zara|lego|grande recre|el ganso|zalando|fnac|taschen|monoprix les champs|licencia|sodicma|lenovo|apple|samsung|tienda|bara store|camp nou|h&m|hm\b|primark|sephora|nespresso/i, "shopping"],
@@ -429,7 +435,10 @@ const RULES = [
   [/davivienda|bancolombia|prestamo|pr[eé]stamo|cuota.*credito|cuota.*pr[eé]stamo|amortiz/i, "debt"],
 
   // Top-ups / transfers / fees (generic fallbacks)
-  [/top.?up|topup/i,           "income"],
+  // Top-ups are now parser-flagged as is_internal_transfer; this rule is a
+  // safety net in case the parser misses one. NOT 'income' — that would
+  // double-count BNP→Revolut moves as salary-like inflows.
+  [/top.?up|topup/i,           "transfers"],
   [/transfer to/i,             "transfers"],
   [/prelevement automatique/i, "transfers"],
   [/versement/i,               "fees"],

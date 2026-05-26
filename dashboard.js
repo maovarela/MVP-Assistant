@@ -326,18 +326,18 @@ export function renderDashboard(period) {
     </div>
 
     <!-- Filter row -->
-    <div class="flex flex-wrap items-center gap-2 mb-3 pb-3 border-b border-outline-variant/15">
+    <div class="flex flex-wrap items-center gap-3 mb-3 pb-3 border-b border-outline-variant/15">
       <div class="flex items-center gap-1.5">
-        <label class="text-[10px] uppercase tracking-wider text-outline font-bold">Desde</label>
-        <select id="histPeriodFrom" class="bg-surface-container border-0 rounded text-xs px-2 py-1 focus:ring-2 focus:ring-primary focus:outline-none"></select>
+        <label class="text-[11px] font-bold text-on-surface">Desde</label>
+        <select id="histPeriodFrom" class="bg-surface-container text-on-surface border border-outline-variant/30 rounded-md text-xs px-2 py-1 focus:ring-2 focus:ring-primary focus:outline-none"></select>
       </div>
       <div class="flex items-center gap-1.5">
-        <label class="text-[10px] uppercase tracking-wider text-outline font-bold">Hasta</label>
-        <select id="histPeriodTo" class="bg-surface-container border-0 rounded text-xs px-2 py-1 focus:ring-2 focus:ring-primary focus:outline-none"></select>
+        <label class="text-[11px] font-bold text-on-surface">Hasta</label>
+        <select id="histPeriodTo" class="bg-surface-container text-on-surface border border-outline-variant/30 rounded-md text-xs px-2 py-1 focus:ring-2 focus:ring-primary focus:outline-none"></select>
       </div>
-      <span class="text-outline">·</span>
-      <div class="flex items-center gap-1.5" id="histAccountFilter">
-        <span class="text-[10px] uppercase tracking-wider text-outline font-bold mr-1">Cuentas</span>
+      <span class="text-outline-variant">|</span>
+      <div class="flex items-center gap-1.5 flex-wrap" id="histAccountFilter">
+        <span class="text-[11px] font-bold text-on-surface mr-1">Cuentas</span>
         <!-- chips populated by JS -->
       </div>
     </div>
@@ -811,35 +811,36 @@ export function renderDashboard(period) {
     }
 
     // Total card — consolidated of all 3 accounts
-    const totalNet = Math.round(totals.net * 100) / 100;
+    const totalNet     = Math.round(totals.net * 100) / 100;
     const totalCredits = Math.round(totals.credits * 100) / 100;
     const totalDebits  = Math.round(totals.debits  * 100) / 100;
-    const totalNetClr = totalNet >= 0 ? "text-primary-fixed" : "text-red-300";
-    document.getElementById("acct-total").innerHTML = \`
-      <div class="bg-on-surface text-white -m-4 p-4 rounded-2xl h-full">
-        <div class="flex items-center justify-between mb-3">
-          <div class="flex items-center gap-2">
-            <div class="w-7 h-7 rounded-md bg-white/15 flex items-center justify-center">
-              <span class="material-symbols-outlined text-white" style="font-size:16px">summarize</span>
-            </div>
-            <h4 class="font-headline font-bold text-sm">Total 3 cuentas</h4>
+    // Replace card outer so the dark background fills the cell properly
+    // (the previous -m-4 p-4 hack created a visual overflow at the bottom).
+    const totalEl = document.getElementById("acct-total");
+    totalEl.className = "rounded-2xl bg-on-surface text-white p-4 border border-on-surface";
+    totalEl.innerHTML = \`
+      <div class="flex items-center justify-between mb-3">
+        <div class="flex items-center gap-2">
+          <div class="w-7 h-7 rounded-md bg-white/15 flex items-center justify-center">
+            <span class="material-symbols-outlined" style="font-size:16px">summarize</span>
           </div>
+          <h4 class="font-headline font-bold text-sm">Total 3 cuentas</h4>
         </div>
-        <div class="grid grid-cols-2 gap-2 text-center">
-          <div class="bg-white/10 rounded-lg p-2">
-            <div class="text-[9px] uppercase tracking-wider opacity-60">+ In</div>
-            <div class="font-headline text-base font-bold tabular-nums">\${fmt(totalCredits)}</div>
-            <div class="text-[9px] opacity-60">\${totals.tx} tx</div>
-          </div>
-          <div class="bg-white/10 rounded-lg p-2">
-            <div class="text-[9px] uppercase tracking-wider opacity-60">− Out</div>
-            <div class="font-headline text-base font-bold tabular-nums">\${fmt(totalDebits)}</div>
-          </div>
-          <div class="col-span-2 bg-white/15 rounded-lg p-2 mt-1">
-            <div class="text-[9px] uppercase tracking-wider opacity-60">Neto</div>
-            <div class="font-headline text-xl font-bold tabular-nums \${totalNet >= 0 ? "" : "text-red-300"}">\${fmt(totalNet)}</div>
-          </div>
+      </div>
+      <div class="grid grid-cols-2 gap-2 text-center">
+        <div class="bg-white/10 rounded-lg p-2">
+          <div class="text-[9px] uppercase tracking-wider opacity-60">+ In</div>
+          <div class="font-headline text-base font-bold tabular-nums">\${fmt(totalCredits)}</div>
+          <div class="text-[9px] opacity-60">\${totals.tx} tx</div>
         </div>
+        <div class="bg-white/10 rounded-lg p-2">
+          <div class="text-[9px] uppercase tracking-wider opacity-60">− Out</div>
+          <div class="font-headline text-base font-bold tabular-nums">\${fmt(totalDebits)}</div>
+        </div>
+      </div>
+      <div class="mt-2 bg-white/15 rounded-lg p-2.5 text-center">
+        <div class="text-[9px] uppercase tracking-wider opacity-60">Neto</div>
+        <div class="font-headline text-xl font-bold tabular-nums \${totalNet >= 0 ? "" : "text-red-300"}">\${fmt(totalNet)}</div>
       </div>\`;
 
     // Re-bind the edit button for BNP since it was just rendered
