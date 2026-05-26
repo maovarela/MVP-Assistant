@@ -34,6 +34,7 @@ import db, {
   setMatchKeyword, appendToMatchKeyword,
   getAuditReport, updateTransactionCategory,
   getAccountCashflow, setAccountBalance,
+  getConsolidatedHistory,
 } from "./memory.js";
 import { categorize as keywordCategorize } from "./bankCsv.js";
 import { refreshCurrentMonthFx } from "./fx.js";
@@ -373,6 +374,18 @@ app.post("/api/match-keyword", express.json({ limit: "10kb" }), (req, res) => {
     res.json({ ok: true, updated });
   } catch (err) {
     console.error("[match-keyword]", err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Consolidated month-by-month view of all 3 accounts (BNP/Amex/Revolut)
+app.get("/api/consolidated.json", (req, res) => {
+  if (!requireKey(req, res, "DASH_KEY")) return;
+  try {
+    const months = parseInt(req.query.months || "12", 10);
+    res.json(getConsolidatedHistory({ months }));
+  } catch (err) {
+    console.error("[consolidated]", err);
     res.status(500).json({ error: err.message });
   }
 });

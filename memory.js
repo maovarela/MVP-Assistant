@@ -1212,6 +1212,53 @@ export function getMonthlyCategorySpend({ months = 6 } = {}) {
   return sortedMonths.map((m) => ({ month: m, categories: byMonth[m] }));
 }
 
+/** Month-by-month cashflow per account + combined. Powers the Histórico tab.
+ *  Returns: { months: [...], rows: [{ period, accounts: { bnp: {credits,debits,net,tx},
+ *  amex: {...}, revolut: {...} }, combined: {credits,debits,net} }, ...] } */
+export function getConsolidatedHistory({ months = 12 } = {}) {
+  const accounts = ["bnp", "amex", "revolut"];
+
+  const periods = db.prepare(`
+    SELECT DISTINCT strftime('%Y-%m', date) AS period FROM transactions
+    WHERE date IS NOT NULL
+    ORDER BY period DESC LIMIT ?
+  `).all(months).map((r) => r.period).reverse();
+
+  const rows = periods.map((p) => {
+    const row = {
+      period: p,
+      accounts: {},
+      combined: { credits: 0, debits: 0, net: 0, tx: 0 },
+    };
+    for (const acc of accounts) {
+      const flow = db.prepare(`
+        SELECT
+          ROUND(SUM(CASE WHEN amount>0 THEN amount       ELSE 0 END), 2) AS credits,
+          ROUND(SUM(CASE WHEN amount<0 THEN ABS(amount)  ELSE 0 END), 2) AS debits,
+          COUNT(*) AS tx
+        FROM transactions
+        WHERE external_id LIKE ? AND strftime('%Y-%m', date) = ?
+      `).get(acc + ":%", p);
+      const credits = flow.credits || 0;
+      const debits  = flow.debits  || 0;
+      row.accounts[acc] = {
+        credits, debits,
+        net: Math.round((credits - debits) * 100) / 100,
+        tx: flow.tx || 0,
+      };
+      row.combined.credits += credits;
+      row.combined.debits  += debits;
+      row.combined.tx      += flow.tx || 0;
+    }
+    row.combined.credits = Math.round(row.combined.credits * 100) / 100;
+    row.combined.debits  = Math.round(row.combined.debits  * 100) / 100;
+    row.combined.net     = Math.round((row.combined.credits - row.combined.debits) * 100) / 100;
+    return row;
+  });
+
+  return { accounts, months: periods, rows };
+}
+
 /** Compare last N months of spending per category. Returns:
  *    {
  *      months: ['2026-02','2026-03','2026-04'],

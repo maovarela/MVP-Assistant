@@ -67,17 +67,24 @@ export function renderDashboard(period) {
 
 <!-- HEADER (compact, sticky) -->
 <header class="sticky top-0 z-50 flex items-center justify-between px-4 py-3 bg-surface/85 backdrop-blur-md border-b border-outline-variant/20">
-  <div class="flex items-center gap-2.5">
+  <div class="flex items-center gap-4">
     <!-- Logo: minimalist geometric mark + wordmark in Space Grotesk -->
-    <div class="w-9 h-9 rounded-lg bg-on-surface flex items-center justify-center">
-      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-        <path d="M3 17V21H21V17M3 17L8 8L13 14L17 6L21 11" stroke="white" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
-      </svg>
+    <div class="flex items-center gap-2.5">
+      <div class="w-9 h-9 rounded-lg bg-on-surface flex items-center justify-center">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+          <path d="M3 17V21H21V17M3 17L8 8L13 14L17 6L21 11" stroke="white" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+        </svg>
+      </div>
+      <div class="flex flex-col leading-tight">
+        <div class="font-headline font-bold text-base tracking-tight text-on-surface">Cuentas</div>
+        <div class="font-headline font-medium text-[10px] tracking-[0.2em] text-outline uppercase">MVP</div>
+      </div>
     </div>
-    <div class="flex flex-col leading-tight">
-      <div class="font-headline font-bold text-base tracking-tight text-on-surface">Cuentas</div>
-      <div class="font-headline font-medium text-[10px] tracking-[0.2em] text-outline uppercase">MVP</div>
-    </div>
+    <!-- Tab nav: Resumen | Histórico -->
+    <nav class="flex items-center gap-1 ml-2">
+      <button id="tabResumen"   class="tabBtn px-3 py-1.5 rounded-full text-xs font-semibold transition-colors bg-primary text-on-primary">Resumen</button>
+      <button id="tabHistorico" class="tabBtn px-3 py-1.5 rounded-full text-xs font-semibold transition-colors bg-surface-container text-on-surface hover:bg-surface-container-high">Histórico</button>
+    </nav>
   </div>
 
   <!-- Period picker: single button that opens a popover with year tabs + month grid -->
@@ -102,7 +109,7 @@ export function renderDashboard(period) {
   </div>
 </header>
 
-<main class="max-w-5xl mx-auto px-4 pt-4 space-y-4">
+<main id="viewResumen" class="max-w-5xl mx-auto px-4 pt-4 space-y-4">
 
   <!-- ABOVE THE FOLD: dial + KPIs side-by-side on desktop, stacked on mobile -->
   <section class="grid grid-cols-1 md:grid-cols-5 gap-4 items-center">
@@ -182,8 +189,8 @@ export function renderDashboard(period) {
       <span class="material-symbols-outlined text-secondary" style="font-size: 18px;">account_balance</span>
       <h3 class="font-headline font-bold text-sm tracking-tight">Cuentas <span id="bnpPeriodLabel" class="text-outline">—</span></h3>
     </div>
-    <div class="grid grid-cols-1 md:grid-cols-3 gap-3" id="accountsGrid">
-      <!-- populated by JS — one card per account -->
+    <div class="grid grid-cols-1 md:grid-cols-4 gap-3" id="accountsGrid">
+      <!-- populated by JS — one card per account + a Total card -->
     </div>
   </section>
 
@@ -293,6 +300,51 @@ export function renderDashboard(period) {
     <canvas id="cashLine" style="max-height: 240px"></canvas>
   </section>
 
+</main>
+
+<!-- VIEW: Histórico (consolidated month × account matrix) -->
+<main id="viewHistorico" class="hidden max-w-6xl mx-auto px-4 pt-4 space-y-4">
+  <section class="rounded-2xl bg-surface-container-lowest border border-outline-variant/15 p-5">
+    <div class="flex items-center justify-between mb-4">
+      <div>
+        <h2 class="font-headline text-lg font-bold tracking-tight text-on-surface">Histórico consolidado</h2>
+        <p class="text-xs text-outline">Cashflow mes a mes por cuenta — ingresos, gastos, neto</p>
+      </div>
+      <select id="histMonthsSel" class="bg-surface-container border-0 rounded-full text-xs font-medium px-3 py-1.5 focus:ring-2 focus:ring-primary">
+        <option value="6">6 meses</option>
+        <option value="12" selected>12 meses</option>
+        <option value="24">24 meses</option>
+      </select>
+    </div>
+    <div class="overflow-x-auto">
+      <table class="w-full text-sm" id="historicoTbl">
+        <thead><tr class="text-[10px] uppercase tracking-wider text-outline border-b border-outline-variant/30">
+          <th class="px-3 py-2 text-left sticky left-0 bg-surface-container-lowest">Mes</th>
+          <th class="px-3 py-2 text-right" colspan="3" style="background: rgba(0,145,90,0.04)">BNP</th>
+          <th class="px-3 py-2 text-right" colspan="3" style="background: rgba(0,111,207,0.04)">Amex</th>
+          <th class="px-3 py-2 text-right" colspan="3" style="background: rgba(0,0,0,0.04)">Revolut</th>
+          <th class="px-3 py-2 text-right border-l-2 border-outline-variant/30">Neto total</th>
+        </tr>
+        <tr class="text-[9px] uppercase tracking-wider text-outline border-b border-outline-variant/15">
+          <th class="px-3 py-1.5 sticky left-0 bg-surface-container-lowest"></th>
+          <th class="px-3 py-1.5 text-right text-primary">+In</th>
+          <th class="px-3 py-1.5 text-right text-error">−Out</th>
+          <th class="px-3 py-1.5 text-right">Neto</th>
+          <th class="px-3 py-1.5 text-right text-primary">+In</th>
+          <th class="px-3 py-1.5 text-right text-error">−Out</th>
+          <th class="px-3 py-1.5 text-right">Neto</th>
+          <th class="px-3 py-1.5 text-right text-primary">+In</th>
+          <th class="px-3 py-1.5 text-right text-error">−Out</th>
+          <th class="px-3 py-1.5 text-right">Neto</th>
+          <th class="px-3 py-1.5 text-right border-l-2 border-outline-variant/30"></th>
+        </tr></thead>
+        <tbody id="historicoBody"><tr><td colspan="11" class="px-3 py-8 text-center text-outline italic">Cargando…</td></tr></tbody>
+      </table>
+    </div>
+  </section>
+
+  <!-- Summary KPIs across the entire window -->
+  <section class="grid grid-cols-2 md:grid-cols-4 gap-3" id="histSummaryCards"></section>
 </main>
 
 <!-- Category drilldown modal -->
@@ -406,6 +458,94 @@ export function renderDashboard(period) {
   let donutChart, barChart;
   let currentData = null;
   let activeFilter = "fijos"; // 'fijos' | 'variables' | 'todos'
+  let activeTab = (new URLSearchParams(location.search).get("tab")) || "resumen";
+
+  // ─── Tab nav ────────────────────────────────────────────────────────────
+  function switchTab(tab) {
+    activeTab = tab;
+    document.getElementById("viewResumen").classList.toggle("hidden",   tab !== "resumen");
+    document.getElementById("viewHistorico").classList.toggle("hidden", tab !== "historico");
+    document.querySelectorAll(".tabBtn").forEach((b) => {
+      const isActive = b.id.endsWith(tab.charAt(0).toUpperCase() + tab.slice(1));
+      b.className = "tabBtn px-3 py-1.5 rounded-full text-xs font-semibold transition-colors " +
+        (isActive ? "bg-primary text-on-primary" : "bg-surface-container text-on-surface hover:bg-surface-container-high");
+    });
+    const url = new URL(location.href);
+    url.searchParams.set("tab", tab);
+    history.replaceState(null, "", url);
+    if (tab === "historico") loadHistorico();
+  }
+  // bind after DOM is parsed (this script is at end of body so OK)
+  setTimeout(() => {
+    document.getElementById("tabResumen").onclick   = () => switchTab("resumen");
+    document.getElementById("tabHistorico").onclick = () => switchTab("historico");
+    if (activeTab === "historico") switchTab("historico");
+  }, 0);
+
+  async function loadHistorico() {
+    const months = document.getElementById("histMonthsSel").value || 12;
+    const r = await fetch("/api/consolidated.json?key=" + encodeURIComponent(key) + "&months=" + months);
+    if (!r.ok) return;
+    const d = await r.json();
+    renderHistorico(d);
+  }
+  function renderHistorico(d) {
+    const tbody = document.getElementById("historicoBody");
+    if (!d.rows.length) { tbody.innerHTML = \`<tr><td colspan="11" class="px-3 py-8 text-center text-outline italic">Sin datos</td></tr>\`; return; }
+
+    const sums = { bnp: {c:0,d:0}, amex: {c:0,d:0}, revolut: {c:0,d:0}, total: 0 };
+    const reversed = [...d.rows].reverse(); // newest first for table display
+    tbody.innerHTML = reversed.map((r) => {
+      for (const a of ["bnp","amex","revolut"]) {
+        sums[a].c += r.accounts[a].credits;
+        sums[a].d += r.accounts[a].debits;
+      }
+      sums.total += r.combined.net;
+      const acctCell = (acc, bg) => {
+        const a = r.accounts[acc];
+        const netClr = a.net >= 0 ? "text-primary" : "text-error";
+        return \`<td class="px-3 py-2 text-right tabular-nums text-primary" style="background: \${bg}">\${fmt(a.credits)}</td>
+                <td class="px-3 py-2 text-right tabular-nums text-error"   style="background: \${bg}">\${fmt(a.debits)}</td>
+                <td class="px-3 py-2 text-right tabular-nums font-semibold \${netClr}" style="background: \${bg}">\${fmt(a.net)}</td>\`;
+      };
+      const totalClr = r.combined.net >= 0 ? "text-primary" : "text-error";
+      return \`<tr class="border-b border-outline-variant/15 hover:bg-surface-container-low cursor-pointer" onclick="window.location.href='?key=\${key}&period=\${r.period}'">
+        <td class="px-3 py-2 font-medium sticky left-0 bg-surface-container-lowest">\${r.period}</td>
+        \${acctCell("bnp",     "rgba(0,145,90,0.04)")}
+        \${acctCell("amex",    "rgba(0,111,207,0.04)")}
+        \${acctCell("revolut", "rgba(0,0,0,0.04)")}
+        <td class="px-3 py-2 text-right tabular-nums font-bold \${totalClr} border-l-2 border-outline-variant/30">\${fmt(r.combined.net)}</td>
+      </tr>\`;
+    }).join("");
+
+    // Summary cards
+    const cards = ["bnp","amex","revolut"].map((acc) => {
+      const meta = ACCOUNT_META[acc];
+      const net = sums[acc].c - sums[acc].d;
+      const netClr = net >= 0 ? "text-primary" : "text-error";
+      return \`<div class="rounded-2xl bg-surface-container-lowest border border-outline-variant/15 p-4">
+        <div class="flex items-center gap-2 mb-2">\${meta.brandHtml}<h4 class="font-headline font-bold text-sm">\${meta.label}</h4></div>
+        <div class="space-y-1 text-xs">
+          <div class="flex justify-between"><span class="text-outline">+ Ingresos</span><span class="font-headline font-bold tabular-nums text-primary">\${fmt(sums[acc].c)}</span></div>
+          <div class="flex justify-between"><span class="text-outline">− Gastos</span><span class="font-headline font-bold tabular-nums text-error">\${fmt(sums[acc].d)}</span></div>
+          <div class="flex justify-between border-t border-outline-variant/15 pt-1 mt-1"><span class="text-outline">Neto</span><span class="font-headline font-bold tabular-nums \${netClr}">\${fmt(net)}</span></div>
+        </div>
+      </div>\`;
+    });
+    cards.push(\`<div class="rounded-2xl bg-on-surface text-white p-4">
+      <div class="flex items-center gap-2 mb-2"><span class="material-symbols-outlined" style="font-size:18px">summarize</span><h4 class="font-headline font-bold text-sm">Total \${d.rows.length} meses</h4></div>
+      <div class="font-headline text-2xl font-bold tabular-nums mt-2 \${sums.total >= 0 ? "" : "text-red-300"}">\${fmt(sums.total)}</div>
+      <div class="text-[10px] uppercase tracking-wider opacity-60 mt-1">Neto acumulado</div>
+    </div>\`);
+    document.getElementById("histSummaryCards").innerHTML = cards.join("");
+  }
+  document.addEventListener("DOMContentLoaded", () => {
+    document.getElementById("histMonthsSel").onchange = loadHistorico;
+  });
+  setTimeout(() => {
+    const sel = document.getElementById("histMonthsSel");
+    if (sel) sel.onchange = loadHistorico;
+  }, 100);
 
   const CIRCUM = 282.7;
 
@@ -507,12 +647,13 @@ export function renderDashboard(period) {
   async function loadBnpCashflow(period) {
     document.getElementById("bnpPeriodLabel").textContent = period;
     const grid = document.getElementById("accountsGrid");
-    grid.innerHTML = ["bnp", "amex", "revolut"].map((a) =>
+    grid.innerHTML = ["bnp", "amex", "revolut", "total"].map((a) =>
       \`<div class="rounded-2xl bg-surface-container-lowest border border-outline-variant/15 p-4" id="acct-\${a}">
-        <div class="text-xs text-outline">Cargando \${ACCOUNT_META[a].label}…</div>
+        <div class="text-xs text-outline">Cargando \${a === "total" ? "Total" : ACCOUNT_META[a].label}…</div>
        </div>\`
     ).join("");
 
+    const totals = { credits: 0, debits: 0, net: 0, tx: 0 };
     for (const acct of ["bnp", "amex", "revolut"]) {
       const r = await fetch("/api/cashflow.json?key=" + encodeURIComponent(key) + "&account=" + acct + "&period=" + period);
       if (!r.ok) continue;
@@ -521,6 +662,10 @@ export function renderDashboard(period) {
       const opening = d.opening_eur, closing = d.closing_eur;
       const netClr  = d.net_change_eur >= 0 ? "text-primary" : "text-error";
       const editBtn = acct === "bnp" ? \`<button id="bnpEditBtn" class="text-[10px] text-primary font-semibold hover:underline">Editar</button>\` : "";
+      totals.credits += d.credits_eur;
+      totals.debits  += d.debits_eur;
+      totals.net     += d.net_change_eur;
+      totals.tx      += d.tx_count;
       document.getElementById("acct-" + acct).innerHTML = \`
         <div class="flex items-center justify-between mb-3">
           <div class="flex items-center gap-2">
@@ -550,6 +695,38 @@ export function renderDashboard(period) {
           </div>
         </div>\`;
     }
+
+    // Total card — consolidated of all 3 accounts
+    const totalNet = Math.round(totals.net * 100) / 100;
+    const totalCredits = Math.round(totals.credits * 100) / 100;
+    const totalDebits  = Math.round(totals.debits  * 100) / 100;
+    const totalNetClr = totalNet >= 0 ? "text-primary-fixed" : "text-red-300";
+    document.getElementById("acct-total").innerHTML = \`
+      <div class="bg-on-surface text-white -m-4 p-4 rounded-2xl h-full">
+        <div class="flex items-center justify-between mb-3">
+          <div class="flex items-center gap-2">
+            <div class="w-7 h-7 rounded-md bg-white/15 flex items-center justify-center">
+              <span class="material-symbols-outlined text-white" style="font-size:16px">summarize</span>
+            </div>
+            <h4 class="font-headline font-bold text-sm">Total 3 cuentas</h4>
+          </div>
+        </div>
+        <div class="grid grid-cols-2 gap-2 text-center">
+          <div class="bg-white/10 rounded-lg p-2">
+            <div class="text-[9px] uppercase tracking-wider opacity-60">+ In</div>
+            <div class="font-headline text-base font-bold tabular-nums">\${fmt(totalCredits)}</div>
+            <div class="text-[9px] opacity-60">\${totals.tx} tx</div>
+          </div>
+          <div class="bg-white/10 rounded-lg p-2">
+            <div class="text-[9px] uppercase tracking-wider opacity-60">− Out</div>
+            <div class="font-headline text-base font-bold tabular-nums">\${fmt(totalDebits)}</div>
+          </div>
+          <div class="col-span-2 bg-white/15 rounded-lg p-2 mt-1">
+            <div class="text-[9px] uppercase tracking-wider opacity-60">Neto</div>
+            <div class="font-headline text-xl font-bold tabular-nums \${totalNet >= 0 ? "" : "text-red-300"}">\${fmt(totalNet)}</div>
+          </div>
+        </div>
+      </div>\`;
 
     // Re-bind the edit button for BNP since it was just rendered
     const bnpBtn = document.getElementById("bnpEditBtn");
