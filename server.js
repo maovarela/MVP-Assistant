@@ -354,17 +354,18 @@ app.get("/api/year.json", (req, res) => {
 app.post("/api/match-keyword", express.json({ limit: "10kb" }), (req, res) => {
   if (!requireKey(req, res, "DASH_KEY")) return;
   try {
-    const { label, match_keyword, period, mode, merchant_snippet } = req.body || {};
+    const { label, match_keyword, period, mode, merchant_snippet, target } = req.body || {};
     if (!label) return res.status(400).json({ error: "label required" });
+    const tgt = target === "variable" ? "variable" : "fixed";
     if (mode === "append") {
-      const updated = appendToMatchKeyword({ label, merchant_snippet, period });
+      const updated = appendToMatchKeyword({ label, merchant_snippet, period, target: tgt });
       return res.json({ ok: true, updated });
     }
     if (match_keyword) {
       try { new RegExp(match_keyword, "i"); }
       catch (e) { return res.status(400).json({ error: "invalid regex: " + e.message }); }
     }
-    const updated = setMatchKeyword({ label, match_keyword: match_keyword || null, period });
+    const updated = setMatchKeyword({ label, match_keyword: match_keyword || null, period, target: tgt });
     res.json({ ok: true, updated });
   } catch (err) {
     console.error("[match-keyword]", err);

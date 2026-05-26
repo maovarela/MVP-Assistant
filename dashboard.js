@@ -156,17 +156,14 @@ export function renderDashboard(period) {
     <!-- populated by JS -->
   </section>
 
-  <!-- Cuenta BNP cashflow -->
-  <section class="rounded-2xl bg-surface-container-lowest border border-outline-variant/15 overflow-hidden">
-    <div class="flex items-center justify-between px-4 py-3 border-b border-outline-variant/15">
-      <div class="flex items-center gap-2">
-        <span class="material-symbols-outlined text-secondary" style="font-size: 18px;">account_balance</span>
-        <h3 class="font-headline font-bold text-sm tracking-tight">Cuenta BNP <span id="bnpPeriodLabel" class="text-outline">—</span></h3>
-      </div>
-      <button id="bnpEditBtn" class="text-xs text-primary font-semibold hover:underline">Editar balances</button>
+  <!-- Account cashflow (BNP, Amex, Revolut) -->
+  <section class="space-y-3">
+    <div class="flex items-center gap-2 px-1">
+      <span class="material-symbols-outlined text-secondary" style="font-size: 18px;">account_balance</span>
+      <h3 class="font-headline font-bold text-sm tracking-tight">Cuentas <span id="bnpPeriodLabel" class="text-outline">—</span></h3>
     </div>
-    <div class="grid grid-cols-4 gap-px bg-outline-variant/20" id="bnpCards">
-      <!-- populated by JS -->
+    <div class="grid grid-cols-1 md:grid-cols-3 gap-3" id="accountsGrid">
+      <!-- populated by JS — one card per account -->
     </div>
   </section>
 
@@ -368,39 +365,65 @@ export function renderDashboard(period) {
     loadBnpCashflow(currentData.period);
   }
 
+  const ACCOUNT_META = {
+    bnp:     { label: "BNP",     icon: "account_balance",       cardClass: "" },
+    amex:    { label: "Amex",    icon: "credit_card",           cardClass: "" },
+    revolut: { label: "Revolut", icon: "currency_exchange",     cardClass: "" },
+  };
+
   async function loadBnpCashflow(period) {
-    const r = await fetch("/api/cashflow.json?key=" + encodeURIComponent(key) + "&account=bnp&period=" + period);
-    if (!r.ok) return;
-    const d = await r.json();
-    document.getElementById("bnpPeriodLabel").textContent = d.period;
-    const opening = d.opening_eur;
-    const closing = d.closing_eur;
-    const credits = d.credits_eur;
-    const debits  = d.debits_eur;
-    const netClr  = d.net_change_eur >= 0 ? "text-primary" : "text-error";
-    const unset   = '<span class="text-outline italic text-xs">click "Editar"</span>';
-    document.getElementById("bnpCards").innerHTML = [
-      \`<div class="bg-surface-container-lowest p-3">
-        <div class="text-[10px] uppercase tracking-wider text-outline">Balance inicial</div>
-        <div class="font-headline text-lg font-bold tabular-nums mt-0.5 text-on-surface">\${opening != null ? fmt(opening) : unset}</div>
-       </div>\`,
-      \`<div class="bg-surface-container-lowest p-3">
-        <div class="text-[10px] uppercase tracking-wider text-outline">+ Ingresos</div>
-        <div class="font-headline text-lg font-bold tabular-nums mt-0.5 text-primary">\${fmt(credits)}</div>
-        <div class="text-[10px] text-outline mt-0.5">\${d.tx_count} tx</div>
-       </div>\`,
-      \`<div class="bg-surface-container-lowest p-3">
-        <div class="text-[10px] uppercase tracking-wider text-outline">− Egresos</div>
-        <div class="font-headline text-lg font-bold tabular-nums mt-0.5 text-error">\${fmt(debits)}</div>
-        <div class="text-[10px] \${netClr} mt-0.5">net \${d.net_change_eur >= 0 ? "+" : ""}\${fmt(d.net_change_eur)}</div>
-       </div>\`,
-      \`<div class="bg-surface-container-lowest p-3">
-        <div class="text-[10px] uppercase tracking-wider text-outline">Balance final</div>
-        <div class="font-headline text-lg font-bold tabular-nums mt-0.5 text-on-surface">\${closing != null ? fmt(closing) : unset}</div>
-        <div class="text-[10px] text-outline mt-0.5">\${d.closing_source}</div>
-       </div>\`,
-    ].join("");
+    document.getElementById("bnpPeriodLabel").textContent = period;
+    const grid = document.getElementById("accountsGrid");
+    grid.innerHTML = ["bnp", "amex", "revolut"].map((a) =>
+      \`<div class="rounded-2xl bg-surface-container-lowest border border-outline-variant/15 p-4" id="acct-\${a}">
+        <div class="text-xs text-outline">Cargando \${ACCOUNT_META[a].label}…</div>
+       </div>\`
+    ).join("");
+
+    for (const acct of ["bnp", "amex", "revolut"]) {
+      const r = await fetch("/api/cashflow.json?key=" + encodeURIComponent(key) + "&account=" + acct + "&period=" + period);
+      if (!r.ok) continue;
+      const d = await r.json();
+      const meta = ACCOUNT_META[acct];
+      const opening = d.opening_eur, closing = d.closing_eur;
+      const netClr  = d.net_change_eur >= 0 ? "text-primary" : "text-error";
+      const editBtn = acct === "bnp" ? \`<button id="bnpEditBtn" class="text-[10px] text-primary font-semibold hover:underline">Editar</button>\` : "";
+      document.getElementById("acct-" + acct).innerHTML = \`
+        <div class="flex items-center justify-between mb-3">
+          <div class="flex items-center gap-1.5">
+            <span class="material-symbols-outlined text-secondary" style="font-size: 16px;">\${meta.icon}</span>
+            <h4 class="font-headline font-bold text-sm">\${meta.label}</h4>
+          </div>
+          \${editBtn}
+        </div>
+        <div class="grid grid-cols-2 gap-2 text-center">
+          <div class="bg-surface-container rounded-lg p-2">
+            <div class="text-[9px] uppercase tracking-wider text-outline">Inicial</div>
+            <div class="font-headline text-base font-bold tabular-nums">\${opening != null ? fmt(opening) : "—"}</div>
+          </div>
+          <div class="bg-surface-container rounded-lg p-2">
+            <div class="text-[9px] uppercase tracking-wider text-outline">Final</div>
+            <div class="font-headline text-base font-bold tabular-nums">\${closing != null ? fmt(closing) : "—"}</div>
+          </div>
+          <div class="bg-primary-container/30 rounded-lg p-2">
+            <div class="text-[9px] uppercase tracking-wider text-outline">+ In</div>
+            <div class="font-headline text-base font-bold tabular-nums text-primary">\${fmt(d.credits_eur)}</div>
+            <div class="text-[9px] text-outline">\${d.tx_count} tx</div>
+          </div>
+          <div class="bg-error-container/30 rounded-lg p-2">
+            <div class="text-[9px] uppercase tracking-wider text-outline">− Out</div>
+            <div class="font-headline text-base font-bold tabular-nums text-error">\${fmt(d.debits_eur)}</div>
+            <div class="text-[9px] \${netClr}">net \${d.net_change_eur >= 0 ? "+" : ""}\${fmt(d.net_change_eur)}</div>
+          </div>
+        </div>\`;
+    }
+
+    // Re-bind the edit button for BNP since it was just rendered
+    const bnpBtn = document.getElementById("bnpEditBtn");
+    if (bnpBtn) bnpBtn.onclick = openBnpBalanceEditor;
   }
+
+  let openBnpBalanceEditor = () => {};   // populated below
 
   let auditData = null;
   async function loadAuditBadge(period) {
@@ -515,9 +538,11 @@ export function renderDashboard(period) {
 
   // ─── Match-keyword editor ─────────────────────────────────────────────────
   let kwEditingLabel = null;
-  function openKeywordEdit(label, currentKw) {
+  let kwEditingType  = "fijo";   // 'fijo' | 'variable'
+  function openKeywordEdit(label, currentKw, type) {
     kwEditingLabel = label;
-    document.getElementById("kwLabel").textContent = label;
+    kwEditingType  = type || "fijo";
+    document.getElementById("kwLabel").textContent = label + "  (" + kwEditingType + ")";
     document.getElementById("kwInput").value = currentKw || "";
     document.getElementById("kwModal").classList.remove("hidden");
     setTimeout(() => document.getElementById("kwInput").focus(), 50);
@@ -529,7 +554,11 @@ export function renderDashboard(period) {
     const r = await fetch("/api/match-keyword?key=" + encodeURIComponent(key), {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ label: kwEditingLabel, match_keyword: kw || null }),
+      body: JSON.stringify({
+        label: kwEditingLabel,
+        match_keyword: kw || null,
+        target: kwEditingType === "variable" ? "variable" : "fixed",
+      }),
     });
     if (r.ok) {
       document.getElementById("kwModal").classList.add("hidden");
@@ -540,7 +569,7 @@ export function renderDashboard(period) {
   };
 
   // ─── BNP balance edit modal ──────────────────────────────────────────────
-  document.getElementById("bnpEditBtn").onclick = async () => {
+  openBnpBalanceEditor = async () => {
     const period = currentData?.period;
     if (!period) return;
     document.getElementById("bnpModalPeriod").textContent = "Periodo " + period;
@@ -572,6 +601,8 @@ export function renderDashboard(period) {
       alert("Error: " + r.status);
     }
   };
+  // expose so the dynamically-rendered BNP card can wire its edit button
+  window.openBnpBalanceEditor = openBnpBalanceEditor;
 
   // ─── Audit modal ──────────────────────────────────────────────────────────
   function openAudit() {
@@ -792,7 +823,8 @@ export function renderDashboard(period) {
     }));
     const variables = d.variable.map((v) => ({
       type: "variable", label: v.label, category: v.category,
-      budget_eur: v.amount_eur, actual_eur: null, pct_used: null,
+      budget_eur: v.amount_eur, actual_eur: v.actual_eur, pct_used: v.pct_used,
+      match_keyword: v.match_keyword,
     }));
     const fijosTotal = fijos.reduce((s, r) => s + r.budget_eur, 0);
     const varTotal   = variables.reduce((s, r) => s + r.budget_eur, 0);
@@ -828,10 +860,10 @@ export function renderDashboard(period) {
         const pctClr = r.pct_used == null ? "bg-surface-container text-on-surface-variant" :
                        r.pct_used > 100 ? "bg-error-container text-error" :
                        r.pct_used > 80  ? "bg-warn-container text-warn"   : "bg-primary-container text-on-primary-container";
-        const real = r.type === "fijo" ? fmt(r.actual_eur) : "—";
-        const pct  = r.type === "fijo" ? \`<span class="px-2 py-0.5 rounded-full text-[10px] font-semibold \${pctClr}">\${fmtPct(r.pct_used)}</span>\` : \`<span class="text-outline">—</span>\`;
+        const real = (r.type === "fijo" || r.type === "variable") ? fmt(r.actual_eur) : "—";
+        const pct  = (r.type === "fijo" || r.type === "variable") ? \`<span class="px-2 py-0.5 rounded-full text-[10px] font-semibold \${pctClr}">\${fmtPct(r.pct_used)}</span>\` : \`<span class="text-outline">—</span>\`;
         const kwBadge = r.match_keyword ? \`<span title="\${r.match_keyword}" class="text-[9px] text-outline font-mono">/\${r.match_keyword.slice(0,18)}\${r.match_keyword.length > 18 ? "…" : ""}/</span>\` : "";
-        const editBtn = r.type === "fijo" ? \`<button class="ml-1.5 opacity-40 hover:opacity-100 transition-opacity" onclick="openKeywordEdit('\${r.label.replace(/'/g, "\\\\'")}', '\${(r.match_keyword || '').replace(/'/g, "\\\\'")}')" title="Editar match keyword"><span class="material-symbols-outlined" style="font-size:13px;">edit</span></button>\` : "";
+        const editBtn = (r.type === "fijo" || r.type === "variable") ? \`<button class="ml-1.5 opacity-40 hover:opacity-100 transition-opacity" onclick="openKeywordEdit('\${r.label.replace(/'/g, "\\\\'")}', '\${(r.match_keyword || '').replace(/'/g, "\\\\'")}', '\${r.type}')" title="Editar match keyword"><span class="material-symbols-outlined" style="font-size:13px;">edit</span></button>\` : "";
         return \`<tr class="border-b border-outline-variant/15 last:border-0">
           <td class="px-3 py-2.5">\${typeBadge}</td>
           <td class="px-3 py-2.5 text-on-surface font-medium">\${r.label}\${editBtn}<div class="mt-0.5">\${kwBadge}</div></td>

@@ -189,6 +189,16 @@ db.exec(`
   );
 `);
 
+// Migration: match_keyword on variable_expenses. Same semantics as the one
+// on fixed_expenses — keyword regex (case-insensitive) on merchant or
+// description; if it matches, the transaction is attributed to this variable
+// line. Lets planned variables (Inversion PERCO, Pago Deuda, Medicina) capture
+// their actual transactions across categories.
+const varCols = db.prepare(`PRAGMA table_info(variable_expenses)`).all().map((c) => c.name);
+if (!varCols.includes("match_keyword")) {
+  db.exec(`ALTER TABLE variable_expenses ADD COLUMN match_keyword TEXT`);
+}
+
 // Migration: is_internal_transfer flag on transactions. Used to mark Amex bill
 // payments and Revolut top-ups that ARE real outflows from the source account
 // (BNP) but should NOT count as spending (the underlying purchases are already
@@ -705,14 +715,16 @@ export function upsertFixedExpense({ period, label, budget_eur, category, notes,
   return db.prepare(`SELECT * FROM fixed_expenses WHERE period = ? AND label = ?`).get(p, label);
 }
 
-/** Set or clear the match_keyword on a fixed expense, across one period or all. */
-export function setMatchKeyword({ label, match_keyword, period }) {
+/** Set or clear the match_keyword on a fixed OR variable expense, across one
+ *  period or all. target: 'fixed' (default) or 'variable'. */
+export function setMatchKeyword({ label, match_keyword, period, target = "fixed" }) {
+  const table = target === "variable" ? "variable_expenses" : "fixed_expenses";
   if (period) {
-    db.prepare(`UPDATE fixed_expenses SET match_keyword = ? WHERE label = ? AND period = ?`).run(match_keyword || null, label, period);
+    db.prepare(`UPDATE ${table} SET match_keyword = ? WHERE label = ? AND period = ?`).run(match_keyword || null, label, period);
   } else {
-    db.prepare(`UPDATE fixed_expenses SET match_keyword = ? WHERE label = ?`).run(match_keyword || null, label);
+    db.prepare(`UPDATE ${table} SET match_keyword = ? WHERE label = ?`).run(match_keyword || null, label);
   }
-  return db.prepare(`SELECT period, label, match_keyword FROM fixed_expenses WHERE label = ?`).all(label);
+  return db.prepare(`SELECT period, label, match_keyword FROM ${table} WHERE label = ?`).all(label);
 }
 
 // ─── Account cashflow ───────────────────────────────────────────────────────
@@ -808,14 +820,14 @@ export function updateTransactionCategory({ ids, category }) {
 /** Append a regex-escaped chunk of a merchant name to an existing match_keyword.
  *  Used by the audit UI: user clicks "asignar [merchant] a [Arriendo]" → we
  *  add a literal match for that merchant to Arriendo's keyword. */
-export function appendToMatchKeyword({ label, merchant_snippet, period }) {
+export function appendToMatchKeyword({ label, merchant_snippet, period, target = "fixed" }) {
   if (!merchant_snippet || !merchant_snippet.trim()) throw new Error("merchant_snippet required");
-  // Escape regex specials so the snippet matches literally
   const escaped = merchant_snippet.trim().replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-  const current = db.prepare(`SELECT match_keyword FROM fixed_expenses WHERE label = ? LIMIT 1`).get(label);
+  const table = target === "variable" ? "variable_expenses" : "fixed_expenses";
+  const current = db.prepare(`SELECT match_keyword FROM ${table} WHERE label = ? LIMIT 1`).get(label);
   const cur = (current?.match_keyword || "").trim();
   const next = cur ? `${cur}|${escaped}` : escaped;
-  return setMatchKeyword({ label, match_keyword: next, period });
+  return setMatchKeyword({ label, match_keyword: next, period, target });
 }
 
 /** Variable expenses are one-offs — no unique constraint, plain INSERT. */
@@ -891,7 +903,8 @@ export function listBudgetPeriod(period) {
  */
 export function getActualSpendVsBudget(period) {
   const p = period || currentPeriod();
-  const fixed = db.prepare(`SELECT * FROM fixed_expenses WHERE period = ?`).all(p);
+  const fixed    = db.prepare(`SELECT * FROM fixed_expenses    WHERE period = ?`).all(p);
+  const variable = db.prepare(`SELECT * FROM variable_expenses WHERE period = ?`).all(p);
 
   // All outflow transactions for the period (excluding internal account transfers)
   const txs = db.prepare(`
@@ -900,21 +913,28 @@ export function getActualSpendVsBudget(period) {
     WHERE amount < 0 AND is_internal_transfer = 0 AND strftime('%Y-%m', date) = ?
   `).all(p);
 
-  // Compile keyword regexes once; build cross-category list and per-category unkeyed groups
-  const keyedAll  = [];     // flat list of all keyword-bearing budget lines
-  const byCatUnkeyed = {};  // category → [unkeyed lines]
-  for (const f of fixed) {
+  // Tag each budget line with its kind so we can sort attributions back per type
+  for (const f of fixed)    f._kind = "fixed";
+  for (const v of variable) { v._kind = "variable"; v.budget_eur = v.amount_eur; }  // alias so logic below is uniform
+
+  // Compile keyword regexes once; build cross-category list AND per-category unkeyed groups.
+  // Variables AND fixed both contribute to keyedAll (cross-account match).
+  const keyedAll  = [];
+  const byCatUnkeyed = {};
+  for (const f of [...fixed, ...variable]) {
     if (f.match_keyword) {
       try { f._rx = new RegExp(f.match_keyword, "i"); keyedAll.push(f); }
-      catch { byCatUnkeyed[f.category || "__nocat__"] = (byCatUnkeyed[f.category || "__nocat__"] || []).concat(f); }
-    } else {
+      catch { /* malformed regex → fall through to unkeyed bucket */ if (f._kind === "fixed") byCatUnkeyed[f.category || "__nocat__"] = (byCatUnkeyed[f.category || "__nocat__"] || []).concat(f); }
+    } else if (f._kind === "fixed") {
+      // Only FIXED lines get the unkeyed proportional fallback (variables are
+      // one-offs and don't make sense as a "default catcher" for a category).
       const cat = f.category || "__nocat__";
       byCatUnkeyed[cat] = (byCatUnkeyed[cat] || []).concat(f);
     }
   }
 
-  const actualById = new Map(fixed.map((f) => [f.id, 0]));
-  const leftover   = {};   // category → { total, count }
+  const actualById = new Map([...fixed, ...variable].map((x) => [`${x._kind}:${x.id}`, 0]));
+  const leftover   = {};
 
   function addLeftover(cat, amt) {
     const c = cat || "uncategorised";
@@ -924,7 +944,7 @@ export function getActualSpendVsBudget(period) {
   }
 
   for (const tx of txs) {
-    // 1. Cross-category keyword match (first wins)
+    // 1. Cross-category keyword match (first wins) — checks fixed AND variables
     let matched = null;
     for (const f of keyedAll) {
       if (f._rx.test(tx.merchant || "") || f._rx.test(tx.description || "")) {
@@ -932,11 +952,12 @@ export function getActualSpendVsBudget(period) {
       }
     }
     if (matched) {
-      actualById.set(matched.id, actualById.get(matched.id) + tx.amt);
+      const k = `${matched._kind}:${matched.id}`;
+      actualById.set(k, actualById.get(k) + tx.amt);
       continue;
     }
 
-    // 2. Proportional fallback within the transaction's own category
+    // 2. Proportional fallback within the transaction's own category (FIXED only)
     const cat = tx.category || "uncategorised";
     const unkeyed = byCatUnkeyed[cat];
     if (unkeyed && unkeyed.length) {
@@ -944,11 +965,15 @@ export function getActualSpendVsBudget(period) {
       if (totalBudget > 0) {
         for (const f of unkeyed) {
           const share = tx.amt * (f.budget_eur / totalBudget);
-          actualById.set(f.id, actualById.get(f.id) + share);
+          const k = `fixed:${f.id}`;
+          actualById.set(k, actualById.get(k) + share);
         }
       } else {
         const share = tx.amt / unkeyed.length;
-        for (const f of unkeyed) actualById.set(f.id, actualById.get(f.id) + share);
+        for (const f of unkeyed) {
+          const k = `fixed:${f.id}`;
+          actualById.set(k, actualById.get(k) + share);
+        }
       }
     } else {
       addLeftover(cat, tx.amt);
@@ -956,7 +981,7 @@ export function getActualSpendVsBudget(period) {
   }
 
   const rows = fixed.map((f) => {
-    const actual = Math.round((actualById.get(f.id) || 0) * 100) / 100;
+    const actual = Math.round((actualById.get(`fixed:${f.id}`) || 0) * 100) / 100;
     const delta  = Math.round((actual - f.budget_eur) * 100) / 100;
     const pct    = f.budget_eur > 0 ? Math.round((actual / f.budget_eur) * 1000) / 10 : null;
     return {
@@ -970,11 +995,27 @@ export function getActualSpendVsBudget(period) {
     };
   });
 
+  const variableRows = variable.map((v) => {
+    const actual = Math.round((actualById.get(`variable:${v.id}`) || 0) * 100) / 100;
+    const delta  = Math.round((actual - v.amount_eur) * 100) / 100;
+    const pct    = v.amount_eur > 0 ? Math.round((actual / v.amount_eur) * 1000) / 10 : null;
+    return {
+      id:            v.id,
+      label:         v.label,
+      amount_eur:    v.amount_eur,
+      category:      v.category,
+      match_keyword: v.match_keyword || null,
+      actual_eur:    actual,
+      delta_eur:     delta,
+      pct_used:      pct,
+    };
+  });
+
   const leftovers = Object.entries(leftover)
     .map(([category, v]) => ({ category, total: Math.round(v.total * 100) / 100, count: v.count }))
     .sort((a, b) => b.total - a.total);
 
-  return { rows, leftovers };
+  return { rows, variableRows, leftovers };
 }
 
 /** Full payload for the dashboard JSON endpoint. */
@@ -982,8 +1023,9 @@ export function getDashboardSummary(period) {
   const p = period || currentPeriod();
   const raw = listBudgetPeriod(p);
   const attrib = getActualSpendVsBudget(p);
-  const fixedWithActual = attrib.rows;
-  const leftovers       = attrib.leftovers;
+  const fixedWithActual    = attrib.rows;
+  const variableWithActual = attrib.variableRows;
+  const leftovers          = attrib.leftovers;
 
   const incomeTotal   = raw.incomes.reduce((s, r) => s + (r.kind === "salary_neto" || r.kind === "other" ? r.amount_eur : 0), 0);
   const fixedTotal    = raw.fixed.reduce((s, r) => s + r.budget_eur, 0);
@@ -1019,7 +1061,7 @@ export function getDashboardSummary(period) {
     fx:     raw.fx,
     incomes:  raw.incomes,
     fixed:    fixedWithActual,
-    variable: raw.variable,
+    variable: variableWithActual,
     debts:    raw.debts,
     leftovers,   // [{category, total, count}] — actuals not claimed by any fixed line's keyword
     totals: {
