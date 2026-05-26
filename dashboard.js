@@ -130,12 +130,12 @@ export function renderDashboard(period) {
                   stroke-dasharray="282.7" stroke-dashoffset="282.7" stroke-linecap="round" stroke-width="8"/>
         </svg>
 
-        <div class="z-10 text-center" title="RESIDUAL = ingreso − presupuesto total. Lo que te DEBERÍA sobrar si gastas exactamente lo planeado. NO es saldo en cuenta (eso está en las cards de cuentas).">
-          <div class="text-[10px] font-bold uppercase tracking-widest text-outline">Residual planeado</div>
-          <div class="font-headline text-4xl md:text-5xl font-bold text-on-surface tabular-nums leading-tight" id="dialResidual">—</div>
-          <div class="mt-1 text-[10px] text-outline leading-tight">
-            ingreso − presupuesto<br/>
-            (<span id="dialPctSpent">—</span> del ingreso comprometido)
+        <div class="z-10 text-center px-2" title="Sobrante = ingreso − presupuesto total. Lo que te quedaría si gastas exactamente lo planeado. NO es saldo de cuenta.">
+          <div class="text-[10px] font-bold uppercase tracking-widest text-outline">Te sobraría</div>
+          <div class="font-headline text-4xl md:text-5xl font-bold text-on-surface tabular-nums leading-none mt-1" id="dialResidual">—</div>
+          <div class="mt-2 text-[11px] text-on-surface leading-tight">
+            si gastas <span id="dialPctSpent" class="font-semibold">—</span><br/>
+            <span class="text-outline text-[10px]">de tu ingreso en presupuesto</span>
           </div>
         </div>
       </div>
