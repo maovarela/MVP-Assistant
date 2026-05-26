@@ -76,14 +76,14 @@ export function renderDashboard(period) {
         </svg>
       </div>
       <div class="flex flex-col leading-tight">
-        <div class="font-headline font-bold text-base tracking-tight text-on-surface">Cuentas</div>
+        <div class="font-headline font-bold text-base tracking-tight text-on-surface">Accounts</div>
         <div class="font-headline font-medium text-[10px] tracking-[0.2em] text-outline uppercase">MVP</div>
       </div>
     </div>
-    <!-- Tab nav: Resumen | Histórico -->
+    <!-- Tab nav: Overview | Transactions -->
     <nav class="flex items-center gap-1 ml-2">
-      <button id="tabResumen"   class="tabBtn px-3 py-1.5 rounded-full text-xs font-semibold transition-colors bg-primary text-on-primary">Resumen</button>
-      <button id="tabHistorico" class="tabBtn px-3 py-1.5 rounded-full text-xs font-semibold transition-colors bg-surface-container text-on-surface hover:bg-surface-container-high">Histórico</button>
+      <button id="tabResumen"   class="tabBtn px-3 py-1.5 rounded-full text-xs font-semibold transition-colors bg-primary text-on-primary">Overview</button>
+      <button id="tabHistorico" class="tabBtn px-3 py-1.5 rounded-full text-xs font-semibold transition-colors bg-surface-container text-on-surface hover:bg-surface-container-high">Transactions</button>
     </nav>
   </div>
 
@@ -130,12 +130,12 @@ export function renderDashboard(period) {
                   stroke-dasharray="282.7" stroke-dashoffset="282.7" stroke-linecap="round" stroke-width="8"/>
         </svg>
 
-        <div class="z-10 text-center px-2" title="Sobrante = ingreso − presupuesto total. Lo que te quedaría si gastas exactamente lo planeado. NO es saldo de cuenta.">
-          <div class="text-[10px] font-bold uppercase tracking-widest text-outline">Te sobraría</div>
+        <div class="z-10 text-center px-2" title="Leftover = income − total budget. What you would have left if you spend exactly the plan. NOT account balance.">
+          <div class="text-[10px] font-bold uppercase tracking-widest text-outline">Would have left</div>
           <div class="font-headline text-4xl md:text-5xl font-bold text-on-surface tabular-nums leading-none mt-1" id="dialResidual">—</div>
           <div class="mt-2 text-[11px] text-on-surface leading-tight">
-            si gastas <span id="dialPctSpent" class="font-semibold">—</span><br/>
-            <span class="text-outline text-[10px]">de tu ingreso en presupuesto</span>
+            if you spend <span id="dialPctSpent" class="font-semibold">—</span><br/>
+            <span class="text-outline text-[10px]">of income on budget</span>
           </div>
         </div>
       </div>
@@ -144,21 +144,21 @@ export function renderDashboard(period) {
     <!-- KPI cards: 3/5 cols on desktop, full on mobile. Always 2x2 grid. -->
     <div class="md:col-span-3 grid grid-cols-2 gap-3">
       <div class="rounded-2xl bg-surface-container-lowest p-4 border border-outline-variant/15">
-        <div class="text-[10px] font-bold uppercase tracking-wider text-outline">Ingresos</div>
+        <div class="text-[10px] font-bold uppercase tracking-wider text-outline">Income</div>
         <div class="font-headline text-xl font-bold text-on-surface tabular-nums mt-1" id="kpiIncome">—</div>
       </div>
       <div class="rounded-2xl bg-surface-container-lowest p-4 border border-outline-variant/15">
-        <div class="text-[10px] font-bold uppercase tracking-wider text-outline">Gasto real</div>
+        <div class="text-[10px] font-bold uppercase tracking-wider text-outline">Actual spend</div>
         <div class="font-headline text-xl font-bold tabular-nums mt-1" id="kpiActual">—</div>
         <div class="text-[10px] text-outline mt-0.5" id="kpiActualVsPlan">vs plan —</div>
       </div>
       <div class="rounded-2xl bg-surface-container-lowest p-4 border border-outline-variant/15">
-        <div class="text-[10px] font-bold uppercase tracking-wider text-outline">Planeado total</div>
+        <div class="text-[10px] font-bold uppercase tracking-wider text-outline">Total planned</div>
         <div class="font-headline text-xl font-bold text-on-surface tabular-nums mt-1" id="kpiPlanned">—</div>
         <div class="text-[10px] text-outline mt-0.5" id="kpiPlannedBreak">F — · V —</div>
       </div>
       <div class="rounded-2xl bg-surface-container-lowest p-4 border border-outline-variant/15">
-        <div class="text-[10px] font-bold uppercase tracking-wider text-outline">% gastado</div>
+        <div class="text-[10px] font-bold uppercase tracking-wider text-outline">% spent</div>
         <div class="font-headline text-xl font-bold tabular-nums mt-1" id="kpiPct">—</div>
         <div class="text-[10px] text-outline mt-0.5" id="kpiPctSub"></div>
       </div>
@@ -180,7 +180,7 @@ export function renderDashboard(period) {
       <div class="text-[11px]" id="comparisonTotalDelta">—</div>
     </div>
     <div id="comparisonBody" class="p-2">
-      <div class="text-xs text-outline italic p-3">Cargando…</div>
+      <div class="text-xs text-outline italic p-3">Loading…</div>
     </div>
   </section>
 
@@ -188,7 +188,7 @@ export function renderDashboard(period) {
   <section class="space-y-3">
     <div class="flex items-center gap-2 px-1">
       <span class="material-symbols-outlined text-secondary" style="font-size: 18px;">account_balance</span>
-      <h3 class="font-headline font-bold text-sm tracking-tight">Cuentas <span id="bnpPeriodLabel" class="text-outline">—</span></h3>
+      <h3 class="font-headline font-bold text-sm tracking-tight">Accounts <span id="bnpPeriodLabel" class="text-outline">—</span></h3>
     </div>
     <div class="grid grid-cols-1 md:grid-cols-4 gap-3" id="accountsGrid">
       <!-- populated by JS — one card per account + a Total card -->
@@ -197,10 +197,10 @@ export function renderDashboard(period) {
     <div id="internalFlowsPanel" class="hidden rounded-2xl bg-surface-container-lowest border border-outline-variant/15 p-4">
       <div class="flex items-center gap-2 mb-2.5">
         <span class="material-symbols-outlined text-outline" style="font-size:16px">sync_alt</span>
-        <h4 class="font-headline font-bold text-xs uppercase tracking-wider text-outline">Transferencias internas (BNP madre → hijas)</h4>
+        <h4 class="font-headline font-bold text-xs uppercase tracking-wider text-outline">Internal transfers (BNP parent → children)</h4>
       </div>
       <div id="internalFlowsBody" class="grid grid-cols-1 md:grid-cols-3 gap-2 text-xs"></div>
-      <p class="text-[10px] text-outline mt-2">Estas no cuentan como gasto real — solo mueven dinero entre tus cuentas. Excluidas del "% del ingreso" y del donut.</p>
+      <p class="text-[10px] text-outline mt-2">These don't count as real spending — just moves money between your accounts. Excluded from "% of income" and the donut.</p>
     </div>
   </section>
 
@@ -217,7 +217,7 @@ export function renderDashboard(period) {
       <!-- populated by JS -->
     </div>
     <div class="px-4 py-3 border-t border-outline-variant/15">
-      <div class="text-[10px] font-bold uppercase tracking-wider text-outline mb-2">Top categorías YTD</div>
+      <div class="text-[10px] font-bold uppercase tracking-wider text-outline mb-2">Top categories YTD</div>
       <div id="ytdTopCats" class="flex flex-wrap gap-1.5"></div>
     </div>
   </section>
@@ -228,9 +228,9 @@ export function renderDashboard(period) {
   <section class="space-y-3">
     <div class="flex items-center justify-between px-1 flex-wrap gap-2">
       <div class="flex items-center gap-3">
-        <h2 class="font-headline text-lg font-bold tracking-tight text-on-surface">Gastos</h2>
+        <h2 class="font-headline text-lg font-bold tracking-tight text-on-surface">Spending</h2>
         <button onclick="openBudgetEditor()" class="text-xs font-semibold px-3 py-1 rounded-full bg-primary text-on-primary hover:opacity-90">
-          ✏️ Editar budget
+          ✏️ Edit budget
         </button>
         <button id="catAuditBtn" onclick="openCatAudit()" class="hidden text-xs font-semibold px-3 py-1 rounded-full bg-warn-container text-warn hover:opacity-90" title="Compares regex rules vs stored category. Lets you bulk-fix old txs after adding a new rule.">
           🩺 Categorization audit (<span id="catAuditCount">0</span>)
@@ -243,14 +243,14 @@ export function renderDashboard(period) {
     </div>
     <div class="rounded-2xl bg-surface-container-lowest overflow-hidden border border-outline-variant/15">
       <div class="px-3 py-2 border-b border-outline-variant/15 bg-surface-container-low">
-        <input id="gastosFilter" type="search" placeholder="🔎 Filtrar categoría…" class="w-full md:w-64 bg-surface-container text-on-surface border border-outline-variant/30 rounded-md text-xs px-2 py-1 focus:ring-2 focus:ring-primary focus:outline-none" />
+        <input id="gastosFilter" type="search" placeholder="🔎 Filter category…" class="w-full md:w-64 bg-surface-container text-on-surface border border-outline-variant/30 rounded-md text-xs px-2 py-1 focus:ring-2 focus:ring-primary focus:outline-none" />
       </div>
       <table class="w-full text-sm">
         <thead class="bg-surface-container">
           <tr class="text-left text-[10px] uppercase tracking-wider text-outline">
-            <th class="px-3 py-2.5 cursor-pointer select-none hover:text-on-surface" data-sort="name">Categoría <span class="gastosSortArrow text-outline" data-col="name"></span></th>
+            <th class="px-3 py-2.5 cursor-pointer select-none hover:text-on-surface" data-sort="name">Category <span class="gastosSortArrow text-outline" data-col="name"></span></th>
             <th class="px-3 py-2.5 text-right cursor-pointer select-none hover:text-on-surface" data-sort="budget">Budget <span class="gastosSortArrow text-outline" data-col="budget"></span></th>
-            <th class="px-3 py-2.5 text-right cursor-pointer select-none hover:text-on-surface" data-sort="actual">Real <span class="gastosSortArrow text-outline" data-col="actual"></span></th>
+            <th class="px-3 py-2.5 text-right cursor-pointer select-none hover:text-on-surface" data-sort="actual">Actual <span class="gastosSortArrow text-outline" data-col="actual"></span></th>
             <th class="px-3 py-2.5 text-right cursor-pointer select-none hover:text-on-surface" data-sort="delta">Δ <span class="gastosSortArrow text-outline" data-col="delta"></span></th>
             <th class="px-3 py-2.5 text-right w-16 cursor-pointer select-none hover:text-on-surface" data-sort="pct">% <span class="gastosSortArrow text-outline" data-col="pct"></span></th>
           </tr>
@@ -267,19 +267,19 @@ export function renderDashboard(period) {
     <div class="lg:col-span-2 rounded-2xl bg-surface-container-lowest p-5 border border-outline-variant/15">
       <div class="flex items-center justify-between mb-3">
         <div>
-          <div class="text-sm font-semibold text-on-surface">Adherencia presupuestal</div>
-          <div class="text-[11px] text-outline">Real vs planeado por categoría, sorted por monto</div>
+          <div class="text-sm font-semibold text-on-surface">Budget vs actual</div>
+          <div class="text-[11px] text-outline">Real spend vs plan per category, sorted by amount</div>
         </div>
         <div class="flex items-center gap-2 text-[10px]">
-          <span class="flex items-center gap-1"><span class="w-2 h-2 bg-primary rounded-full"></span>Bajo</span>
-          <span class="flex items-center gap-1"><span class="w-2 h-2 bg-warn rounded-full"></span>Cerca</span>
-          <span class="flex items-center gap-1"><span class="w-2 h-2 bg-error rounded-full"></span>Sobre</span>
+          <span class="flex items-center gap-1"><span class="w-2 h-2 bg-primary rounded-full"></span>Under</span>
+          <span class="flex items-center gap-1"><span class="w-2 h-2 bg-warn rounded-full"></span>Near</span>
+          <span class="flex items-center gap-1"><span class="w-2 h-2 bg-error rounded-full"></span>Over</span>
         </div>
       </div>
       <div id="varianceList" class="space-y-2.5"></div>
     </div>
     <div class="rounded-2xl bg-surface-container-lowest p-5 border border-outline-variant/15 flex flex-col">
-      <div class="text-sm font-semibold text-on-surface mb-2">Mix de gasto</div>
+      <div class="text-sm font-semibold text-on-surface mb-2">Spending mix</div>
       <div class="relative h-[200px]">
         <canvas id="donut"></canvas>
         <div class="absolute inset-0 flex flex-col items-center justify-center pointer-events-none">
@@ -296,8 +296,8 @@ export function renderDashboard(period) {
   <section class="rounded-2xl bg-surface-container-lowest p-5 border border-outline-variant/15">
     <div class="flex items-center justify-between mb-3">
       <div>
-        <div class="text-sm font-semibold text-on-surface">Evolución del gasto (últimos 6 meses)</div>
-        <div class="text-[11px] text-outline">Composición por categoría — detectá shifts y growth</div>
+        <div class="text-sm font-semibold text-on-surface">Spending over time (last 6 months)</div>
+        <div class="text-[11px] text-outline">Category mix — detect shifts and growth</div>
       </div>
     </div>
     <canvas id="trendStack" style="max-height: 320px"></canvas>
@@ -307,8 +307,8 @@ export function renderDashboard(period) {
   <section class="rounded-2xl bg-surface-container-lowest p-5 border border-outline-variant/15">
     <div class="flex items-center justify-between mb-3">
       <div>
-        <div class="text-sm font-semibold text-on-surface">Posición cash BNP</div>
-        <div class="text-[11px] text-outline">Balance de cierre por mes — accumulando o quemando</div>
+        <div class="text-sm font-semibold text-on-surface">BNP cash position</div>
+        <div class="text-[11px] text-outline">Closing balance per month — accumulating or burning</div>
       </div>
       <div id="cashTrend" class="text-xs font-semibold"></div>
     </div>
@@ -358,11 +358,11 @@ export function renderDashboard(period) {
   <section class="rounded-2xl bg-surface-container-lowest border border-outline-variant/15 p-5">
     <div class="flex flex-wrap items-start justify-between gap-3 mb-4">
       <div>
-        <h2 class="font-headline text-lg font-bold tracking-tight text-on-surface">Transacciones</h2>
-        <p class="text-xs text-outline">Lista plana — edita la categoría inline para corregir rápido.</p>
+        <h2 class="font-headline text-lg font-bold tracking-tight text-on-surface">Transactions</h2>
+        <p class="text-xs text-outline">Flat list — edit category inline for quick fixes.</p>
       </div>
       <div class="flex items-center gap-2 flex-wrap">
-        <input id="histSearch" type="search" placeholder="🔎 Buscar merchant…" class="bg-surface-container border-0 rounded-full text-xs font-medium px-3 py-1.5 w-48 focus:ring-2 focus:ring-primary focus:outline-none" />
+        <input id="histSearch" type="search" placeholder="🔎 Search merchant…" class="bg-surface-container border-0 rounded-full text-xs font-medium px-3 py-1.5 w-48 focus:ring-2 focus:ring-primary focus:outline-none" />
       </div>
     </div>
 
@@ -370,39 +370,39 @@ export function renderDashboard(period) {
     <div class="space-y-2 mb-3 pb-3 border-b border-outline-variant/15">
       <div class="flex flex-wrap items-center gap-3">
         <div class="flex items-center gap-1.5">
-          <label class="text-[11px] font-bold text-on-surface">Desde</label>
+          <label class="text-[11px] font-bold text-on-surface">From</label>
           <select id="histYearFrom"  class="bg-surface-container text-on-surface border border-outline-variant/30 rounded-md text-xs px-2 py-1 focus:ring-2 focus:ring-primary focus:outline-none"></select>
           <select id="histMonthFrom" class="bg-surface-container text-on-surface border border-outline-variant/30 rounded-md text-xs px-2 py-1 focus:ring-2 focus:ring-primary focus:outline-none"></select>
         </div>
         <div class="flex items-center gap-1.5">
-          <label class="text-[11px] font-bold text-on-surface">Hasta</label>
+          <label class="text-[11px] font-bold text-on-surface">To</label>
           <select id="histYearTo"  class="bg-surface-container text-on-surface border border-outline-variant/30 rounded-md text-xs px-2 py-1 focus:ring-2 focus:ring-primary focus:outline-none"></select>
           <select id="histMonthTo" class="bg-surface-container text-on-surface border border-outline-variant/30 rounded-md text-xs px-2 py-1 focus:ring-2 focus:ring-primary focus:outline-none"></select>
         </div>
         <span class="text-outline-variant">|</span>
         <div class="flex items-center gap-1.5 flex-wrap" id="histAccountFilter">
-          <span class="text-[11px] font-bold text-on-surface mr-1">Cuentas</span>
+          <span class="text-[11px] font-bold text-on-surface mr-1">Accounts</span>
           <!-- chips populated by JS -->
         </div>
       </div>
       <div class="flex flex-wrap items-center gap-3">
         <div class="flex items-center gap-1.5">
-          <label class="text-[11px] font-bold text-on-surface">Categoría</label>
+          <label class="text-[11px] font-bold text-on-surface">Category</label>
           <select id="histCategoryFilter" class="bg-surface-container text-on-surface border border-outline-variant/30 rounded-md text-xs px-2 py-1 focus:ring-2 focus:ring-primary focus:outline-none">
-            <option value="">Todas</option>
+            <option value="">All</option>
           </select>
         </div>
         <div class="flex items-center gap-1.5">
-          <label class="text-[11px] font-bold text-on-surface">Tipo</label>
+          <label class="text-[11px] font-bold text-on-surface">Type</label>
           <select id="histTypeFilter" class="bg-surface-container text-on-surface border border-outline-variant/30 rounded-md text-xs px-2 py-1 focus:ring-2 focus:ring-primary focus:outline-none">
-            <option value="all">Todos</option>
-            <option value="out">Solo salidas (−)</option>
-            <option value="in">Solo entradas (+)</option>
-            <option value="external">Excluir internos</option>
+            <option value="all">All</option>
+            <option value="out">Outflows only (−)</option>
+            <option value="in">Inflows only (+)</option>
+            <option value="external">Exclude internal</option>
           </select>
         </div>
         <div class="flex items-center gap-1.5">
-          <label class="text-[11px] font-bold text-on-surface">Monto min €</label>
+          <label class="text-[11px] font-bold text-on-surface">Min € amount</label>
           <input id="histMinAmount" type="number" min="0" step="1" placeholder="0" class="w-20 bg-surface-container text-on-surface border border-outline-variant/30 rounded-md text-xs px-2 py-1 focus:ring-2 focus:ring-primary focus:outline-none" />
         </div>
       </div>
@@ -415,14 +415,14 @@ export function renderDashboard(period) {
       <table class="w-full text-sm" id="historicoTbl">
         <thead class="bg-surface-container">
           <tr class="text-left text-[10px] uppercase tracking-wider text-outline">
-            <th class="px-3 py-2.5 w-24 cursor-pointer select-none hover:text-on-surface" data-histsort="date">Fecha <span class="histSortArrow" data-col="date"></span></th>
-            <th class="px-3 py-2.5 w-20 cursor-pointer select-none hover:text-on-surface" data-histsort="account">Cuenta <span class="histSortArrow" data-col="account"></span></th>
+            <th class="px-3 py-2.5 w-24 cursor-pointer select-none hover:text-on-surface" data-histsort="date">Date <span class="histSortArrow" data-col="date"></span></th>
+            <th class="px-3 py-2.5 w-20 cursor-pointer select-none hover:text-on-surface" data-histsort="account">Account <span class="histSortArrow" data-col="account"></span></th>
             <th class="px-3 py-2.5 cursor-pointer select-none hover:text-on-surface" data-histsort="merchant">Merchant <span class="histSortArrow" data-col="merchant"></span></th>
-            <th class="px-3 py-2.5 text-right w-24 cursor-pointer select-none hover:text-on-surface" data-histsort="amount">Monto € <span class="histSortArrow" data-col="amount"></span></th>
-            <th class="px-3 py-2.5 w-56 cursor-pointer select-none hover:text-on-surface" data-histsort="category">Categoría <span class="histSortArrow" data-col="category"></span></th>
+            <th class="px-3 py-2.5 text-right w-24 cursor-pointer select-none hover:text-on-surface" data-histsort="amount">Amount € <span class="histSortArrow" data-col="amount"></span></th>
+            <th class="px-3 py-2.5 w-56 cursor-pointer select-none hover:text-on-surface" data-histsort="category">Category <span class="histSortArrow" data-col="category"></span></th>
           </tr>
         </thead>
-        <tbody id="historicoBody"><tr><td colspan="5" class="px-3 py-8 text-center text-outline italic">Cargando…</td></tr></tbody>
+        <tbody id="historicoBody"><tr><td colspan="5" class="px-3 py-8 text-center text-outline italic">Loading…</td></tr></tbody>
       </table>
     </div>
   </section>
@@ -449,11 +449,11 @@ export function renderDashboard(period) {
   <div class="bg-surface-container-lowest w-full md:max-w-2xl md:rounded-2xl rounded-t-2xl max-h-[90vh] overflow-hidden flex flex-col">
     <div class="px-5 py-4 border-b border-outline-variant/20 flex items-center justify-between">
       <div>
-        <div class="font-headline font-bold text-lg">Editar budget</div>
+        <div class="font-headline font-bold text-lg">Edit budget</div>
         <div class="text-xs text-outline" id="budgetModalSub">—</div>
       </div>
       <div class="flex items-center gap-2">
-        <button id="budgetCloneBtn" class="text-xs font-semibold text-primary hover:underline" title="Copiar budget de otro mes">Copiar de…</button>
+        <button id="budgetCloneBtn" class="text-xs font-semibold text-primary hover:underline" title="Copy budget from another month">Copy from…</button>
         <button id="budgetClose" class="w-9 h-9 rounded-full hover:bg-surface-container flex items-center justify-center">
           <span class="material-symbols-outlined">close</span>
         </button>
@@ -461,8 +461,8 @@ export function renderDashboard(period) {
     </div>
     <div class="flex-1 overflow-y-auto" id="budgetBody"></div>
     <div class="px-5 py-3 border-t border-outline-variant/20 flex items-center justify-between text-xs">
-      <span class="text-outline">Los cambios se guardan al instante. Otros meses no se afectan.</span>
-      <button id="budgetDoneBtn" class="px-4 py-2 rounded-lg bg-primary text-on-primary font-semibold">Listo</button>
+      <span class="text-outline">Changes save instantly. Other months are not affected.</span>
+      <button id="budgetDoneBtn" class="px-4 py-2 rounded-lg bg-primary text-on-primary font-semibold">Done</button>
     </div>
   </div>
 </div>
@@ -660,7 +660,7 @@ export function renderDashboard(period) {
         }).join("");
         return \`<optgroup label="\${g.name}">\${opts}</optgroup>\`;
       }).join("");
-      catSel.innerHTML = '<option value="">Todas</option>' + groups + '<option value="uncategorised">❓ Uncategorised</option>';
+      catSel.innerHTML = '<option value="">All</option>' + groups + '<option value="uncategorised">❓ Uncategorised</option>';
     }
 
     histInitialized = true;
@@ -682,7 +682,7 @@ export function renderDashboard(period) {
     if (to)   qs.set("period_to",   to);
     if (search) qs.set("search", search);
     if (histAccounts.size && histAccounts.size < 3) qs.set("accounts", [...histAccounts].join(","));
-    document.getElementById("historicoBody").innerHTML = \`<tr><td colspan="5" class="px-3 py-8 text-center text-outline italic">Cargando…</td></tr>\`;
+    document.getElementById("historicoBody").innerHTML = \`<tr><td colspan="5" class="px-3 py-8 text-center text-outline italic">Loading…</td></tr>\`;
     const r = await fetch("/api/transactions.json?" + qs.toString());
     if (!r.ok) return;
     const d = await r.json();
@@ -732,7 +732,7 @@ export function renderDashboard(period) {
       const filtered = shown !== all ? \` (de <strong>\${all}</strong> sin filtros)\` : "";
       statsEl.innerHTML = \`<strong class="text-on-surface">\${shown}</strong> transacciones\${filtered} · <span class="text-error">€\${fmt(fOut)} salidas</span> · <span class="text-primary">€\${fmt(fIn)} entradas</span> · neto <strong class="\${fIn - fOut >= 0 ? "text-primary" : "text-error"}">€\${fmt(fIn - fOut)}</strong>\`;
     }
-    if (!rows.length) { tbody.innerHTML = \`<tr><td colspan="5" class="px-3 py-8 text-center text-outline italic">Sin transacciones para los filtros</td></tr>\`; return; }
+    if (!rows.length) { tbody.innerHTML = \`<tr><td colspan="5" class="px-3 py-8 text-center text-outline italic">No transactions for filters</td></tr>\`; return; }
 
     const ACCT_CLR = { BNP: "bg-emerald-50 text-emerald-800", Amex: "bg-blue-50 text-blue-800", Revolut: "bg-zinc-100 text-zinc-800" };
     tbody.innerHTML = rows.map((tx) => {
@@ -856,9 +856,9 @@ export function renderDashboard(period) {
 
   // Logical groups for the dropdown. Within each group: alphabetical.
   const CAT_GROUPS = [
-    { name: "Gastos cotidianos", cats: ["entertainment", "groceries", "health", "housing", "restaurants", "shopping", "subscriptions", "transport", "travel"] },
-    { name: "Movimientos reales", cats: ["debt", "fees", "income", "savings", "transfers"] },
-    { name: "Internos (no son gasto)", cats: ["internal_transfer"] },
+    { name: "Daily spending", cats: ["entertainment", "groceries", "health", "housing", "restaurants", "shopping", "subscriptions", "transport", "travel"] },
+    { name: "Real movements", cats: ["debt", "fees", "income", "savings", "transfers"] },
+    { name: "Internal (not real spend)", cats: ["internal_transfer"] },
     { name: "Misc",              cats: ["other"] },
   ];
 
@@ -952,12 +952,12 @@ export function renderDashboard(period) {
       let intLine = "";
       if (acct === "bnp" && intOut > 0) {
         intLine = \`<div class="mt-2 text-[10px] flex items-center justify-between rounded-lg bg-amber-50 text-amber-900 px-2 py-1.5">
-          <span class="font-semibold">↦ Movido a hijas</span>
+          <span class="font-semibold">↦ Moved to children</span>
           <span class="tabular-nums font-bold">€\${fmt(intOut).replace("€","")}</span>
         </div>\`;
       } else if (acct !== "bnp" && intIn > 0) {
         intLine = \`<div class="mt-2 text-[10px] flex items-center justify-between rounded-lg bg-emerald-50 text-emerald-900 px-2 py-1.5">
-          <span class="font-semibold">↤ Recibido de BNP</span>
+          <span class="font-semibold">↤ Received from BNP</span>
           <span class="tabular-nums font-bold">€\${fmt(intIn).replace("€","")}</span>
         </div>\`;
       }
@@ -1008,15 +1008,15 @@ export function renderDashboard(period) {
           <div class="w-7 h-7 rounded-md bg-white/15 flex items-center justify-center">
             <span class="material-symbols-outlined" style="font-size:16px">payments</span>
           </div>
-          <h4 class="font-headline font-bold text-sm" title="Real cashflow = excluye transferencias internas BNP↔hijas">Real cashflow</h4>
+          <h4 class="font-headline font-bold text-sm" title="Real cashflow = excludes internal BNP↔children transfers">Real cashflow</h4>
         </div>
       </div>
       <div class="grid grid-cols-2 gap-2 text-center">
-        <div class="bg-white/10 rounded-lg p-2" title="Ingresos reales — salary + reembolsos + ingresos terceros (excluye top-ups y pagos de Amex desde BNP)">
+        <div class="bg-white/10 rounded-lg p-2" title="Real income — salary + reimbursements + third-party income (excludes top-ups and BNP→Amex payments)">
           <div class="text-[9px] uppercase tracking-wider opacity-60">Real In</div>
           <div class="font-headline text-base font-bold tabular-nums">\${fmt(realIn)}</div>
         </div>
-        <div class="bg-white/10 rounded-lg p-2" title="Gasto real — todas las compras (excluye prélèvements y top-ups)">
+        <div class="bg-white/10 rounded-lg p-2" title="Real spending — all purchases (excludes prélèvements and top-ups)">
           <div class="text-[9px] uppercase tracking-wider opacity-60">Real Out</div>
           <div class="font-headline text-base font-bold tabular-nums">\${fmt(realOut)}</div>
         </div>
@@ -1311,7 +1311,7 @@ export function renderDashboard(period) {
     const net = t.net_actual_eur;
     const netCls = net >= 0 ? "text-primary" : "text-error";
     document.getElementById("ytdCards").innerHTML = [
-      \`<div class="bg-surface-container-lowest p-3 cursor-pointer hover:bg-surface-container transition-colors" onclick="openCategoryDrill('income', '\${y.year}')"><div class="text-[10px] font-bold uppercase tracking-wider text-outline">Ingresos YTD</div><div class="font-headline text-lg font-bold tabular-nums mt-0.5 text-on-surface">\${fmt(t.income_actual_eur)}</div><div class="text-[9px] text-primary mt-0.5">click → detalle</div></div>\`,
+      \`<div class="bg-surface-container-lowest p-3 cursor-pointer hover:bg-surface-container transition-colors" onclick="openCategoryDrill('income', '\${y.year}')"><div class="text-[10px] font-bold uppercase tracking-wider text-outline">Income YTD</div><div class="font-headline text-lg font-bold tabular-nums mt-0.5 text-on-surface">\${fmt(t.income_actual_eur)}</div><div class="text-[9px] text-primary mt-0.5">click → detail</div></div>\`,
       \`<div class="bg-surface-container-lowest p-3 cursor-pointer hover:bg-surface-container transition-colors" onclick="openYTDBreakdown(\${JSON.stringify(y).replace(/"/g, '&quot;')})"><div class="text-[10px] font-bold uppercase tracking-wider text-outline">Gasto YTD</div><div class="font-headline text-lg font-bold tabular-nums mt-0.5 text-on-surface">\${fmt(t.expenses_actual_eur)}</div><div class="text-[9px] text-primary mt-0.5">click → desglose</div></div>\`,
       \`<div class="bg-surface-container-lowest p-3 cursor-pointer hover:bg-surface-container transition-colors" onclick="openYTDBreakdown(\${JSON.stringify(y).replace(/"/g, '&quot;')})"><div class="text-[10px] font-bold uppercase tracking-wider text-outline">Neto YTD</div><div class="font-headline text-lg font-bold tabular-nums mt-0.5 \${netCls}">\${fmt(net)}</div><div class="text-[9px] text-primary mt-0.5">click → mensual</div></div>\`,
       \`<div class="bg-surface-container-lowest p-3 cursor-pointer hover:bg-surface-container transition-colors" onclick="openYTDBreakdown(\${JSON.stringify(y).replace(/"/g, '&quot;')})"><div class="text-[10px] font-bold uppercase tracking-wider text-outline">Media/mes</div><div class="font-headline text-lg font-bold tabular-nums mt-0.5 text-on-surface">\${fmt(t.avg_monthly_expense)}</div><div class="text-[9px] text-primary mt-0.5">click → trend</div></div>\`,
@@ -1335,8 +1335,8 @@ export function renderDashboard(period) {
     const modal = document.getElementById("drillModal");
     const body  = document.getElementById("drillBody");
     document.getElementById("drillTitle").textContent = category;
-    document.getElementById("drillSub").textContent   = "Periodo " + period + " · cargando…";
-    body.innerHTML = "<div class='p-8 text-center text-outline'>Cargando…</div>";
+    document.getElementById("drillSub").textContent   = "Period " + period + " · loading…";
+    body.innerHTML = "<div class='p-8 text-center text-outline'>Loading…</div>";
     modal.classList.remove("hidden");
 
     const url = "/api/category.json?key=" + encodeURIComponent(key) + "&category=" + encodeURIComponent(category) + "&period=" + encodeURIComponent(period);
@@ -1353,11 +1353,11 @@ export function renderDashboard(period) {
       <table class="w-full text-sm">
         <thead class="bg-surface-container sticky top-0">
           <tr class="text-left text-[10px] uppercase tracking-wider text-outline">
-            <th class="px-3 py-2">Fecha</th>
-            <th class="px-3 py-2 w-20">Cuenta</th>
-            <th class="px-3 py-2">Comercio</th>
-            <th class="px-3 py-2 text-right">Monto</th>
-            <th class="px-3 py-2 text-right">Categoría</th>
+            <th class="px-3 py-2">Date</th>
+            <th class="px-3 py-2 w-20">Account</th>
+            <th class="px-3 py-2">Merchant</th>
+            <th class="px-3 py-2 text-right">Amount</th>
+            <th class="px-3 py-2 text-right">Category</th>
           </tr>
         </thead>
         <tbody>
@@ -1376,7 +1376,7 @@ export function renderDashboard(period) {
             </tr>\`;
           }).join("")}
         </tbody>
-      </table>\` : "<div class='p-8 text-center text-outline italic'>Sin transacciones</div>";
+      </table>\` : "<div class='p-8 text-center text-outline italic'>No transactions</div>";
 
     body.querySelectorAll(".drillRecat").forEach((sel) => {
       sel.onchange = async () => {
@@ -1502,7 +1502,7 @@ export function renderDashboard(period) {
   // como sub-detalle informativo (Arriendo €1604 dentro de housing, etc.).
   function openBudgetEditor() {
     const d = currentData; if (!d) return;
-    document.getElementById("budgetModalSub").textContent = "Periodo " + d.period + " — presupuesto por categoría";
+    document.getElementById("budgetModalSub").textContent = "Period " + d.period + " — budget per category";
     const body = document.getElementById("budgetBody");
 
     // All 14 categories, sorted by current budget+actual desc, then alpha.
@@ -1521,9 +1521,9 @@ export function renderDashboard(period) {
       <table class="w-full text-sm">
         <thead class="sticky top-0 bg-surface-container z-10">
           <tr class="text-left text-[10px] uppercase tracking-wider text-outline">
-            <th class="px-4 py-3">Categoría</th>
-            <th class="px-4 py-3 text-right w-32">Budget €/mes</th>
-            <th class="px-4 py-3 text-right">Real</th>
+            <th class="px-4 py-3">Category</th>
+            <th class="px-4 py-3 text-right w-32">Budget €/mo</th>
+            <th class="px-4 py-3 text-right">Actual</th>
             <th class="px-4 py-3 text-right w-20">%</th>
           </tr>
         </thead>
@@ -1554,7 +1554,7 @@ export function renderDashboard(period) {
           }).join("")}
           <tr class="bg-surface-container">
             <td colspan="4" class="px-4 py-3 text-xs text-outline italic">
-              Pon 0 para limpiar el presupuesto de una categoría. Los sub-items (↳) son fixed_expenses heredados — se mantienen como referencia.
+              Set to 0 to clear a category's budget. Sub-items (↳) are legacy fixed_expenses — informational only.
             </td>
           </tr>
         </tbody>
@@ -1592,14 +1592,14 @@ export function renderDashboard(period) {
   document.getElementById("budgetCloneBtn").onclick = async () => {
     const fromPeriod = prompt("Copiar presupuesto por categoría de qué periodo? (YYYY-MM)\\nEjemplo: 2026-04");
     if (!fromPeriod || !/^\d{4}-\d{2}$/.test(fromPeriod)) return;
-    if (!confirm("Solo copia categorías que no tengan presupuesto en " + currentData.period + ". ¿Continuar?")) return;
+    if (!confirm("Only copies categories that don't have a budget in " + currentData.period + ". Continue?")) return;
     const r = await fetch("/api/budget?key=" + encodeURIComponent(key), {
       method: "POST", headers: { "content-type": "application/json" },
       body: JSON.stringify({ period: currentData.period, kind: "copy_categories", payload: { srcPeriod: fromPeriod } }),
     });
     const j = await r.json().catch(() => ({}));
     if (!r.ok) { alert("Error: " + (j.error || r.status)); return; }
-    alert("Copiadas " + (j.copied ?? 0) + " categorías desde " + fromPeriod);
+    alert("Copied " + (j.copied ?? 0) + " categories from " + fromPeriod);
     await load(currentData.period);
     openBudgetEditor();
   };
@@ -1608,7 +1608,7 @@ export function renderDashboard(period) {
   openBnpBalanceEditor = async () => {
     const period = currentData?.period;
     if (!period) return;
-    document.getElementById("bnpModalPeriod").textContent = "Periodo " + period;
+    document.getElementById("bnpModalPeriod").textContent = "Period " + period;
     // Pre-fill with current values
     const r = await fetch("/api/cashflow.json?key=" + encodeURIComponent(key) + "&account=bnp&period=" + period);
     const d = await r.json();
@@ -1651,12 +1651,12 @@ export function renderDashboard(period) {
   document.getElementById("auditModal").onclick = (e) => { if (e.target.id === "auditModal") e.currentTarget.classList.add("hidden"); };
 
   function renderAudit(a) {
-    document.getElementById("auditSub").textContent = "Periodo " + a.period + " — txs no claim por ningún fijo (informativo con MECE por categoría)";
+    document.getElementById("auditSub").textContent = "Period " + a.period + " — txs not claimed by any fixed line (informational with category-level MECE)";
 
     document.getElementById("auditTotals").innerHTML = [
-      \`<div class="bg-surface-container rounded-lg p-2.5"><div class="text-[10px] uppercase tracking-wider text-outline">Total mes</div><div class="font-headline font-bold text-base tabular-nums mt-0.5">\${fmt(a.totals.total_outflow)}</div></div>\`,
-      \`<div class="bg-primary-container rounded-lg p-2.5"><div class="text-[10px] uppercase tracking-wider text-on-primary-container/80" title="Transacciones reconocidas por un keyword de fixed_expenses">Claim por fijo</div><div class="font-headline font-bold text-base tabular-nums mt-0.5 text-on-primary-container">\${fmt(a.totals.total_claimed)}</div></div>\`,
-      \`<div class="bg-warn-container rounded-lg p-2.5" title="No matchean ningún match_keyword de fixed_expenses. NO ES UN ERROR — solo no están atadas a un concepto fijo específico (rent/gym/etc). Su categoría se respeta y cuentan en su bucket del presupuesto por categoría."><div class="text-[10px] uppercase tracking-wider text-warn">Sin fijo asociado</div><div class="font-headline font-bold text-base tabular-nums mt-0.5 text-warn">\${fmt(a.totals.total_orphan)} · \${a.totals.orphan_pct}%</div></div>\`,
+      \`<div class="bg-surface-container rounded-lg p-2.5"><div class="text-[10px] uppercase tracking-wider text-outline">Month total</div><div class="font-headline font-bold text-base tabular-nums mt-0.5">\${fmt(a.totals.total_outflow)}</div></div>\`,
+      \`<div class="bg-primary-container rounded-lg p-2.5"><div class="text-[10px] uppercase tracking-wider text-on-primary-container/80" title="Transactions matched by a fixed_expenses keyword">Claimed by fixed</div><div class="font-headline font-bold text-base tabular-nums mt-0.5 text-on-primary-container">\${fmt(a.totals.total_claimed)}</div></div>\`,
+      \`<div class="bg-warn-container rounded-lg p-2.5" title="Don't match any fixed_expenses keyword. NOT AN ERROR — just not tied to a specific fixed concept (rent/gym/etc). Their category is respected and they count in their category bucket."><div class="text-[10px] uppercase tracking-wider text-warn">No fixed line tied</div><div class="font-headline font-bold text-base tabular-nums mt-0.5 text-warn">\${fmt(a.totals.total_orphan)} · \${a.totals.orphan_pct}%</div></div>\`,
     ].join("");
 
     // Group orphans by category for visual clarity
@@ -1814,11 +1814,11 @@ export function renderDashboard(period) {
     document.getElementById("kpiPlanned").textContent = fmt(planned);
     const catCount = (d.category_rows || []).filter((r) => r.budget_eur > 0).length;
     document.getElementById("kpiPlannedBreak").textContent = catCount > 0
-      ? catCount + " categorías presupuestadas"
+      ? catCount + " budgeted categories"
       : "F " + fmt(t.fixed_eur) + " · V " + fmt(t.variable_eur);
     document.getElementById("kpiPct").textContent = fmtPct(t.pct_spent);
     document.getElementById("kpiPct").className = "font-headline text-xl font-bold tabular-nums mt-1 " + (t.pct_spent == null ? "text-on-surface" : t.pct_spent > 95 ? "text-error" : t.pct_spent > 80 ? "text-warn" : "text-primary");
-    document.getElementById("kpiPctSub").textContent = t.pct_spent == null ? "—" : t.pct_spent <= 80 ? "Cómodo" : t.pct_spent <= 95 ? "Atención" : "Sobre presupuesto";
+    document.getElementById("kpiPctSub").textContent = t.pct_spent == null ? "—" : t.pct_spent <= 80 ? "Comfortable" : t.pct_spent <= 95 ? "Warning" : "Over budget";
 
     // Insight strip — worst overspend at category level (MECE)
     const worstOverspend = (d.category_rows || [])
@@ -1835,7 +1835,7 @@ export function renderDashboard(period) {
             \${meta.emoji} \${meta.label} al \${fmtPct(worstOverspend.pct_used)}
           </div>
           <div class="text-xs text-on-surface/70">
-            Real \${fmt(worstOverspend.actual_eur)} de \${fmt(worstOverspend.budget_eur)} planeados.
+            Actual \${fmt(worstOverspend.actual_eur)} of \${fmt(worstOverspend.budget_eur)} planned.
           </div>
         </div>\`;
     } else if (t.pct_spent != null && t.pct_spent > 80) {
@@ -1843,17 +1843,17 @@ export function renderDashboard(period) {
       insight.innerHTML = \`
         <span class="material-symbols-outlined text-warn">trending_up</span>
         <div class="flex-1">
-          <div class="font-headline font-bold text-on-surface text-sm">Cerca del límite</div>
-          <div class="text-xs text-on-surface/70">Llevas \${fmtPct(t.pct_spent)} del ingreso gastado este mes.</div>
+          <div class="font-headline font-bold text-on-surface text-sm">Near the limit</div>
+          <div class="text-xs text-on-surface/70">You've spent \${fmtPct(t.pct_spent)} of income this month.</div>
         </div>\`;
     } else {
       insight.className = "rounded-2xl p-4 flex items-center gap-3 border border-primary/20 bg-primary-container";
       insight.innerHTML = \`
         <span class="material-symbols-outlined text-primary">eco</span>
         <div class="flex-1">
-          <div class="font-headline font-bold text-on-primary-container text-sm">Bajo control</div>
+          <div class="font-headline font-bold text-on-primary-container text-sm">Under control</div>
           <div class="text-xs text-on-primary-container/80">
-            Ningún gasto fijo sobre presupuesto. \${t.pct_spent != null ? fmtPct(t.pct_spent) + " gastado." : ""}
+            No category over budget. \${t.pct_spent != null ? fmtPct(t.pct_spent) + " spent." : ""}
           </div>
         </div>\`;
     }
@@ -1872,7 +1872,7 @@ export function renderDashboard(period) {
     const chipsEl = document.getElementById("filterChips");
     chipsEl.innerHTML = \`
       <div class="text-xs text-outline tabular-nums">
-        <strong class="text-on-surface">\${withBudget}</strong> categorías ·
+        <strong class="text-on-surface">\${withBudget}</strong> categories ·
         plan <strong class="text-on-surface">€\${fmt(budgetTotal).replace("€","")}</strong> ·
         real <strong class="text-on-surface">€\${fmt(actualTotal).replace("€","")}</strong>
         \${pctOverall != null ? \`(<span class="\${statsClr} font-semibold">\${pctOverall}%</span>)\` : ""}
@@ -1925,7 +1925,7 @@ export function renderDashboard(period) {
 
     const tbl = document.getElementById("gastosTbl");
     if (!filteredCats.length) {
-      tbl.innerHTML = \`<tr><td colspan="5" class="px-3 py-8 text-outline italic text-center">Sin categorías para \${d.period}</td></tr>\`;
+      tbl.innerHTML = \`<tr><td colspan="5" class="px-3 py-8 text-outline italic text-center">No categories for \${d.period}</td></tr>\`;
     } else {
       tbl.innerHTML = filteredCats.map((c) => {
         const pct = c.pct_used;
@@ -1983,7 +1983,7 @@ export function renderDashboard(period) {
       <table class="w-full text-sm">
         <thead>
           <tr class="border-b border-outline-variant/15">
-            <th class="px-3 py-2 text-left text-[10px] uppercase tracking-wider text-outline">Categoría</th>
+            <th class="px-3 py-2 text-left text-[10px] uppercase tracking-wider text-outline">Category</th>
             \${monthHeader}
             <th class="px-3 py-2 text-right text-[10px] uppercase tracking-wider text-outline">Δ</th>
             <th class="px-3 py-2 text-right text-[10px] uppercase tracking-wider text-outline">%</th>
@@ -2121,7 +2121,7 @@ export function renderDashboard(period) {
     const maxBudget = Math.max(1, ...variance.map((r) => Math.max(r.budget_eur, r.actual_eur)));
     const list = document.getElementById("varianceList");
     if (!variance.length) {
-      list.innerHTML = \`<div class="text-xs text-outline italic p-3 text-center">Sin categorías presupuestadas — pon presupuestos en "Editar budget"</div>\`;
+      list.innerHTML = \`<div class="text-xs text-outline italic p-3 text-center">No budgeted categories — add budgets in "Edit budget"</div>\`;
     } else {
       list.innerHTML = variance.map((r) => {
         const meta = CAT_META[r.category] || { emoji: "", label: r.category };

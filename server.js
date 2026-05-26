@@ -463,6 +463,22 @@ app.post("/api/pending", express.json({ limit: "50kb" }), (req, res) => {
   }
 });
 
+// Maintenance: update variable_expenses.category by label across all periods.
+// Used to fix legacy miscategorizations (Pago Deuda → debt, Inversion PERCO →
+// savings) without losing the historical rows.
+app.post("/api/maintenance/update-variable-category", express.json({ limit: "10kb" }), (req, res) => {
+  if (!requireKey(req, res, "DASH_KEY")) return;
+  try {
+    const { label, category } = req.body || {};
+    if (!label || !category) return res.status(400).json({ error: "label + category required" });
+    const r = db.prepare(`UPDATE variable_expenses SET category = ? WHERE label = ?`).run(category, label);
+    res.json({ ok: true, updated: r.changes });
+  } catch (err) {
+    console.error("[var cat fix]", err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // Categorization audit: runs the deterministic regex categorizer over every
 // transaction's description and reports rows where the regex suggests a
 // different category than what's stored. Lets the user bulk-apply fixes when
