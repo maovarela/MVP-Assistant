@@ -395,6 +395,44 @@ export function renderDashboard(period) {
   };
   const CATEGORIES = ["groceries","restaurants","transport","travel","subscriptions","shopping","health","housing","entertainment","transfers","savings","debt","income","fees","other"];
 
+  // Emoji prefix + Spanish label for each category, so the dropdown is
+  // scannable by glance instead of a bare list of English nouns.
+  const CAT_META = {
+    groceries:     { emoji: "🛒", label: "Groceries" },
+    restaurants:   { emoji: "🍽️", label: "Restaurants" },
+    transport:     { emoji: "🚇", label: "Transport" },
+    travel:        { emoji: "✈️", label: "Travel" },
+    subscriptions: { emoji: "🔁", label: "Subscriptions" },
+    shopping:      { emoji: "🛍️", label: "Shopping" },
+    health:        { emoji: "💊", label: "Health" },
+    housing:       { emoji: "🏠", label: "Housing" },
+    entertainment: { emoji: "🎬", label: "Entertainment" },
+    transfers:     { emoji: "↔️", label: "Transfers" },
+    savings:       { emoji: "💰", label: "Savings" },
+    debt:          { emoji: "💳", label: "Debt" },
+    income:        { emoji: "📈", label: "Income" },
+    fees:          { emoji: "💸", label: "Fees" },
+    other:         { emoji: "❓", label: "Other" },
+    uncategorised: { emoji: "❓", label: "Uncategorised" },
+  };
+
+  // Logical groups for the dropdown. Within each group: alphabetical.
+  const CAT_GROUPS = [
+    { name: "Gastos cotidianos", cats: ["entertainment", "groceries", "health", "housing", "restaurants", "shopping", "subscriptions", "transport", "travel"] },
+    { name: "Movimientos",       cats: ["debt", "fees", "income", "savings", "transfers"] },
+    { name: "Misc",              cats: ["other"] },
+  ];
+
+  function categoryOptions(selected) {
+    return CAT_GROUPS.map((g) => {
+      const opts = g.cats.map((c) => {
+        const m = CAT_META[c] || { emoji: "", label: c };
+        return \`<option value="\${c}" \${c === selected ? "selected" : ""}>\${m.emoji}  \${m.label}</option>\`;
+      }).join("");
+      return \`<optgroup label="\${g.name}">\${opts}</optgroup>\`;
+    }).join("");
+  }
+
   async function changeCategory(txId, newCat) {
     const r = await fetch("/api/transactions/category?key=" + encodeURIComponent(key), {
       method: "POST",
@@ -580,8 +618,8 @@ export function renderDashboard(period) {
               <td class="px-3 py-2 text-on-surface">\${r.merchant || "—"}</td>
               <td class="px-3 py-2 text-right tabular-nums \${r.amount < 0 ? "" : "text-primary"}">\${fmt(r.amount)}</td>
               <td class="px-3 py-2 text-right">
-                <select data-tx-id="\${r.id ?? ""}" data-current-cat="\${category}" class="drillRecat text-xs bg-surface-container border-0 rounded px-2 py-1">
-                  \${CATEGORIES.map((c) => \`<option value="\${c}" \${c === category ? "selected" : ""}>\${c}</option>\`).join("")}
+                <select data-tx-id="\${r.id ?? ""}" data-current-cat="\${category}" class="drillRecat text-xs bg-surface-container border-0 rounded-lg pl-2.5 pr-7 py-1.5 font-medium hover:bg-surface-container-high focus:ring-2 focus:ring-primary focus:outline-none transition-colors">
+                  \${categoryOptions(category)}
                 </select>
               </td>
             </tr>\`;
@@ -793,8 +831,8 @@ export function renderDashboard(period) {
               <div class="text-sm truncate"><span class="text-outline tabular-nums mr-2">\${o.date.slice(5)}</span>\${o.merchant || "—"}</div>
             </div>
             <span class="font-mono tabular-nums text-sm">\${fmt(o.amount)}</span>
-            <select data-tx-id="\${o.id}" data-current-cat="\${o.category || ""}" class="auditRecat text-xs bg-surface-container border-0 rounded px-2 py-1.5 min-w-[140px]" title="Cambiar categoría">
-              \${CATEGORIES.map((c) => \`<option value="\${c}" \${c === o.category ? "selected" : ""}>\${c}</option>\`).join("")}
+            <select data-tx-id="\${o.id}" data-current-cat="\${o.category || ""}" class="auditRecat text-xs bg-surface-container border-0 rounded-lg pl-2.5 pr-7 py-1.5 min-w-[160px] font-medium hover:bg-surface-container-high focus:ring-2 focus:ring-primary focus:outline-none transition-colors" title="Cambiar categoría">
+              \${categoryOptions(o.category)}
             </select>
           </div>\`).join("")}
       </div>\`;
