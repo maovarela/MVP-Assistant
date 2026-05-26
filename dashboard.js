@@ -235,9 +235,9 @@ export function renderDashboard(period) {
         <thead class="bg-surface-container">
           <tr class="text-left text-[10px] uppercase tracking-wider text-outline">
             <th class="px-3 py-2.5">Categoría</th>
-            <th class="px-3 py-2.5 w-20 text-center">Tipo</th>
             <th class="px-3 py-2.5 text-right">Budget</th>
             <th class="px-3 py-2.5 text-right">Real</th>
+            <th class="px-3 py-2.5 text-right">Δ</th>
             <th class="px-3 py-2.5 text-right w-16">%</th>
           </tr>
         </thead>
@@ -948,83 +948,93 @@ export function renderDashboard(period) {
     }
   };
 
-  // ─── Budget editor ───────────────────────────────────────────────────────
+  // ─── Budget editor — MECE por categoría ──────────────────────────────────
+  // Una fila por categoría (los 14 buckets). El input edita category_budgets
+  // (la verdad MECE). Debajo de cada categoría se muestran sus fixed_items
+  // como sub-detalle informativo (Arriendo €1604 dentro de housing, etc.).
   function openBudgetEditor() {
     const d = currentData; if (!d) return;
-    document.getElementById("budgetModalSub").textContent = "Periodo " + d.period;
+    document.getElementById("budgetModalSub").textContent = "Periodo " + d.period + " — presupuesto por categoría";
     const body = document.getElementById("budgetBody");
 
-    const renderRows = () => {
-      const fixed = d.fixed.map((f) => ({ ...f, type: "fixed", val: f.budget_eur }));
-      const variable = (d.variable || []).map((v) => ({ ...v, type: "variable", val: v.amount_eur, budget_eur: v.amount_eur }));
-      const all = [...fixed, ...variable];
-      body.innerHTML = \`
-        <table class="w-full text-sm">
-          <thead class="sticky top-0 bg-surface-container">
-            <tr class="text-left text-[10px] uppercase tracking-wider text-outline">
-              <th class="px-4 py-3">Tipo</th>
-              <th class="px-4 py-3">Concepto</th>
-              <th class="px-4 py-3">Categoría</th>
-              <th class="px-4 py-3 text-right w-32">Budget €</th>
-              <th class="px-4 py-3 text-right">Real</th>
-            </tr>
-          </thead>
-          <tbody>
-            \${all.map((r) => \`<tr class="border-b border-outline-variant/15">
-              <td class="px-4 py-2">
-                \${r.type === "fixed"
-                  ? \`<span class="px-2 py-0.5 rounded text-[10px] font-bold uppercase bg-primary-container text-on-primary-container">Fijo</span>\`
-                  : \`<span class="px-2 py-0.5 rounded text-[10px] font-bold uppercase bg-secondary-container text-on-surface">Var</span>\`}
-              </td>
-              <td class="px-4 py-2 font-medium">\${r.label}</td>
-              <td class="px-4 py-2 text-outline">\${(CAT_META[r.category] || { emoji:"", label: r.category || "—" }).emoji} \${r.category || "—"}</td>
-              <td class="px-4 py-2 text-right">
-                <input type="number" step="0.01" value="\${r.val}" min="0"
-                       data-label="\${r.label.replace(/"/g, "&quot;")}"
-                       data-type="\${r.type}"
-                       data-orig="\${r.val}"
-                       class="budgetInput w-28 px-2 py-1 bg-surface-container rounded text-right tabular-nums font-semibold focus:ring-2 focus:ring-primary focus:outline-none" />
-              </td>
-              <td class="px-4 py-2 text-right tabular-nums text-outline">\${fmt(r.actual_eur || 0)}</td>
-            </tr>\`).join("")}
-            <tr class="bg-surface-container">
-              <td colspan="5" class="px-4 py-3 text-xs text-outline italic">
-                Para agregar un concepto nuevo: dile al bot "agrega gasto fijo Netflix 12€ subscriptions" o similar.
-              </td>
-            </tr>
-          </tbody>
-        </table>\`;
+    // All 14 categories, sorted by current budget+actual desc, then alpha.
+    const rowsByCat = new Map((d.category_rows || []).map((r) => [r.category, r]));
+    const ordered = CATEGORIES.map((cat) => {
+      const r = rowsByCat.get(cat) || { category: cat, budget_eur: 0, actual_eur: 0, fixed_items: [] };
+      return r;
+    }).sort((a, b) => {
+      const aw = (a.budget_eur || 0) + (a.actual_eur || 0);
+      const bw = (b.budget_eur || 0) + (b.actual_eur || 0);
+      if (bw !== aw) return bw - aw;
+      return a.category.localeCompare(b.category);
+    });
 
-      body.querySelectorAll(".budgetInput").forEach((input) => {
-        input.onchange = async () => {
-          const label = input.dataset.label;
-          const type  = input.dataset.type;
-          const orig  = parseFloat(input.dataset.orig);
-          const val   = parseFloat(input.value);
-          if (!Number.isFinite(val) || val === orig) return;
-          input.disabled = true;
-          const payload = type === "fixed"
-            ? { period: d.period, kind: "fixed", payload: { label, budget_eur: val } }
-            : { period: d.period, kind: "variable", payload: { label, amount_eur: val } };
-          const r = await fetch("/api/budget?key=" + encodeURIComponent(key), {
-            method: "POST", headers: { "content-type": "application/json" },
-            body: JSON.stringify(payload),
-          });
-          if (r.ok) {
-            input.dataset.orig = val;
-            input.classList.add("ring-2", "ring-primary");
-            setTimeout(() => input.classList.remove("ring-2", "ring-primary"), 1000);
-            // refresh dashboard data (modal stays open)
-            await load(d.period);
-          } else {
-            alert("Error guardando: " + r.status);
-            input.value = orig;
-          }
-          input.disabled = false;
-        };
-      });
-    };
-    renderRows();
+    body.innerHTML = \`
+      <table class="w-full text-sm">
+        <thead class="sticky top-0 bg-surface-container z-10">
+          <tr class="text-left text-[10px] uppercase tracking-wider text-outline">
+            <th class="px-4 py-3">Categoría</th>
+            <th class="px-4 py-3 text-right w-32">Budget €/mes</th>
+            <th class="px-4 py-3 text-right">Real</th>
+            <th class="px-4 py-3 text-right w-20">%</th>
+          </tr>
+        </thead>
+        <tbody>
+          \${ordered.map((r) => {
+            const meta = CAT_META[r.category] || { emoji: "", label: r.category };
+            const pct  = r.budget_eur > 0 ? Math.round((r.actual_eur / r.budget_eur) * 1000) / 10 : null;
+            const pctClr = pct == null ? "text-outline" :
+                           pct > 100 ? "text-error" :
+                           pct > 80  ? "text-warn"  : "text-primary";
+            const subItems = (r.fixed_items || []).map((it) =>
+              \`<div class="text-[11px] text-outline pl-6">↳ \${it.label}: \${fmt(it.budget_eur)}</div>\`
+            ).join("");
+            return \`<tr class="border-b border-outline-variant/15">
+              <td class="px-4 py-2.5">
+                <div class="font-medium text-on-surface">\${meta.emoji}  \${meta.label}</div>
+                \${subItems}
+              </td>
+              <td class="px-4 py-2.5 text-right">
+                <input type="number" step="1" value="\${r.budget_eur}" min="0"
+                       data-category="\${r.category}"
+                       data-orig="\${r.budget_eur}"
+                       class="catBudgetInput w-28 px-2 py-1 bg-surface-container rounded text-right tabular-nums font-semibold focus:ring-2 focus:ring-primary focus:outline-none" />
+              </td>
+              <td class="px-4 py-2.5 text-right tabular-nums text-outline">\${fmt(r.actual_eur)}</td>
+              <td class="px-4 py-2.5 text-right tabular-nums \${pctClr} font-semibold">\${fmtPct(pct)}</td>
+            </tr>\`;
+          }).join("")}
+          <tr class="bg-surface-container">
+            <td colspan="4" class="px-4 py-3 text-xs text-outline italic">
+              Pon 0 para limpiar el presupuesto de una categoría. Los sub-items (↳) son fixed_expenses heredados — se mantienen como referencia.
+            </td>
+          </tr>
+        </tbody>
+      </table>\`;
+
+    body.querySelectorAll(".catBudgetInput").forEach((input) => {
+      input.onchange = async () => {
+        const category = input.dataset.category;
+        const orig = parseFloat(input.dataset.orig);
+        const val  = parseFloat(input.value);
+        if (!Number.isFinite(val) || val === orig) return;
+        input.disabled = true;
+        const r = await fetch("/api/budget?key=" + encodeURIComponent(key), {
+          method: "POST", headers: { "content-type": "application/json" },
+          body: JSON.stringify({ period: d.period, kind: "category", payload: { category, budget_eur: val } }),
+        });
+        if (r.ok) {
+          input.dataset.orig = val;
+          input.classList.add("ring-2", "ring-primary");
+          setTimeout(() => input.classList.remove("ring-2", "ring-primary"), 1000);
+          await load(d.period);
+        } else {
+          alert("Error guardando: " + r.status);
+          input.value = orig;
+        }
+        input.disabled = false;
+      };
+    });
 
     document.getElementById("budgetModal").classList.remove("hidden");
   }
@@ -1032,28 +1042,16 @@ export function renderDashboard(period) {
   document.getElementById("budgetClose").onclick = () => document.getElementById("budgetModal").classList.add("hidden");
   document.getElementById("budgetDoneBtn").onclick = () => document.getElementById("budgetModal").classList.add("hidden");
   document.getElementById("budgetCloneBtn").onclick = async () => {
-    const fromPeriod = prompt("Copiar budget de qué periodo? (YYYY-MM)\\nEjemplo: 2026-04");
+    const fromPeriod = prompt("Copiar presupuesto por categoría de qué periodo? (YYYY-MM)\\nEjemplo: 2026-04");
     if (!fromPeriod || !/^\d{4}-\d{2}$/.test(fromPeriod)) return;
-    if (!confirm("Esto va a sobrescribir los budgets del periodo actual con los de " + fromPeriod + ". ¿Continuar?")) return;
-    // Fetch source period
-    const r = await fetch("/api/dashboard.json?key=" + encodeURIComponent(key) + "&period=" + fromPeriod);
-    const src = await r.json();
-    let count = 0;
-    for (const f of (src.fixed || [])) {
-      await fetch("/api/budget?key=" + encodeURIComponent(key), {
-        method: "POST", headers: { "content-type": "application/json" },
-        body: JSON.stringify({ period: currentData.period, kind: "fixed", payload: { label: f.label, budget_eur: f.budget_eur, category: f.category } }),
-      });
-      count++;
-    }
-    for (const v of (src.variable || [])) {
-      await fetch("/api/budget?key=" + encodeURIComponent(key), {
-        method: "POST", headers: { "content-type": "application/json" },
-        body: JSON.stringify({ period: currentData.period, kind: "variable", payload: { label: v.label, amount_eur: v.amount_eur, category: v.category } }),
-      });
-      count++;
-    }
-    alert("Copiados " + count + " items desde " + fromPeriod);
+    if (!confirm("Solo copia categorías que no tengan presupuesto en " + currentData.period + ". ¿Continuar?")) return;
+    const r = await fetch("/api/budget?key=" + encodeURIComponent(key), {
+      method: "POST", headers: { "content-type": "application/json" },
+      body: JSON.stringify({ period: currentData.period, kind: "copy_categories", payload: { srcPeriod: fromPeriod } }),
+    });
+    const j = await r.json().catch(() => ({}));
+    if (!r.ok) { alert("Error: " + (j.error || r.status)); return; }
+    alert("Copiadas " + (j.copied ?? 0) + " categorías desde " + fromPeriod);
     await load(currentData.period);
     openBudgetEditor();
   };
@@ -1244,7 +1242,9 @@ export function renderDashboard(period) {
     populatePeriodSelectors(d.available_periods.length ? d.available_periods : [d.period], d.period);
 
     const t = d.totals;
-    const planned = t.fixed_eur + t.variable_eur;
+    // category_budgets is MECE: single number per category per month. Fallback
+    // to legacy fixed+variable totals if category budgets aren't set yet.
+    const planned = t.category_budget_eur > 0 ? t.category_budget_eur : (t.fixed_eur + t.variable_eur);
 
     // Dial rings
     const pctActual  = t.income_eur > 0 ? (t.actual_eur / t.income_eur) * 100 : 0;
@@ -1264,23 +1264,27 @@ export function renderDashboard(period) {
     const delta = t.actual_eur - planned;
     document.getElementById("kpiActualVsPlan").textContent = "vs plan " + (delta >= 0 ? "+" : "") + fmt(delta);
     document.getElementById("kpiPlanned").textContent = fmt(planned);
-    document.getElementById("kpiPlannedBreak").textContent = "F " + fmt(t.fixed_eur) + " · V " + fmt(t.variable_eur);
+    const catCount = (d.category_rows || []).filter((r) => r.budget_eur > 0).length;
+    document.getElementById("kpiPlannedBreak").textContent = catCount > 0
+      ? catCount + " categorías presupuestadas"
+      : "F " + fmt(t.fixed_eur) + " · V " + fmt(t.variable_eur);
     document.getElementById("kpiPct").textContent = fmtPct(t.pct_spent);
     document.getElementById("kpiPct").className = "font-headline text-xl font-bold tabular-nums mt-1 " + (t.pct_spent == null ? "text-on-surface" : t.pct_spent > 95 ? "text-error" : t.pct_spent > 80 ? "text-warn" : "text-primary");
     document.getElementById("kpiPctSub").textContent = t.pct_spent == null ? "—" : t.pct_spent <= 80 ? "Cómodo" : t.pct_spent <= 95 ? "Atención" : "Sobre presupuesto";
 
-    // Insight strip
-    const worstOverspend = d.fixed
-      .filter((f) => f.pct_used != null && f.pct_used > 100)
+    // Insight strip — worst overspend at category level (MECE)
+    const worstOverspend = (d.category_rows || [])
+      .filter((r) => r.pct_used != null && r.pct_used > 100)
       .sort((a, b) => b.pct_used - a.pct_used)[0];
     const insight = document.getElementById("insight");
     if (worstOverspend) {
+      const meta = CAT_META[worstOverspend.category] || { emoji: "", label: worstOverspend.category };
       insight.className = "rounded-2xl p-4 flex items-center gap-3 border border-error/20 bg-error-container";
       insight.innerHTML = \`
         <span class="material-symbols-outlined text-error">priority_high</span>
         <div class="flex-1">
           <div class="font-headline font-bold text-on-surface text-sm">
-            \${worstOverspend.label} al \${fmtPct(worstOverspend.pct_used)}
+            \${meta.emoji} \${meta.label} al \${fmtPct(worstOverspend.pct_used)}
           </div>
           <div class="text-xs text-on-surface/70">
             Real \${fmt(worstOverspend.actual_eur)} de \${fmt(worstOverspend.budget_eur)} planeados.
@@ -1306,30 +1310,12 @@ export function renderDashboard(period) {
         </div>\`;
     }
 
-    // Aggregate by (category, type) — MECE: each row is either Fijo OR Variable
-    // for a category, never combined. So if a category has both, you get 2
-    // rows. Matches user's mental model: "savings via PERCO is a fixed plan,
-    // savings via one-off transfer is variable — show them apart".
-    const catAggList = [];
-    const fixedByCat = {};
-    for (const f of d.fixed) {
-      const cat = f.category || "uncategorised";
-      fixedByCat[cat] = fixedByCat[cat] || { category: cat, type: "fijo", budget: 0, actual: 0 };
-      fixedByCat[cat].budget += f.budget_eur || 0;
-      fixedByCat[cat].actual += f.actual_eur || 0;
-    }
-    const varByCat = {};
-    for (const v of d.variable) {
-      const cat = v.category || "uncategorised";
-      varByCat[cat] = varByCat[cat] || { category: cat, type: "variable", budget: 0, actual: 0 };
-      varByCat[cat].budget += v.amount_eur || 0;
-      varByCat[cat].actual += v.actual_eur || 0;
-    }
-    Object.values(fixedByCat).forEach((r) => catAggList.push(r));
-    Object.values(varByCat).forEach((r)   => catAggList.push(r));
-
-    const fijosTotal = d.fixed.reduce((s, r) => s + (r.budget_eur || 0), 0);
-    const varTotal   = d.variable.reduce((s, r) => s + (r.amount_eur || 0), 0);
+    // MECE: una fila por categoría desde el backend (d.category_rows).
+    // category_budgets es la fuente única de verdad para el presupuesto;
+    // fixed_items se muestran como sub-detalle informativo.
+    const allRows = d.category_rows || [];
+    const budgetTotal = allRows.reduce((s, r) => s + (r.budget_eur || 0), 0);
+    const actualTotal = allRows.reduce((s, r) => s + (r.actual_eur || 0), 0);
 
     const chipsEl = document.getElementById("filterChips");
     function chip(name, label, count, total, active) {
@@ -1337,63 +1323,52 @@ export function renderDashboard(period) {
         \${label} <span class="opacity-70 ml-1">\${count} · \${fmt(total)}</span>
       </button>\`;
     }
+    const withBudget = allRows.filter((r) => r.budget_eur > 0).length;
     chipsEl.innerHTML = [
-      chip("fijos",     "Fijos",     d.fixed.length,                       fijosTotal,             activeFilter === "fijos"),
-      chip("variables", "Variables", d.variable.length,                    varTotal,               activeFilter === "variables"),
-      chip("todos",     "Todos",     d.fixed.length + d.variable.length,   fijosTotal + varTotal,  activeFilter === "todos"),
+      chip("budgeted", "Con presupuesto", withBudget,       budgetTotal, activeFilter === "budgeted" || !activeFilter || activeFilter === "fijos"),
+      chip("all",      "Todas",           allRows.length,   actualTotal, activeFilter === "all"      || activeFilter === "todos" || activeFilter === "variables"),
     ].join("");
     chipsEl.querySelectorAll("button").forEach((b) => {
       b.onclick = () => { activeFilter = b.dataset.filter; render(currentData); };
     });
 
-    // Render rows aggregated by (category, type) — MECE
-    const includeFixed   = activeFilter !== "variables";
-    const includeVar     = activeFilter !== "fijos";
-    const filteredCats = catAggList.filter((c) =>
-      (includeFixed && c.type === "fijo") || (includeVar && c.type === "variable")
-    ).sort((a, b) => b.budget - a.budget);
+    const showAll = activeFilter === "all" || activeFilter === "todos" || activeFilter === "variables";
+    const filteredCats = allRows
+      .filter((r) => showAll ? true : (r.budget_eur > 0 || r.actual_eur > 0))
+      .sort((a, b) => (b.budget_eur + b.actual_eur) - (a.budget_eur + a.actual_eur));
 
     const tbl = document.getElementById("gastosTbl");
-    if (!filteredCats.length && (!d.leftovers || !d.leftovers.length)) {
+    if (!filteredCats.length) {
       tbl.innerHTML = \`<tr><td colspan="5" class="px-3 py-8 text-outline italic text-center">Sin categorías para \${d.period}</td></tr>\`;
     } else {
-      const showLeftovers = activeFilter !== "variables";
-      const leftoverRows = showLeftovers && d.leftovers ? d.leftovers.filter((l) => l.total > 0.5) : [];
-
       tbl.innerHTML = filteredCats.map((c) => {
-        const pct = c.budget > 0 ? Math.round((c.actual / c.budget) * 1000) / 10 : null;
+        const pct = c.pct_used;
+        const meta = CAT_META[c.category] || { emoji: "", label: c.category };
         const pctClr = pct == null ? "bg-surface-container text-on-surface-variant" :
                        pct > 100 ? "bg-error-container text-error" :
                        pct > 80  ? "bg-warn-container text-warn"   : "bg-primary-container text-on-primary-container";
-        const tipoBadge = c.type === "fijo"
-          ? \`<span class="px-2 py-0.5 rounded text-[10px] font-bold uppercase tracking-wider bg-primary-container text-on-primary-container">Fijo</span>\`
-          : \`<span class="px-2 py-0.5 rounded text-[10px] font-bold uppercase tracking-wider bg-secondary-container text-on-surface">Var</span>\`;
+        const deltaClr = c.budget_eur === 0 ? "text-outline" :
+                         c.delta_eur >= 0   ? "text-primary"  : "text-error";
+        const deltaTxt = c.budget_eur === 0
+          ? "—"
+          : (c.delta_eur >= 0 ? "+" : "") + fmt(c.delta_eur);
+        const subItems = (c.fixed_items || []).length
+          ? \`<div class="text-[10px] text-outline pl-6 mt-0.5">\${c.fixed_items.map((it) => it.label + " " + fmt(it.budget_eur)).join(" · ")}</div>\`
+          : "";
         return \`<tr class="border-b border-outline-variant/15 last:border-0 hover:bg-surface-container-low cursor-pointer" onclick="openCategoryDrill('\${c.category}', '\${d.period}')">
           <td class="px-3 py-2.5">
             <div class="flex items-center gap-2">
               <span class="material-symbols-outlined text-outline" style="font-size: 16px">\${ICON[c.category] || ICON.other}</span>
-              <span class="text-on-surface font-medium capitalize">\${c.category}</span>
+              <span class="text-on-surface font-medium">\${meta.emoji} \${meta.label}</span>
             </div>
+            \${subItems}
           </td>
-          <td class="px-3 py-2.5 text-center">\${tipoBadge}</td>
-          <td class="px-3 py-2.5 text-right tabular-nums">\${fmt(c.budget)}</td>
-          <td class="px-3 py-2.5 text-right tabular-nums">\${fmt(c.actual)}</td>
+          <td class="px-3 py-2.5 text-right tabular-nums">\${c.budget_eur > 0 ? fmt(c.budget_eur) : '<span class="text-outline">—</span>'}</td>
+          <td class="px-3 py-2.5 text-right tabular-nums">\${fmt(c.actual_eur)}</td>
+          <td class="px-3 py-2.5 text-right tabular-nums \${deltaClr}">\${deltaTxt}</td>
           <td class="px-3 py-2.5 text-right"><span class="px-2 py-0.5 rounded-full text-[10px] font-semibold \${pctClr}">\${fmtPct(pct)}</span></td>
         </tr>\`;
-      }).join("") + leftoverRows.map((l) => \`
-        <tr class="border-b border-outline-variant/15 last:border-0 bg-warn-container/30 hover:bg-warn-container/50 cursor-pointer" onclick="openCategoryDrill('\${l.category}', '\${d.period}')">
-          <td class="px-3 py-2.5">
-            <div class="flex items-center gap-2">
-              <span class="material-symbols-outlined text-warn" style="font-size: 16px">\${ICON[l.category] || ICON.other}</span>
-              <span class="text-on-surface italic capitalize">\${l.category}</span>
-              <span class="text-[9px] text-outline">(sin presupuesto)</span>
-            </div>
-          </td>
-          <td class="px-3 py-2.5 text-center"><span class="px-2 py-0.5 rounded text-[10px] font-bold uppercase tracking-wider bg-warn-container text-warn">Orphan</span></td>
-          <td class="px-3 py-2.5 text-right tabular-nums text-outline">—</td>
-          <td class="px-3 py-2.5 text-right tabular-nums">\${fmt(l.total)}</td>
-          <td class="px-3 py-2.5 text-right"><span class="text-outline">—</span></td>
-        </tr>\`).join("");
+      }).join("");
     }
 
     renderCharts(d);
@@ -1538,18 +1513,15 @@ export function renderDashboard(period) {
     });
 
     // ── VARIANCE BARS: horizontal, sorted, color-coded ─────────────────
-    const planMap = {};
-    for (const f of d.fixed)    if (f.category) planMap[f.category] = (planMap[f.category] || 0) + f.budget_eur;
-    for (const v of d.variable) if (v.category) planMap[v.category] = (planMap[v.category] || 0) + v.amount_eur;
-    const actualMap = Object.fromEntries(d.by_category_actual.map((r) => [r.category, r.total]));
-    const allCats = Array.from(new Set([...Object.keys(planMap), ...Object.keys(actualMap)]));
-    // Only show categories that have a budget. Orphan-only (no plan) clutter
-    // the chart and dominate visually (e.g. 'other' from one-off shopping).
-    const variance = allCats.map((c) => ({
-      category: c, planned: planMap[c] || 0, actual: actualMap[c] || 0,
-      pct: planMap[c] > 0 ? (actualMap[c] || 0) / planMap[c] * 100 : null,
-    })).filter((x) => x.planned > 0)
-       .sort((a, b) => b.planned - a.planned);
+    // Driven by category_budgets (MECE source of truth). Only categories with
+    // a budget render — orphan actuals show up in the donut + table instead.
+    const variance = (d.category_rows || [])
+      .filter((r) => r.budget_eur > 0)
+      .map((r) => ({
+        category: r.category, planned: r.budget_eur, actual: r.actual_eur,
+        pct: r.pct_used,
+      }))
+      .sort((a, b) => b.planned - a.planned);
 
     // Color-coded variance: muted green / amber / red — same hue family as palette
     const barColor = variance.map((v) => v.pct == null ? "#94a3b8" : v.pct > 100 ? "#dc2626" : v.pct > 80 ? "#d97706" : "#2e7d5c");

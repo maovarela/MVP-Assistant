@@ -36,6 +36,7 @@ import db, {
   getAccountCashflow, setAccountBalance,
   getConsolidatedHistory,
   deleteBudgetRow,
+  upsertCategoryBudget, copyCategoryBudgets,
 } from "./memory.js";
 import { categorize as keywordCategorize } from "./bankCsv.js";
 import { refreshCurrentMonthFx } from "./fx.js";
@@ -601,6 +602,10 @@ app.post("/api/budget", express.json({ limit: "100kb" }), (req, res) => {
       case "variable": row = insertVariableExpense({ period, ...payload }); break;
       case "debt":     row = upsertDebt({ period, ...payload });            break;
       case "fx":       row = setFxRate(period, payload);                    break;
+      case "category": row = upsertCategoryBudget({ period, ...payload });  break;
+      case "copy_categories":
+        row = copyCategoryBudgets({ srcPeriod: payload.srcPeriod, dstPeriod: period });
+        break;
       default: return res.status(400).json({ error: `unknown kind: ${kind}` });
     }
     res.json({ ok: true, row });

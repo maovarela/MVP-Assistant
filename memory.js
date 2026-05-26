@@ -158,11 +158,55 @@ db.exec(`
     updated_at TEXT NOT NULL DEFAULT (datetime('now'))
   );
 
+  CREATE TABLE IF NOT EXISTS category_budgets (
+    period     TEXT NOT NULL,
+    category   TEXT NOT NULL,
+    budget_eur REAL NOT NULL,
+    notes      TEXT,
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    PRIMARY KEY (period, category)
+  );
+
   CREATE INDEX IF NOT EXISTS idx_incomes_period           ON incomes(period);
   CREATE INDEX IF NOT EXISTS idx_fixed_expenses_period    ON fixed_expenses(period);
   CREATE INDEX IF NOT EXISTS idx_variable_expenses_period ON variable_expenses(period);
   CREATE INDEX IF NOT EXISTS idx_debts_period             ON debts(period);
+  CREATE INDEX IF NOT EXISTS idx_category_budgets_period  ON category_budgets(period);
 `);
+
+// One-shot migration: derive category_budgets from existing fixed + variable
+// rows the first time the table is empty. Lets the user keep the seeded
+// per-concept budgets as a category-level starting point. Idempotent: skips
+// once category_budgets has any row.
+try {
+  const cbCount = db.prepare(`SELECT COUNT(*) AS n FROM category_budgets`).get().n;
+  const legacyCount =
+    db.prepare(`SELECT COUNT(*) AS n FROM fixed_expenses`).get().n +
+    db.prepare(`SELECT COUNT(*) AS n FROM variable_expenses`).get().n;
+  if (cbCount === 0 && legacyCount > 0) {
+    const rows = db.prepare(`
+      SELECT period, COALESCE(category, 'other') AS category,
+             ROUND(SUM(amount), 2) AS budget_eur
+      FROM (
+        SELECT period, category, budget_eur AS amount FROM fixed_expenses
+        UNION ALL
+        SELECT period, category, amount_eur AS amount FROM variable_expenses
+      )
+      WHERE amount IS NOT NULL
+      GROUP BY period, COALESCE(category, 'other')
+      HAVING SUM(amount) > 0
+    `).all();
+    const ins = db.prepare(`
+      INSERT OR IGNORE INTO category_budgets (period, category, budget_eur)
+      VALUES (?, ?, ?)
+    `);
+    let n = 0;
+    for (const r of rows) { ins.run(r.period, r.category, r.budget_eur); n++; }
+    console.log(`[migrate] category_budgets seeded from legacy fixed+variable: ${n} rows`);
+  }
+} catch (err) {
+  console.error("[migrate category_budgets]", err.message);
+}
 
 // Migration: add channel column for existing DBs that predate multi-channel
 // support. ADD COLUMN is idempotent only if the column doesn't exist; pragma
@@ -859,6 +903,49 @@ export function deleteBudgetRow({ kind, label, period }) {
   return { ok: true, deleted: r.changes };
 }
 
+/** UPSERT a category-level budget. budget_eur=0 deletes the row (keeps the
+ *  category table clean of explicit zeros vs implicit "no budget set"). */
+export function upsertCategoryBudget({ period, category, budget_eur, notes }) {
+  const p = period || currentPeriod();
+  if (!category) throw new Error("category required");
+  if (!Number.isFinite(budget_eur)) throw new Error("budget_eur must be a number");
+  if (budget_eur === 0) {
+    db.prepare(`DELETE FROM category_budgets WHERE period = ? AND category = ?`).run(p, category);
+    return { ok: true, deleted: true };
+  }
+  db.prepare(`
+    INSERT INTO category_budgets (period, category, budget_eur, notes)
+    VALUES (?, ?, ?, ?)
+    ON CONFLICT(period, category) DO UPDATE SET
+      budget_eur = excluded.budget_eur, notes = excluded.notes
+  `).run(p, category, budget_eur, notes ?? null);
+  return db.prepare(`SELECT * FROM category_budgets WHERE period = ? AND category = ?`).get(p, category);
+}
+
+/** Returns all category_budgets rows for a period as a {category: budget_eur} map. */
+export function listCategoryBudgets(period) {
+  const p = period || currentPeriod();
+  const rows = db.prepare(`
+    SELECT category, budget_eur FROM category_budgets WHERE period = ?
+  `).all(p);
+  const map = {};
+  for (const r of rows) map[r.category] = r.budget_eur;
+  return map;
+}
+
+/** Copy all category_budgets from srcPeriod to dstPeriod. Skips categories
+ *  that already exist in dstPeriod. */
+export function copyCategoryBudgets({ srcPeriod, dstPeriod }) {
+  const rows = db.prepare(`SELECT category, budget_eur FROM category_budgets WHERE period = ?`).all(srcPeriod);
+  const ins = db.prepare(`
+    INSERT OR IGNORE INTO category_budgets (period, category, budget_eur)
+    VALUES (?, ?, ?)
+  `);
+  let n = 0;
+  for (const r of rows) { ins.run(dstPeriod, r.category, r.budget_eur); n++; }
+  return { ok: true, copied: n };
+}
+
 /** Insert a debt row. amount_eur is computed from current FX if missing.
  *  Uses ON CONFLICT to replace prior snapshot for the same (period, label). */
 export function upsertDebt({ period, label, amount_src, currency, amount_eur, kind, notes }) {
@@ -1093,12 +1180,39 @@ export function getDashboardSummary(period) {
     GROUP BY category ORDER BY total DESC
   `).all(p);
 
-  const byCategoryBudget = db.prepare(`
-    SELECT COALESCE(category, 'uncategorised') AS category,
-           ROUND(SUM(budget_eur), 2)            AS total
-    FROM fixed_expenses WHERE period = ?
-    GROUP BY category ORDER BY total DESC
-  `).all(p);
+  // Category-level budgets are the MECE source of truth (single number per
+  // category per month). fixed_expenses survive as informational sub-items.
+  const catBudgetMap = listCategoryBudgets(p);
+  const catBudgetTotal = Object.values(catBudgetMap).reduce((s, v) => s + (v || 0), 0);
+  const actualByCat = {};
+  for (const r of byCategoryActual) actualByCat[r.category] = r.total;
+  const fixedByCat = {};
+  for (const r of raw.fixed) {
+    if (!r.category) continue;
+    fixedByCat[r.category] = fixedByCat[r.category] || [];
+    fixedByCat[r.category].push({ label: r.label, budget_eur: r.budget_eur });
+  }
+  const allCats = new Set([
+    ...Object.keys(catBudgetMap),
+    ...Object.keys(actualByCat),
+    ...Object.keys(fixedByCat),
+  ]);
+  const categoryRows = [...allCats].map((cat) => {
+    const budget = catBudgetMap[cat] || 0;
+    const actual = actualByCat[cat]  || 0;
+    return {
+      category:   cat,
+      budget_eur: Math.round(budget * 100) / 100,
+      actual_eur: Math.round(actual * 100) / 100,
+      delta_eur:  Math.round((budget - actual) * 100) / 100,
+      pct_used:   budget > 0 ? Math.round((actual / budget) * 1000) / 10 : null,
+      fixed_items: fixedByCat[cat] || [],
+    };
+  }).sort((a, b) => (b.budget_eur + b.actual_eur) - (a.budget_eur + a.actual_eur));
+
+  const byCategoryBudget = categoryRows
+    .filter((r) => r.budget_eur > 0)
+    .map((r) => ({ category: r.category, total: r.budget_eur }));
 
   return {
     period: p,
@@ -1108,10 +1222,12 @@ export function getDashboardSummary(period) {
     variable: variableWithActual,
     debts:    raw.debts,
     leftovers,   // [{category, total, count}] — actuals not claimed by any fixed line's keyword
+    category_rows: categoryRows,  // MECE: one row per category, budget + actual + delta
     totals: {
       income_eur:   Math.round(incomeTotal * 100) / 100,
       fixed_eur:    Math.round(fixedTotal * 100) / 100,
       variable_eur: Math.round(variableTotal * 100) / 100,
+      category_budget_eur: Math.round(catBudgetTotal * 100) / 100,
       actual_eur:   actualTotal,
       residual_eur: residual,
       pct_spent:    pctSpent,
