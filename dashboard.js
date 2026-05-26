@@ -1994,16 +1994,23 @@ export function renderDashboard(period) {
 
     // Take top 8 movers by absolute delta
     const movers = c.categories.filter((r) => Math.abs(r.delta_abs) >= 5).slice(0, 8);
-    const monthHeader = c.months.map((m) => \`<th class="px-3 py-2 text-right text-[10px] uppercase tracking-wider text-outline">\${m}</th>\`).join("");
+    // On mobile, hide all but the last 2 months so the Δ column doesn't fall off-screen
+    const lastVisibleIdx = c.months.length - 1;
+    const prevVisibleIdx = c.months.length - 2;
+    const monthHeader = c.months.map((m, i) => {
+      const hide = i !== lastVisibleIdx && i !== prevVisibleIdx ? "hidden sm:table-cell" : "";
+      return \`<th class="\${hide} px-2 sm:px-3 py-2 text-right text-[10px] uppercase tracking-wider text-outline whitespace-nowrap">\${m}</th>\`;
+    }).join("");
 
     document.getElementById("comparisonBody").innerHTML = movers.length ? \`
-      <table class="w-full text-sm">
+      <div class="overflow-x-auto">
+      <table class="w-full text-xs sm:text-sm">
         <thead>
           <tr class="border-b border-outline-variant/15">
-            <th class="px-3 py-2 text-left text-[10px] uppercase tracking-wider text-outline">Category</th>
+            <th class="px-2 sm:px-3 py-2 text-left text-[10px] uppercase tracking-wider text-outline">Category</th>
             \${monthHeader}
-            <th class="px-3 py-2 text-right text-[10px] uppercase tracking-wider text-outline">Δ</th>
-            <th class="px-3 py-2 text-right text-[10px] uppercase tracking-wider text-outline">%</th>
+            <th class="px-2 sm:px-3 py-2 text-right text-[10px] uppercase tracking-wider text-outline">Δ</th>
+            <th class="hidden sm:table-cell px-3 py-2 text-right text-[10px] uppercase tracking-wider text-outline">%</th>
           </tr>
         </thead>
         <tbody>
@@ -2013,18 +2020,20 @@ export function renderDashboard(period) {
             // Each month cell is a separate click target → drills that specific month
             const monthCells = r.totals.map((v, i) => {
               const isLast = i === r.totals.length - 1;
+              const hide = i !== lastVisibleIdx && i !== prevVisibleIdx ? "hidden sm:table-cell" : "";
               const m = c.months[i];
-              return \`<td class="px-3 py-2 text-right tabular-nums \${isLast ? "font-semibold text-on-surface" : "text-outline"} hover:bg-surface-container-high cursor-pointer" onclick="event.stopPropagation(); openCategoryDrill('\${r.category}', '\${m}')" title="Click → ver tx de \${m}">\${fmt(v)}</td>\`;
+              return \`<td class="\${hide} px-2 sm:px-3 py-2 text-right tabular-nums \${isLast ? "font-semibold text-on-surface" : "text-outline"} hover:bg-surface-container-high cursor-pointer" onclick="event.stopPropagation(); openCategoryDrill('\${r.category}', '\${m}')" title="Click → ver tx de \${m}">\${fmt(v)}</td>\`;
             }).join("");
             return \`<tr class="border-b border-outline-variant/15 last:border-0">
-              <td class="px-3 py-2"><span class="material-symbols-outlined text-outline mr-1.5" style="font-size:14px">\${ICON[r.category] || ICON.other}</span><span class="capitalize">\${r.category}</span></td>
+              <td class="px-2 sm:px-3 py-2"><span class="material-symbols-outlined text-outline mr-1.5 align-middle" style="font-size:14px">\${ICON[r.category] || ICON.other}</span><span class="capitalize">\${r.category}</span></td>
               \${monthCells}
-              <td class="px-3 py-2 text-right tabular-nums \${clr} font-semibold">\${arrow} \${fmt(Math.abs(r.delta_abs))}</td>
-              <td class="px-3 py-2 text-right tabular-nums \${clr} text-xs">\${r.delta_pct != null ? (r.delta_pct >= 0 ? "+" : "") + r.delta_pct + "%" : "—"}</td>
+              <td class="px-2 sm:px-3 py-2 text-right tabular-nums \${clr} font-semibold whitespace-nowrap">\${arrow} \${fmt(Math.abs(r.delta_abs))}</td>
+              <td class="hidden sm:table-cell px-3 py-2 text-right tabular-nums \${clr} text-xs">\${r.delta_pct != null ? (r.delta_pct >= 0 ? "+" : "") + r.delta_pct + "%" : "—"}</td>
             </tr>\`;
           }).join("")}
         </tbody>
-      </table>\` : \`<div class="text-xs text-outline italic p-3">Sin movimientos significativos entre los meses</div>\`;
+      </table>
+      </div>\` : \`<div class="text-xs text-outline italic p-3">Sin movimientos significativos entre los meses</div>\`;
   }
 
   // ─── CFO-grade charts ───────────────────────────────────────────────────
