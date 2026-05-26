@@ -432,6 +432,38 @@ app.post("/api/transactions/category", express.json({ limit: "100kb" }), (req, r
   }
 });
 
+// Update category and/or is_internal_transfer on transactions whose merchant
+// or description contains a literal substring (case-insensitive). Used for
+// one-shot fixes: re-classify Carlos as health, flag PRELEVEMENT AUTOMATIQUE
+// as internal transfer, etc.
+// Body: { needle, category?, is_internal_transfer?, dry_run? }
+app.post("/api/transactions/update-by-text", express.json({ limit: "10kb" }), (req, res) => {
+  if (!requireKey(req, res, "DASH_KEY")) return;
+  try {
+    const { needle, category, is_internal_transfer, dry_run } = req.body || {};
+    if (!needle || typeof needle !== "string") return res.status(400).json({ error: "needle required" });
+    const like = "%" + needle.toLowerCase() + "%";
+    const matched = db.prepare(`
+      SELECT id, date, merchant, description, amount, category, is_internal_transfer
+      FROM transactions
+      WHERE LOWER(merchant) LIKE ? OR LOWER(description) LIKE ?
+      LIMIT 500
+    `).all(like, like);
+    if (dry_run) return res.json({ ok: true, dry_run: true, would_update: matched.length, sample: matched.slice(0, 10) });
+    const sets = [];
+    const args = [];
+    if (category !== undefined)             { sets.push("category = ?");             args.push(category); }
+    if (is_internal_transfer !== undefined) { sets.push("is_internal_transfer = ?"); args.push(is_internal_transfer ? 1 : 0); }
+    if (!sets.length) return res.status(400).json({ error: "nothing to update — set category and/or is_internal_transfer" });
+    args.push(like, like);
+    const r = db.prepare(`UPDATE transactions SET ${sets.join(", ")} WHERE LOWER(merchant) LIKE ? OR LOWER(description) LIKE ?`).run(...args);
+    res.json({ ok: true, updated: r.changes, sample: matched.slice(0, 10) });
+  } catch (err) {
+    console.error("[tx update-by-text]", err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // Delete transactions whose merchant matches a regex. Used to clean up
 // duplicates that snuck in before a parser fix (e.g. Amex→Revolut top-ups
 // loaded before AMEX_INTERNAL_TX_RX was added).

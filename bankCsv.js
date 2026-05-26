@@ -44,10 +44,11 @@ function parseAmexDate(s) {
   return `${m[3]}-${m[1]}-${m[2]}`;
 }
 
-// Amex charges where the merchant is REVOLUT (top-ups via card) get also
-// imported when the user uploads the Revolut statement, so we skip them here
-// to avoid double-counting. Same dedup rationale as BNP→Amex/Revolut transfers.
-const AMEX_INTERNAL_TX_RX = /\brevolut\b/i;
+// Amex internal transfers — flagged so they don't count as real spending:
+//   - REVOLUT card top-ups (also imported via Revolut statement → dedup)
+//   - PRELEVEMENT AUTOMATIQUE: BNP pays the monthly Amex bill (BNP→Amex flow,
+//     visible from BNP side as a debit, from Amex side as a credit/payment)
+const AMEX_INTERNAL_TX_RX = /\brevolut\b|prelevement automatique|prélèvement automatique/i;
 
 /**
  * Parse an Amex FR CSV. Returns an array of normalized transactions with the

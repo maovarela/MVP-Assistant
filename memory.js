@@ -1601,10 +1601,16 @@ export function listCategoryTransactions({ category, period }) {
     : period && /^\d{4}$/.test(period)
       ? `AND strftime('%Y', date) = ?`
       : "";
-  const args  = period ? [category, period] : [category];
+  // 'uncategorised' is the COALESCE sentinel for NULL category. Match both
+  // NULL and the literal value so the drilldown actually returns rows.
+  const isUncat = category === "uncategorised";
+  const catCond = isUncat ? "(category IS NULL OR category = 'uncategorised')" : "category = ?";
+  const args = isUncat
+    ? (period ? [period] : [])
+    : (period ? [category, period] : [category]);
   const rows  = db.prepare(`
     SELECT id, date, merchant, amount, currency, source, description, external_id
-    FROM transactions WHERE category = ? ${where}
+    FROM transactions WHERE ${catCond} ${where}
     ORDER BY ABS(amount) DESC LIMIT 500
   `).all(...args);
   // Derive a human-readable account from the external_id prefix
