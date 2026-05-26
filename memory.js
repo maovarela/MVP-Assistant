@@ -1530,6 +1530,43 @@ export function listYears() {
 
 /** Transactions in a category for a period (month YYYY-MM or year YYYY).
  *  Returns the rows + total, sorted by absolute amount desc. */
+/** Flat list of all transactions for a period (any category), for the
+ *  Histórico editor. Supports optional merchant/description search. */
+export function listAllTransactions({ period, search, limit = 500 } = {}) {
+  const conds = ["1=1"];
+  const args  = [];
+  if (period && /^\d{4}-\d{2}$/.test(period)) {
+    conds.push("strftime('%Y-%m', date) = ?");
+    args.push(period);
+  } else if (period && /^\d{4}$/.test(period)) {
+    conds.push("strftime('%Y', date) = ?");
+    args.push(period);
+  }
+  if (search) {
+    conds.push("(LOWER(merchant) LIKE ? OR LOWER(description) LIKE ?)");
+    const like = "%" + search.toLowerCase() + "%";
+    args.push(like, like);
+  }
+  const rows = db.prepare(`
+    SELECT id, date, merchant, description, amount, currency, category,
+           is_internal_transfer, external_id
+    FROM transactions
+    WHERE ${conds.join(" AND ")}
+    ORDER BY date DESC, ABS(amount) DESC
+    LIMIT ?
+  `).all(...args, limit);
+  for (const r of rows) {
+    const prefix = (r.external_id || "").split(":")[0];
+    r.account = ({ bnp: "BNP", amex: "Amex", revolut: "Revolut", csv: "CSV", pdf: "BNP", email: "Email" })[prefix] || prefix || "—";
+  }
+  return {
+    period: period || "all-time", count: rows.length,
+    total_out: Math.round(rows.filter((r) => r.amount < 0).reduce((s, r) => s + Math.abs(r.amount), 0) * 100) / 100,
+    total_in:  Math.round(rows.filter((r) => r.amount > 0).reduce((s, r) => s + r.amount, 0) * 100) / 100,
+    rows,
+  };
+}
+
 export function listCategoryTransactions({ category, period }) {
   if (!category) throw new Error("category required");
   const where = period && /^\d{4}-\d{2}$/.test(period)

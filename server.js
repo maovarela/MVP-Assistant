@@ -30,7 +30,7 @@ import db, {
   setFxRate, getFxRate,
   upsertIncome, upsertFixedExpense, insertVariableExpense, upsertDebt,
   getDashboardSummary, listBudgetPeriods,
-  getYearSummary, listYears, listCategoryTransactions,
+  getYearSummary, listYears, listCategoryTransactions, listAllTransactions,
   setMatchKeyword, appendToMatchKeyword,
   getAuditReport, updateTransactionCategory,
   getAccountCashflow, setAccountBalance,
@@ -571,6 +571,21 @@ app.get("/api/audit.json", (req, res) => {
 
 // Per-category drilldown. ?category=travel&period=2026-05 or &period=2026
 // (year). Returns all transactions in that category sorted by amount.
+// Flat transactions list for the Histórico editor.
+// ?period=YYYY-MM (optional, defaults to all-time) &search=foo &limit=500
+app.get("/api/transactions.json", (req, res) => {
+  if (!requireKey(req, res, "DASH_KEY")) return;
+  try {
+    const period = (req.query.period || "").toString().match(/^\d{4}(-\d{2})?$/) ? req.query.period : undefined;
+    const search = (req.query.search || "").toString().trim() || undefined;
+    const limit  = Math.min(parseInt(req.query.limit || "500", 10) || 500, 2000);
+    res.json(listAllTransactions({ period, search, limit }));
+  } catch (err) {
+    console.error("[transactions.json]", err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
 app.get("/api/category.json", (req, res) => {
   if (!requireKey(req, res, "DASH_KEY")) return;
   try {

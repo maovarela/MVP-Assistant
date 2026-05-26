@@ -302,49 +302,37 @@ export function renderDashboard(period) {
 
 </main>
 
-<!-- VIEW: Histórico (consolidated month × account matrix) -->
+<!-- VIEW: Histórico (flat editable transactions list) -->
 <main id="viewHistorico" class="hidden max-w-6xl mx-auto px-4 pt-4 space-y-4">
   <section class="rounded-2xl bg-surface-container-lowest border border-outline-variant/15 p-5">
-    <div class="flex items-center justify-between mb-4">
+    <div class="flex flex-wrap items-center justify-between gap-3 mb-4">
       <div>
-        <h2 class="font-headline text-lg font-bold tracking-tight text-on-surface">Histórico consolidado</h2>
-        <p class="text-xs text-outline">Cashflow mes a mes por cuenta — ingresos, gastos, neto</p>
+        <h2 class="font-headline text-lg font-bold tracking-tight text-on-surface">Transacciones</h2>
+        <p class="text-xs text-outline">Lista plana — edita la categoría inline para corregir rápido.</p>
       </div>
-      <select id="histMonthsSel" class="bg-surface-container border-0 rounded-full text-xs font-medium px-3 py-1.5 focus:ring-2 focus:ring-primary">
-        <option value="6">6 meses</option>
-        <option value="12" selected>12 meses</option>
-        <option value="24">24 meses</option>
-      </select>
+      <div class="flex items-center gap-2 flex-wrap">
+        <select id="histPeriodSel" class="bg-surface-container border-0 rounded-full text-xs font-medium px-3 py-1.5 focus:ring-2 focus:ring-primary">
+          <!-- populated by JS -->
+        </select>
+        <input id="histSearch" type="search" placeholder="Buscar merchant…" class="bg-surface-container border-0 rounded-full text-xs font-medium px-3 py-1.5 w-44 focus:ring-2 focus:ring-primary focus:outline-none" />
+        <span id="histCount" class="text-[11px] text-outline tabular-nums"></span>
+      </div>
     </div>
     <div class="overflow-x-auto">
       <table class="w-full text-sm" id="historicoTbl">
-        <thead><tr class="text-[10px] uppercase tracking-wider text-outline border-b border-outline-variant/30">
-          <th class="px-3 py-2 text-left sticky left-0 bg-surface-container-lowest">Mes</th>
-          <th class="px-3 py-2 text-right" colspan="3" style="background: rgba(0,145,90,0.04)">BNP</th>
-          <th class="px-3 py-2 text-right" colspan="3" style="background: rgba(0,111,207,0.04)">Amex</th>
-          <th class="px-3 py-2 text-right" colspan="3" style="background: rgba(0,0,0,0.04)">Revolut</th>
-          <th class="px-3 py-2 text-right border-l-2 border-outline-variant/30">Neto total</th>
-        </tr>
-        <tr class="text-[9px] uppercase tracking-wider text-outline border-b border-outline-variant/15">
-          <th class="px-3 py-1.5 sticky left-0 bg-surface-container-lowest"></th>
-          <th class="px-3 py-1.5 text-right text-primary">+In</th>
-          <th class="px-3 py-1.5 text-right text-error">−Out</th>
-          <th class="px-3 py-1.5 text-right">Neto</th>
-          <th class="px-3 py-1.5 text-right text-primary">+In</th>
-          <th class="px-3 py-1.5 text-right text-error">−Out</th>
-          <th class="px-3 py-1.5 text-right">Neto</th>
-          <th class="px-3 py-1.5 text-right text-primary">+In</th>
-          <th class="px-3 py-1.5 text-right text-error">−Out</th>
-          <th class="px-3 py-1.5 text-right">Neto</th>
-          <th class="px-3 py-1.5 text-right border-l-2 border-outline-variant/30"></th>
-        </tr></thead>
-        <tbody id="historicoBody"><tr><td colspan="11" class="px-3 py-8 text-center text-outline italic">Cargando…</td></tr></tbody>
+        <thead class="bg-surface-container">
+          <tr class="text-left text-[10px] uppercase tracking-wider text-outline">
+            <th class="px-3 py-2.5 w-24">Fecha</th>
+            <th class="px-3 py-2.5 w-20">Cuenta</th>
+            <th class="px-3 py-2.5">Merchant</th>
+            <th class="px-3 py-2.5 text-right w-24">Monto €</th>
+            <th class="px-3 py-2.5 w-56">Categoría</th>
+          </tr>
+        </thead>
+        <tbody id="historicoBody"><tr><td colspan="5" class="px-3 py-8 text-center text-outline italic">Cargando…</td></tr></tbody>
       </table>
     </div>
   </section>
-
-  <!-- Summary KPIs across the entire window -->
-  <section class="grid grid-cols-2 md:grid-cols-4 gap-3" id="histSummaryCards"></section>
 </main>
 
 <!-- Category drilldown modal -->
@@ -482,69 +470,93 @@ export function renderDashboard(period) {
     if (activeTab === "historico") switchTab("historico");
   }, 0);
 
+  let histSearchTimer = null;
   async function loadHistorico() {
-    const months = document.getElementById("histMonthsSel").value || 12;
-    const r = await fetch("/api/consolidated.json?key=" + encodeURIComponent(key) + "&months=" + months);
+    const periodSel = document.getElementById("histPeriodSel");
+    // Populate period dropdown from currentData.available_periods if empty
+    if (periodSel && !periodSel.options.length && currentData?.available_periods?.length) {
+      const opts = ['<option value="">Todos los meses</option>']
+        .concat(currentData.available_periods.map((p) => \`<option value="\${p}">\${p}</option>\`));
+      periodSel.innerHTML = opts.join("");
+      periodSel.value = currentData.period || "";
+    }
+    const period = periodSel?.value || "";
+    const search = document.getElementById("histSearch")?.value.trim() || "";
+    const qs = new URLSearchParams({ key });
+    if (period) qs.set("period", period);
+    if (search) qs.set("search", search);
+    document.getElementById("historicoBody").innerHTML = \`<tr><td colspan="5" class="px-3 py-8 text-center text-outline italic">Cargando…</td></tr>\`;
+    const r = await fetch("/api/transactions.json?" + qs.toString());
     if (!r.ok) return;
     const d = await r.json();
     renderHistorico(d);
   }
   function renderHistorico(d) {
     const tbody = document.getElementById("historicoBody");
-    if (!d.rows.length) { tbody.innerHTML = \`<tr><td colspan="11" class="px-3 py-8 text-center text-outline italic">Sin datos</td></tr>\`; return; }
+    const countEl = document.getElementById("histCount");
+    if (countEl) countEl.textContent = \`\${d.count} · −\${fmt(d.total_out)} · +\${fmt(d.total_in)}\`;
+    if (!d.rows.length) { tbody.innerHTML = \`<tr><td colspan="5" class="px-3 py-8 text-center text-outline italic">Sin transacciones</td></tr>\`; return; }
 
-    const sums = { bnp: {c:0,d:0}, amex: {c:0,d:0}, revolut: {c:0,d:0}, total: 0 };
-    const reversed = [...d.rows].reverse(); // newest first for table display
-    tbody.innerHTML = reversed.map((r) => {
-      for (const a of ["bnp","amex","revolut"]) {
-        sums[a].c += r.accounts[a].credits;
-        sums[a].d += r.accounts[a].debits;
-      }
-      sums.total += r.combined.net;
-      const acctCell = (acc, bg) => {
-        const a = r.accounts[acc];
-        const netClr = a.net >= 0 ? "text-primary" : "text-error";
-        return \`<td class="px-3 py-2 text-right tabular-nums text-primary" style="background: \${bg}">\${fmt(a.credits)}</td>
-                <td class="px-3 py-2 text-right tabular-nums text-error"   style="background: \${bg}">\${fmt(a.debits)}</td>
-                <td class="px-3 py-2 text-right tabular-nums font-semibold \${netClr}" style="background: \${bg}">\${fmt(a.net)}</td>\`;
-      };
-      const totalClr = r.combined.net >= 0 ? "text-primary" : "text-error";
-      return \`<tr class="border-b border-outline-variant/15 hover:bg-surface-container-low cursor-pointer" onclick="window.location.href='?key=\${key}&period=\${r.period}'">
-        <td class="px-3 py-2 font-medium sticky left-0 bg-surface-container-lowest">\${r.period}</td>
-        \${acctCell("bnp",     "rgba(0,145,90,0.04)")}
-        \${acctCell("amex",    "rgba(0,111,207,0.04)")}
-        \${acctCell("revolut", "rgba(0,0,0,0.04)")}
-        <td class="px-3 py-2 text-right tabular-nums font-bold \${totalClr} border-l-2 border-outline-variant/30">\${fmt(r.combined.net)}</td>
+    const ACCT_CLR = { BNP: "bg-emerald-50 text-emerald-800", Amex: "bg-blue-50 text-blue-800", Revolut: "bg-zinc-100 text-zinc-800" };
+    tbody.innerHTML = d.rows.map((tx) => {
+      const amtClr = tx.amount < 0 ? "text-error" : "text-primary";
+      const sign   = tx.amount < 0 ? "−" : "+";
+      const intMark = tx.is_internal_transfer ? \` <span class="text-[9px] uppercase text-outline" title="Transferencia interna">int</span>\` : "";
+      const acctClass = ACCT_CLR[tx.account] || "bg-surface-container text-on-surface";
+      const desc = (tx.description && tx.description !== tx.merchant)
+        ? \`<div class="text-[10px] text-outline truncate max-w-xs">\${escapeHtml(tx.description)}</div>\`
+        : "";
+      return \`<tr class="border-b border-outline-variant/15 last:border-0">
+        <td class="px-3 py-2 text-outline tabular-nums whitespace-nowrap">\${tx.date || "—"}</td>
+        <td class="px-3 py-2"><span class="px-2 py-0.5 rounded text-[10px] font-semibold \${acctClass}">\${tx.account}</span></td>
+        <td class="px-3 py-2">
+          <div class="font-medium text-on-surface">\${escapeHtml(tx.merchant || "—")}\${intMark}</div>
+          \${desc}
+        </td>
+        <td class="px-3 py-2 text-right tabular-nums font-semibold \${amtClr}">\${sign}\${fmt(Math.abs(tx.amount))}</td>
+        <td class="px-3 py-2">
+          <select data-tx-id="\${tx.id}" class="histCatSel w-full bg-surface-container border-0 rounded text-xs px-2 py-1 focus:ring-2 focus:ring-primary focus:outline-none">
+            \${categoryOptions(tx.category)}
+          </select>
+        </td>
       </tr>\`;
     }).join("");
 
-    // Summary cards
-    const cards = ["bnp","amex","revolut"].map((acc) => {
-      const meta = ACCOUNT_META[acc];
-      const net = sums[acc].c - sums[acc].d;
-      const netClr = net >= 0 ? "text-primary" : "text-error";
-      return \`<div class="rounded-2xl bg-surface-container-lowest border border-outline-variant/15 p-4">
-        <div class="flex items-center gap-2 mb-2">\${meta.brandHtml}<h4 class="font-headline font-bold text-sm">\${meta.label}</h4></div>
-        <div class="space-y-1 text-xs">
-          <div class="flex justify-between"><span class="text-outline">+ Ingresos</span><span class="font-headline font-bold tabular-nums text-primary">\${fmt(sums[acc].c)}</span></div>
-          <div class="flex justify-between"><span class="text-outline">− Gastos</span><span class="font-headline font-bold tabular-nums text-error">\${fmt(sums[acc].d)}</span></div>
-          <div class="flex justify-between border-t border-outline-variant/15 pt-1 mt-1"><span class="text-outline">Neto</span><span class="font-headline font-bold tabular-nums \${netClr}">\${fmt(net)}</span></div>
-        </div>
-      </div>\`;
+    tbody.querySelectorAll(".histCatSel").forEach((sel) => {
+      const orig = sel.value;
+      sel.dataset.orig = orig;
+      sel.onchange = async () => {
+        const txId = parseInt(sel.dataset.txId, 10);
+        const newCat = sel.value;
+        sel.disabled = true;
+        const ok = await changeCategory(txId, newCat);
+        if (ok) {
+          sel.dataset.orig = newCat;
+          sel.classList.add("ring-2", "ring-primary");
+          setTimeout(() => sel.classList.remove("ring-2", "ring-primary"), 900);
+        } else {
+          alert("Error guardando categoría");
+          sel.value = sel.dataset.orig;
+        }
+        sel.disabled = false;
+      };
     });
-    cards.push(\`<div class="rounded-2xl bg-on-surface text-white p-4">
-      <div class="flex items-center gap-2 mb-2"><span class="material-symbols-outlined" style="font-size:18px">summarize</span><h4 class="font-headline font-bold text-sm">Total \${d.rows.length} meses</h4></div>
-      <div class="font-headline text-2xl font-bold tabular-nums mt-2 \${sums.total >= 0 ? "" : "text-red-300"}">\${fmt(sums.total)}</div>
-      <div class="text-[10px] uppercase tracking-wider opacity-60 mt-1">Neto acumulado</div>
-    </div>\`);
-    document.getElementById("histSummaryCards").innerHTML = cards.join("");
   }
-  document.addEventListener("DOMContentLoaded", () => {
-    document.getElementById("histMonthsSel").onchange = loadHistorico;
-  });
+
+  function escapeHtml(s) {
+    return String(s).replace(/[&<>"']/g, (c) => ({ "&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;" }[c]));
+  }
+
   setTimeout(() => {
-    const sel = document.getElementById("histMonthsSel");
-    if (sel) sel.onchange = loadHistorico;
+    const periodSel = document.getElementById("histPeriodSel");
+    const searchEl  = document.getElementById("histSearch");
+    if (periodSel) periodSel.onchange = loadHistorico;
+    if (searchEl) {
+      searchEl.oninput = () => {
+        clearTimeout(histSearchTimer);
+        histSearchTimer = setTimeout(loadHistorico, 250);
+      };
+    }
   }, 100);
 
   const CIRCUM = 282.7;
