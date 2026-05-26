@@ -189,6 +189,16 @@ db.exec(`
   );
 `);
 
+// Migration: is_internal_transfer flag on transactions. Used to mark Amex bill
+// payments and Revolut top-ups that ARE real outflows from the source account
+// (BNP) but should NOT count as spending (the underlying purchases are already
+// in the Amex/Revolut line items). Cashflow queries include these; spending
+// queries filter them out.
+const txCols = db.prepare(`PRAGMA table_info(transactions)`).all().map((c) => c.name);
+if (!txCols.includes("is_internal_transfer")) {
+  db.exec(`ALTER TABLE transactions ADD COLUMN is_internal_transfer INTEGER NOT NULL DEFAULT 0`);
+}
+
 // Migration: match_keyword on fixed_expenses. Without it, multiple budget
 // lines sharing a category split the actuals proportionally — which leads to
 // surprises like "Metro at 199% €119 of €60" when €119 was actually Uber +
@@ -365,15 +375,19 @@ export function getDailySummary() {
 
 /**
  * Insert a transaction. Returns null if external_id already exists (dedup).
- * tx fields: { external_id, source, date, merchant, amount, currency, category, description, raw }
+ * tx fields: { external_id, source, date, merchant, amount, currency, category,
+ *             description, raw, is_internal_transfer? }
+ * is_internal_transfer = 1 for transfers between the user's own tracked
+ * accounts (Amex bill pmt from BNP, Revolut top-up from BNP, etc.). These
+ * count in cashflow but are excluded from spending queries.
  */
 export function insertTransaction(tx) {
   try {
     const result = db.prepare(`
       INSERT INTO transactions
-        (external_id, source, date, merchant, amount, currency, category, description, raw)
+        (external_id, source, date, merchant, amount, currency, category, description, raw, is_internal_transfer)
       VALUES
-        (@external_id, @source, @date, @merchant, @amount, @currency, @category, @description, @raw)
+        (@external_id, @source, @date, @merchant, @amount, @currency, @category, @description, @raw, @is_internal_transfer)
     `).run({
       external_id: tx.external_id || null,
       source:      tx.source,
@@ -384,6 +398,7 @@ export function insertTransaction(tx) {
       category:    tx.category || null,
       description: tx.description || null,
       raw:         tx.raw || null,
+      is_internal_transfer: tx.is_internal_transfer ? 1 : 0,
     });
     return result.lastInsertRowid;
   } catch (err) {
@@ -404,7 +419,9 @@ export function listTransactions({ from, to, category, merchant, limit = 100 } =
   return db.prepare(query).all(...params);
 }
 
-/** Spend summary by category for a date range. Outflows (amount<0) only. */
+/** Spend summary by category for a date range. Outflows (amount<0) only.
+ *  is_internal_transfer rows (Amex bill payments, Revolut top-ups) excluded
+ *  so they don't double-count against per-merchant spending. */
 export function spendByCategory({ from, to } = {}) {
   let query = `
     SELECT
@@ -412,7 +429,7 @@ export function spendByCategory({ from, to } = {}) {
       ROUND(SUM(ABS(amount)), 2)          AS total,
       COUNT(*)                            AS count
     FROM transactions
-    WHERE amount < 0
+    WHERE amount < 0 AND is_internal_transfer = 0
   `;
   const params = [];
   if (from) { query += ` AND date >= ?`; params.push(from); }
@@ -429,7 +446,7 @@ export function spendByMerchant({ from, to, limit = 20 } = {}) {
       ROUND(SUM(ABS(amount)), 2)      AS total,
       COUNT(*)                        AS count
     FROM transactions
-    WHERE amount < 0
+    WHERE amount < 0 AND is_internal_transfer = 0
   `;
   const params = [];
   if (from) { query += ` AND date >= ?`; params.push(from); }
@@ -492,7 +509,7 @@ export function getSpendPace() {
     SELECT
       ROUND(SUM(CASE WHEN amount<0 THEN ABS(amount) ELSE 0 END), 2) AS expenses,
       ROUND(SUM(CASE WHEN amount>0 THEN amount       ELSE 0 END), 2) AS income
-    FROM transactions WHERE date BETWEEN ? AND ?
+    FROM transactions WHERE date BETWEEN ? AND ? AND is_internal_transfer = 0
   `).get(from, to);
 
   const current   = flow(monthStart, today);
@@ -876,11 +893,11 @@ export function getActualSpendVsBudget(period) {
   const p = period || currentPeriod();
   const fixed = db.prepare(`SELECT * FROM fixed_expenses WHERE period = ?`).all(p);
 
-  // All outflow transactions for the period
+  // All outflow transactions for the period (excluding internal account transfers)
   const txs = db.prepare(`
     SELECT id, category, merchant, description, ABS(amount) AS amt
     FROM transactions
-    WHERE amount < 0 AND strftime('%Y-%m', date) = ?
+    WHERE amount < 0 AND is_internal_transfer = 0 AND strftime('%Y-%m', date) = ?
   `).all(p);
 
   // Compile keyword regexes once; build cross-category list and per-category unkeyed groups
@@ -971,11 +988,12 @@ export function getDashboardSummary(period) {
   const incomeTotal   = raw.incomes.reduce((s, r) => s + (r.kind === "salary_neto" || r.kind === "other" ? r.amount_eur : 0), 0);
   const fixedTotal    = raw.fixed.reduce((s, r) => s + r.budget_eur, 0);
   const variableTotal = raw.variable.reduce((s, r) => s + r.amount_eur, 0);
-  // "Actual" = real outflows this period from the transactions table.
+  // "Actual" = real outflows this period from the transactions table,
+  // excluding internal account transfers (Amex bill payment, Revolut top-up).
   const actualRow = db.prepare(`
     SELECT ROUND(SUM(ABS(amount)), 2) AS total
     FROM transactions
-    WHERE amount < 0 AND strftime('%Y-%m', date) = ?
+    WHERE amount < 0 AND is_internal_transfer = 0 AND strftime('%Y-%m', date) = ?
   `).get(p);
   const actualTotal = actualRow?.total || 0;
   const residual    = Math.round((incomeTotal - fixedTotal - variableTotal) * 100) / 100;
@@ -985,7 +1003,7 @@ export function getDashboardSummary(period) {
     SELECT COALESCE(category, 'uncategorised') AS category,
            ROUND(SUM(ABS(amount)), 2)          AS total
     FROM transactions
-    WHERE amount < 0 AND strftime('%Y-%m', date) = ?
+    WHERE amount < 0 AND is_internal_transfer = 0 AND strftime('%Y-%m', date) = ?
     GROUP BY category ORDER BY total DESC
   `).all(p);
 
@@ -1030,7 +1048,7 @@ export function getAuditReport(period) {
   const txs = db.prepare(`
     SELECT id, date, category, merchant, description, ABS(amount) AS amt
     FROM transactions
-    WHERE amount < 0 AND strftime('%Y-%m', date) = ?
+    WHERE amount < 0 AND is_internal_transfer = 0 AND strftime('%Y-%m', date) = ?
     ORDER BY amt DESC
   `).all(p);
 
@@ -1105,13 +1123,13 @@ export function getAuditReport(period) {
 export function getYearSummary(year) {
   const y = year || String(new Date().getFullYear());
 
-  // Annual totals from transactions
+  // Annual totals from transactions (internal transfers excluded from expense/income)
   const totals = db.prepare(`
     SELECT
       ROUND(SUM(CASE WHEN amount<0 THEN ABS(amount) ELSE 0 END), 2) AS expenses,
       ROUND(SUM(CASE WHEN amount>0 THEN amount       ELSE 0 END), 2) AS income,
       COUNT(*) AS tx_count
-    FROM transactions WHERE strftime('%Y', date) = ?
+    FROM transactions WHERE strftime('%Y', date) = ? AND is_internal_transfer = 0
   `).get(y);
 
   // Top categories actuals
@@ -1120,18 +1138,18 @@ export function getYearSummary(year) {
            ROUND(SUM(ABS(amount)), 2)          AS total,
            COUNT(*)                            AS count
     FROM transactions
-    WHERE amount < 0 AND strftime('%Y', date) = ?
+    WHERE amount < 0 AND is_internal_transfer = 0 AND strftime('%Y', date) = ?
     GROUP BY category ORDER BY total DESC
   `).all(y);
 
-  // Monthly trend
+  // Monthly trend (excluding internal transfers)
   const byMonth = db.prepare(`
     SELECT
       strftime('%Y-%m', date)                                        AS month,
       ROUND(SUM(CASE WHEN amount<0 THEN ABS(amount) ELSE 0 END), 2)  AS expenses,
       ROUND(SUM(CASE WHEN amount>0 THEN amount       ELSE 0 END), 2) AS income,
       COUNT(*)                                                       AS count
-    FROM transactions WHERE strftime('%Y', date) = ?
+    FROM transactions WHERE strftime('%Y', date) = ? AND is_internal_transfer = 0
     GROUP BY month ORDER BY month
   `).all(y);
 
@@ -1141,7 +1159,7 @@ export function getYearSummary(year) {
            ROUND(SUM(ABS(amount)), 2)      AS total,
            COUNT(*)                        AS count
     FROM transactions
-    WHERE amount < 0 AND strftime('%Y', date) = ?
+    WHERE amount < 0 AND is_internal_transfer = 0 AND strftime('%Y', date) = ?
     GROUP BY merchant ORDER BY total DESC LIMIT 20
   `).all(y);
 

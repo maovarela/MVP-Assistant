@@ -28,7 +28,8 @@ const CATEGORIES = [
   "health",          // farmacia, médico, gimnasio, deporte
   "housing",         // alquiler, hipoteca, electricidad, gas, internet
   "entertainment",   // cine, conciertos, museos
-  "transfers",       // movimientos entre cuentas propias
+  "transfers",       // movimientos entre cuentas propias / inversiones
+  "deuda",           // pagos de deuda (préstamos, créditos)
   "income",          // salario, refunds, ingresos
   "fees",            // comisiones bancarias, intereses
   "other",
@@ -133,6 +134,7 @@ export async function importCsv(filePath) {
         category:    tx.category || keywordCategorize(tx.description || tx.merchant),
         description: tx.description,
         raw:         null,
+        is_internal_transfer: !!tx.is_internal_transfer,
       });
       if (id) inserted++; else skipped++;
     }
@@ -346,9 +348,10 @@ export async function importPdf(filePath) {
         merchant:    tx.merchant,
         amount:      tx.amount,
         currency:    tx.currency,
-        category:    keywordCategorize(tx.description || tx.merchant),
+        category:    tx.category || keywordCategorize(tx.description || tx.merchant),
         description: tx.description,
         raw:         null,
+        is_internal_transfer: !!tx.is_internal_transfer,
       });
       if (id) inserted++; else skipped++;
     }

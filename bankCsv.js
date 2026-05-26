@@ -67,7 +67,7 @@ export function parseAmexCsv(content) {
     const desc   = (r.Description || "").trim().replace(/\s+/g, " ");
     const rawAmt = parseFrenchAmount(r.Montant);
     if (!date || !desc) continue;
-    if (AMEX_INTERNAL_TX_RX.test(desc)) continue;  // skip Amex→Revolut top-ups (already in Revolut statement)
+    const isInternal = AMEX_INTERNAL_TX_RX.test(desc);
     const refRaw = String(r.Référence || r["Reference"] || "").replace(/'/g, "");
     out.push({
       date,
@@ -76,6 +76,8 @@ export function parseAmexCsv(content) {
       currency:    "EUR",
       description: desc,
       external_id: refRaw || null, // caller can prefix with "amex:"
+      is_internal_transfer: isInternal,
+      category:    isInternal ? "transfers" : null,
     });
   }
   return out;
@@ -336,7 +338,7 @@ export function parseBnpPdfText(text) {
     const date = `${year}-${mm}-${dd}`;
 
     const desc = descRaw.trim().replace(/\s+/g, " ");
-    if (BNP_INTERNAL_TX_RX.test(desc)) continue;  // skip Amex/Revolut/etc.
+    const isInternal = BNP_INTERNAL_TX_RX.test(desc);
 
     out.push({
       date,
@@ -345,6 +347,12 @@ export function parseBnpPdfText(text) {
       currency:    "EUR",
       description: desc,
       external_id: null,    // caller hashes
+      is_internal_transfer: isInternal,
+      // For internal transfers we pre-tag the category so they don't get
+      // mis-categorised by the broad keyword rules (american express → no rule
+      // → 'other'). 'transfers' is good enough as a label since they're
+      // already flagged is_internal_transfer for query filtering.
+      category:    isInternal ? "transfers" : null,
     });
   }
 
@@ -395,6 +403,9 @@ const RULES = [
 
   // Entertainment
   [/ticketnet|ticketmaster|cinema|theatre|spectacle|concert|museo|museum|opera|ballet/i, "entertainment"],
+
+  // Debt payments
+  [/davivienda|bancolombia|prestamo|pr[eé]stamo|cuota.*credito|cuota.*pr[eé]stamo|amortiz/i, "deuda"],
 
   // Top-ups / transfers / fees (generic fallbacks)
   [/top.?up|topup/i,           "income"],
