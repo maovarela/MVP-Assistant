@@ -840,6 +840,25 @@ export function insertVariableExpense({ period, label, amount_eur, category, not
   return db.prepare(`SELECT * FROM variable_expenses WHERE id = ?`).get(r.lastInsertRowid);
 }
 
+/** Delete budget rows by label across all periods (or a specific one).
+ *  kind: 'fixed' | 'variable' | 'income' | 'debt'. Used to retire a planned
+ *  line item from the dashboard without touching transactions. */
+export function deleteBudgetRow({ kind, label, period }) {
+  const tables = {
+    fixed:    "fixed_expenses",
+    variable: "variable_expenses",
+    income:   "incomes",
+    debt:     "debts",
+  };
+  const tbl = tables[kind];
+  if (!tbl) throw new Error(`unknown kind: ${kind}`);
+  const args = [label];
+  let sql = `DELETE FROM ${tbl} WHERE label = ?`;
+  if (period) { sql += ` AND period = ?`; args.push(period); }
+  const r = db.prepare(sql).run(...args);
+  return { ok: true, deleted: r.changes };
+}
+
 /** Insert a debt row. amount_eur is computed from current FX if missing.
  *  Uses ON CONFLICT to replace prior snapshot for the same (period, label). */
 export function upsertDebt({ period, label, amount_src, currency, amount_eur, kind, notes }) {

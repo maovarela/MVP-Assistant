@@ -35,6 +35,7 @@ import db, {
   getAuditReport, updateTransactionCategory,
   getAccountCashflow, setAccountBalance,
   getConsolidatedHistory,
+  deleteBudgetRow,
 } from "./memory.js";
 import { categorize as keywordCategorize } from "./bankCsv.js";
 import { refreshCurrentMonthFx } from "./fx.js";
@@ -587,8 +588,12 @@ app.get("/api/category.json", (req, res) => {
 app.post("/api/budget", express.json({ limit: "100kb" }), (req, res) => {
   if (!requireKey(req, res, "DASH_KEY")) return;
   try {
-    const { period, kind, payload } = req.body || {};
+    const { period, kind, payload, op } = req.body || {};
     if (!kind || !payload) return res.status(400).json({ error: "kind + payload required" });
+    if (op === "delete") {
+      const r = deleteBudgetRow({ kind, label: payload.label, period: payload.period || period });
+      return res.json(r);
+    }
     let row;
     switch (kind) {
       case "income":   row = upsertIncome({ period, ...payload });          break;

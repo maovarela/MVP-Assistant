@@ -13,8 +13,6 @@ const DEFAULTS = [
   { label: "Inversion PERCO",       match_keyword: "perco|cofidis|inversion|swisslife.*retraite|swisslife ar|swisslife assurance et" },
   { label: "Pago Deuda",            match_keyword: "davivienda|bancolombia|prestamo|cuota|amortiz|corredores" },
   { label: "Pago tarjeta Colombia", match_keyword: "tarjeta colombia|mastercard col|visa col|cuota tarjeta" },
-  { label: "Cleopatra",             match_keyword: "cleopatra" },
-  { label: "Uniqlo",                match_keyword: "uniqlo" },
   { label: "Medicina",              match_keyword: "medicina|farma|drogueria|consulta medica" },
   { label: "Comision Banco",        match_keyword: "commissions|frais bnp|cotisation a une offre|cotisation situation" },
 ];

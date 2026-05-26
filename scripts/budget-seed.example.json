@@ -31,8 +31,6 @@
     { "label": "Pago tarjeta Colombia",  "amount_eur": 0,   "category": "transfers" },
     { "label": "Inversion PERCO",        "amount_eur": 507, "category": "transfers" },
     { "label": "Pago Deuda",             "amount_eur": 600, "category": "transfers" },
-    { "label": "Cleopatra",              "amount_eur": 16,  "category": "other" },
-    { "label": "Uniqlo",                 "amount_eur": 70,  "category": "shopping" },
     { "label": "Medicina",               "amount_eur": 70,  "category": "health" }
   ],
 
