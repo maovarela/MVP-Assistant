@@ -202,10 +202,89 @@ function reverseFrenchAmount(centsStr, intStr) {
   return Number.isFinite(v) ? v : null;
 }
 
+/** Parse the reversed-column balance amount from a header "Solde au DD MONTH YYYY ..."
+ *  line. Format: "<cents>\t,\t<tens-hundreds>\t<thousands>" — read columns
+ *  bottom-up since the PDF table aligns by column. Returns null if it can't parse.
+ *  Example: "36\t,\t205\t4" → 4205.36, "56\t,\t086\t4" → 4086.56 */
+function parseReversedBnpAmount(rest) {
+  // Split into chunks; find the comma; everything after the comma is the
+  // reversed integer part (innermost-digit-first column).
+  const parts = rest.split(/\s+/).filter(Boolean);
+  const commaIdx = parts.indexOf(",");
+  if (commaIdx < 0) return null;
+  const centsStr = parts[commaIdx - 1] || "00";
+  const intReversed = parts.slice(commaIdx + 1);
+  if (!intReversed.length) return null;
+  const intStr = intReversed.slice().reverse().join("");
+  const cleanCents = centsStr.padStart(2, "0").slice(0, 2);
+  const v = parseFloat(`${intStr}.${cleanCents}`);
+  return Number.isFinite(v) ? v : null;
+}
+
+const FR_DATE_TEXT = /^([a-záéíóúñàâèêîôûç]+)$/i;
+
+/** Extract opening + closing balance from BNP statement text.
+ *  Tries the footer line first (clean French notation) for closing, then
+ *  the header table for opening. Returns { opening_eur, closing_eur,
+ *  end_period: 'YYYY-MM' } when at least one balance was found. */
+function extractBnpBalances(text) {
+  const out = { opening_eur: null, closing_eur: null, end_period: null };
+  const lines = text.split(/\r?\n/);
+
+  // Footer: "Solde créditeur au DD.MM.YYYY 4 086,56" — most reliable.
+  for (const l of lines) {
+    const m = l.match(/Solde\s+créditeur\s+au\s+(\d{2})\.(\d{2})\.(\d{4})\s+([\d\s]+,[\d]+)/i);
+    if (m) {
+      const dd = m[1], mm = m[2], yyyy = m[3];
+      const amt = parseFloat(m[4].replace(/\s/g, "").replace(",", "."));
+      if (Number.isFinite(amt)) {
+        out.closing_eur = amt;
+        out.end_period  = `${yyyy}-${mm}`;
+      }
+      break;
+    }
+  }
+
+  // Header: "Solde au DD MONTH YYYY <reversed amount>"
+  const headerRx = /^Solde\s+au\s+(\d{1,2})\s+([a-záéíóúñàâèêîôûç]+)\s+(\d{4})\s+(.+)$/i;
+  let openingFound = null, openingPeriod = null;
+  let closingFromHeader = null;
+  for (const l of lines) {
+    const m = l.match(headerRx);
+    if (!m) continue;
+    const monthName = m[2].toLowerCase();
+    const mm = FR_MONTHS[monthName];
+    if (!mm) continue;
+    const amt = parseReversedBnpAmount(m[4]);
+    if (amt == null) continue;
+    // First occurrence is opening (start of statement window); second is closing
+    if (openingFound == null) {
+      openingFound  = amt;
+      openingPeriod = `${m[3]}-${mm}`;
+    } else if (closingFromHeader == null) {
+      closingFromHeader = amt;
+    }
+  }
+  if (openingFound != null) out.opening_eur = openingFound;
+  if (out.closing_eur == null && closingFromHeader != null) out.closing_eur = closingFromHeader;
+  if (out.end_period == null && openingPeriod) {
+    // If footer didn't give us a period, infer end_period as the month AFTER opening month
+    const [y, m] = openingPeriod.split("-").map(Number);
+    const next = new Date(y, m - 1 + 1, 1);  // openingPeriod is the start month → statement ends in same month usually
+    out.end_period = `${next.getFullYear()}-${String(next.getMonth()).padStart(2, "0")}`;
+    // Actually opening = balance at START of statement period. The statement
+    // window typically maps to one calendar month. opening = previous month's
+    // closing. So end_period = openingPeriod itself.
+    out.end_period = openingPeriod;
+  }
+  return out;
+}
+
 /**
  * Parse the text content of a BNP Paribas "Relevé de votre compte chèques" PDF.
- * Returns an array of normalized transactions, or null if this doesn't look
- * like a BNP statement (caller should fall back to the LLM path).
+ * Returns { transactions, balances } where balances is { opening_eur, closing_eur,
+ * end_period } extracted from the statement header/footer. Returns null when
+ * the text doesn't look like a BNP statement (caller falls back to LLM).
  *
  * Internal transfers to other tracked accounts (Amex / Revolut / Mastercard /
  * Visa) are filtered out at parse time to avoid double-counting.
@@ -269,6 +348,9 @@ export function parseBnpPdfText(text) {
     });
   }
 
+  // Attach balances as a non-enumerable property so existing callers that
+  // iterate the array don't trip on it, but importPdf can read out.balances.
+  Object.defineProperty(out, "balances", { value: extractBnpBalances(text), enumerable: false });
   return out;
 }
 

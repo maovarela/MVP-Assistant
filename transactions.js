@@ -12,6 +12,7 @@ import {
   insertTransaction,
   isEmailProcessed,
   markEmailProcessed,
+  setAccountBalance,
 } from "./memory.js";
 import { callLLMText, callLLM, getProviders } from "./llm.js";
 import { detectBankFormat, parseAmexCsv, parseRevolutCsv, parseBnpPdfText, categorize as keywordCategorize } from "./bankCsv.js";
@@ -350,6 +351,22 @@ export async function importPdf(filePath) {
         raw:         null,
       });
       if (id) inserted++; else skipped++;
+    }
+    // Persist opening/closing balances if extracted. opening_eur in this
+    // statement = closing of previous month. The end_period is the month the
+    // statement closes (typically same as transaction dates).
+    const bals = bnpTxs.balances;
+    if (bals && (bals.opening_eur != null || bals.closing_eur != null) && bals.end_period) {
+      try {
+        setAccountBalance({
+          account:     "bnp",
+          period:      bals.end_period,
+          opening_eur: bals.opening_eur,
+          closing_eur: bals.closing_eur,
+          source:      "pdf-extracted",
+        });
+        console.log(`[pdf] BNP balances → ${bals.end_period} opening=${bals.opening_eur} closing=${bals.closing_eur}`);
+      } catch (err) { console.warn(`[pdf] balance write failed: ${err.message}`); }
     }
     return { inserted, skipped, errors: 0, total: bnpTxs.length };
   }
