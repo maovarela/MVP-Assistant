@@ -212,6 +212,9 @@ export function renderDashboard(period) {
     <div class="flex items-center justify-between px-1 flex-wrap gap-2">
       <div class="flex items-center gap-3">
         <h2 class="font-headline text-lg font-bold tracking-tight text-on-surface">Gastos</h2>
+        <button onclick="openBudgetEditor()" class="text-xs font-semibold px-3 py-1 rounded-full bg-primary text-on-primary hover:opacity-90">
+          ✏️ Editar budget
+        </button>
         <button id="auditBtn" onclick="openAudit()" class="hidden text-xs font-semibold px-3 py-1 rounded-full bg-warn-container text-warn hover:opacity-90">
           🔍 Auditar (<span id="auditCount">0</span>)
         </button>
@@ -305,6 +308,29 @@ export function renderDashboard(period) {
       </button>
     </div>
     <div id="drillBody" class="flex-1 overflow-y-auto"></div>
+  </div>
+</div>
+
+<!-- Budget editor modal -->
+<div id="budgetModal" class="hidden fixed inset-0 z-[100] bg-black/40 flex items-end md:items-center justify-center p-0 md:p-4">
+  <div class="bg-surface-container-lowest w-full md:max-w-2xl md:rounded-2xl rounded-t-2xl max-h-[90vh] overflow-hidden flex flex-col">
+    <div class="px-5 py-4 border-b border-outline-variant/20 flex items-center justify-between">
+      <div>
+        <div class="font-headline font-bold text-lg">Editar budget</div>
+        <div class="text-xs text-outline" id="budgetModalSub">—</div>
+      </div>
+      <div class="flex items-center gap-2">
+        <button id="budgetCloneBtn" class="text-xs font-semibold text-primary hover:underline" title="Copiar budget de otro mes">Copiar de…</button>
+        <button id="budgetClose" class="w-9 h-9 rounded-full hover:bg-surface-container flex items-center justify-center">
+          <span class="material-symbols-outlined">close</span>
+        </button>
+      </div>
+    </div>
+    <div class="flex-1 overflow-y-auto" id="budgetBody"></div>
+    <div class="px-5 py-3 border-t border-outline-variant/20 flex items-center justify-between text-xs">
+      <span class="text-outline">Los cambios se guardan al instante. Otros meses no se afectan.</span>
+      <button id="budgetDoneBtn" class="px-4 py-2 rounded-lg bg-primary text-on-primary font-semibold">Listo</button>
+    </div>
   </div>
 </div>
 
@@ -743,6 +769,116 @@ export function renderDashboard(period) {
     } else {
       alert("Error guardando: " + r.status);
     }
+  };
+
+  // ─── Budget editor ───────────────────────────────────────────────────────
+  function openBudgetEditor() {
+    const d = currentData; if (!d) return;
+    document.getElementById("budgetModalSub").textContent = "Periodo " + d.period;
+    const body = document.getElementById("budgetBody");
+
+    const renderRows = () => {
+      const fixed = d.fixed.map((f) => ({ ...f, type: "fixed", val: f.budget_eur }));
+      const variable = (d.variable || []).map((v) => ({ ...v, type: "variable", val: v.amount_eur, budget_eur: v.amount_eur }));
+      const all = [...fixed, ...variable];
+      body.innerHTML = \`
+        <table class="w-full text-sm">
+          <thead class="sticky top-0 bg-surface-container">
+            <tr class="text-left text-[10px] uppercase tracking-wider text-outline">
+              <th class="px-4 py-3">Tipo</th>
+              <th class="px-4 py-3">Concepto</th>
+              <th class="px-4 py-3">Categoría</th>
+              <th class="px-4 py-3 text-right w-32">Budget €</th>
+              <th class="px-4 py-3 text-right">Real</th>
+            </tr>
+          </thead>
+          <tbody>
+            \${all.map((r) => \`<tr class="border-b border-outline-variant/15">
+              <td class="px-4 py-2">
+                \${r.type === "fixed"
+                  ? \`<span class="px-2 py-0.5 rounded text-[10px] font-bold uppercase bg-primary-container text-on-primary-container">Fijo</span>\`
+                  : \`<span class="px-2 py-0.5 rounded text-[10px] font-bold uppercase bg-secondary-container text-on-surface">Var</span>\`}
+              </td>
+              <td class="px-4 py-2 font-medium">\${r.label}</td>
+              <td class="px-4 py-2 text-outline">\${(CAT_META[r.category] || { emoji:"", label: r.category || "—" }).emoji} \${r.category || "—"}</td>
+              <td class="px-4 py-2 text-right">
+                <input type="number" step="0.01" value="\${r.val}" min="0"
+                       data-label="\${r.label.replace(/"/g, "&quot;")}"
+                       data-type="\${r.type}"
+                       data-orig="\${r.val}"
+                       class="budgetInput w-28 px-2 py-1 bg-surface-container rounded text-right tabular-nums font-semibold focus:ring-2 focus:ring-primary focus:outline-none" />
+              </td>
+              <td class="px-4 py-2 text-right tabular-nums text-outline">\${fmt(r.actual_eur || 0)}</td>
+            </tr>\`).join("")}
+            <tr class="bg-surface-container">
+              <td colspan="5" class="px-4 py-3 text-xs text-outline italic">
+                Para agregar un concepto nuevo: dile al bot "agrega gasto fijo Netflix 12€ subscriptions" o similar.
+              </td>
+            </tr>
+          </tbody>
+        </table>\`;
+
+      body.querySelectorAll(".budgetInput").forEach((input) => {
+        input.onchange = async () => {
+          const label = input.dataset.label;
+          const type  = input.dataset.type;
+          const orig  = parseFloat(input.dataset.orig);
+          const val   = parseFloat(input.value);
+          if (!Number.isFinite(val) || val === orig) return;
+          input.disabled = true;
+          const payload = type === "fixed"
+            ? { period: d.period, kind: "fixed", payload: { label, budget_eur: val } }
+            : { period: d.period, kind: "variable", payload: { label, amount_eur: val } };
+          const r = await fetch("/api/budget?key=" + encodeURIComponent(key), {
+            method: "POST", headers: { "content-type": "application/json" },
+            body: JSON.stringify(payload),
+          });
+          if (r.ok) {
+            input.dataset.orig = val;
+            input.classList.add("ring-2", "ring-primary");
+            setTimeout(() => input.classList.remove("ring-2", "ring-primary"), 1000);
+            // refresh dashboard data (modal stays open)
+            await load(d.period);
+          } else {
+            alert("Error guardando: " + r.status);
+            input.value = orig;
+          }
+          input.disabled = false;
+        };
+      });
+    };
+    renderRows();
+
+    document.getElementById("budgetModal").classList.remove("hidden");
+  }
+  window.openBudgetEditor = openBudgetEditor;
+  document.getElementById("budgetClose").onclick = () => document.getElementById("budgetModal").classList.add("hidden");
+  document.getElementById("budgetDoneBtn").onclick = () => document.getElementById("budgetModal").classList.add("hidden");
+  document.getElementById("budgetCloneBtn").onclick = async () => {
+    const fromPeriod = prompt("Copiar budget de qué periodo? (YYYY-MM)\\nEjemplo: 2026-04");
+    if (!fromPeriod || !/^\d{4}-\d{2}$/.test(fromPeriod)) return;
+    if (!confirm("Esto va a sobrescribir los budgets del periodo actual con los de " + fromPeriod + ". ¿Continuar?")) return;
+    // Fetch source period
+    const r = await fetch("/api/dashboard.json?key=" + encodeURIComponent(key) + "&period=" + fromPeriod);
+    const src = await r.json();
+    let count = 0;
+    for (const f of (src.fixed || [])) {
+      await fetch("/api/budget?key=" + encodeURIComponent(key), {
+        method: "POST", headers: { "content-type": "application/json" },
+        body: JSON.stringify({ period: currentData.period, kind: "fixed", payload: { label: f.label, budget_eur: f.budget_eur, category: f.category } }),
+      });
+      count++;
+    }
+    for (const v of (src.variable || [])) {
+      await fetch("/api/budget?key=" + encodeURIComponent(key), {
+        method: "POST", headers: { "content-type": "application/json" },
+        body: JSON.stringify({ period: currentData.period, kind: "variable", payload: { label: v.label, amount_eur: v.amount_eur, category: v.category } }),
+      });
+      count++;
+    }
+    alert("Copiados " + count + " items desde " + fromPeriod);
+    await load(currentData.period);
+    openBudgetEditor();
   };
 
   // ─── BNP balance edit modal ──────────────────────────────────────────────
