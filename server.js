@@ -298,12 +298,16 @@ app.post("/api/recategorize", (req, res) => {
     const changes = {};
     for (const r of rows) {
       const newCat = keywordCategorize(r.description || r.merchant || "");
-      if (newCat !== r.category) {
-        upd.run(newCat, r.id);
-        changed++;
-        const key = `${r.category || "(null)"} → ${newCat}`;
-        changes[key] = (changes[key] || 0) + 1;
-      }
+      if (newCat === r.category) continue;
+      // Guard: never DOWNGRADE a specific category to 'other' just because the
+      // regex didn't match. The existing tag was likely set by an LLM bulk
+      // recategorize or by the user manually — both more authoritative than
+      // the regex fallback.
+      if (newCat === "other" && r.category && r.category !== "other" && r.category !== "uncategorised") continue;
+      upd.run(newCat, r.id);
+      changed++;
+      const key = `${r.category || "(null)"} → ${newCat}`;
+      changes[key] = (changes[key] || 0) + 1;
     }
     res.json({ period: period || "all", scanned: rows.length, changed, changes });
   } catch (err) {
