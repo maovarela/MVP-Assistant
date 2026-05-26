@@ -370,10 +370,10 @@ export function renderDashboard(period) {
     housing: "home", groceries: "shopping_cart", restaurants: "restaurant",
     transport: "commute", travel: "flight", subscriptions: "autorenew",
     shopping: "shopping_bag", health: "medical_services", entertainment: "theaters",
-    transfers: "swap_horiz", deuda: "account_balance_wallet", income: "trending_up", fees: "percent",
+    transfers: "swap_horiz", savings: "savings", debt: "account_balance_wallet", income: "trending_up", fees: "percent",
     other: "category", uncategorised: "help",
   };
-  const CATEGORIES = ["groceries","restaurants","transport","travel","subscriptions","shopping","health","housing","entertainment","transfers","deuda","income","fees","other"];
+  const CATEGORIES = ["groceries","restaurants","transport","travel","subscriptions","shopping","health","housing","entertainment","transfers","savings","debt","income","fees","other"];
 
   async function changeCategory(txId, newCat) {
     const r = await fetch("/api/transactions/category?key=" + encodeURIComponent(key), {

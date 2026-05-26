@@ -28,9 +28,10 @@ const CATEGORIES = [
   "health",          // farmacia, médico, gimnasio, deporte
   "housing",         // alquiler, hipoteca, electricidad, gas, internet
   "entertainment",   // cine, conciertos, museos
-  "transfers",       // movimientos entre cuentas propias / inversiones
-  "deuda",           // pagos de deuda (préstamos, créditos)
-  "income",          // salario, refunds, ingresos
+  "transfers",       // money moves between own accounts
+  "savings",         // PERCO, retirement plans, investments, ETFs
+  "debt",            // loan / credit-card payments
+  "income",          // salary, refunds, inflows
   "fees",            // comisiones bancarias, intereses
   "other",
 ];

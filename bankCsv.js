@@ -389,6 +389,10 @@ const RULES = [
   // restaurants pattern because merchant strings often contain "le " / "la ".
   [/free\s*telecom|free\s*mobile|free\s*haut\s*debit|free mobile|orange|sfr|sosh|bouygues/i, "housing"],
   [/totalenergies|edf|engie|electricite|electricidad|gaz|water|veolia|suez/i, "housing"],
+  // Savings plans (must come BEFORE the generic insurance rule because SWISSLIFE
+  // is BOTH an insurance company AND a PERCO retirement-plan provider — the
+  // retirement variant has "retraite" / "ar" in the description).
+  [/swisslife.*retrai|swisslife.*\bar\b|swisslife assurance et|perco|plan d.?[ée]pargne|cofidis amazon/i, "savings"],
   [/cardif|swisslife|assurance|allianz|axa\b|matmut|maaf|seguro/i,            "fees"],
   [/navigo|comutitres|sncf|ratp|metro|velib|free now|\btmb\b|transmilenio|aerolinea/i, "transport"],
   [/amende\.gouv|amende|impots|tresor public/i,                               "fees"],
@@ -421,7 +425,7 @@ const RULES = [
   [/ticketnet|ticketmaster|cinema|theatre|spectacle|concert|museo|museum|opera|ballet/i, "entertainment"],
 
   // Debt payments
-  [/davivienda|bancolombia|prestamo|pr[eé]stamo|cuota.*credito|cuota.*pr[eé]stamo|amortiz/i, "deuda"],
+  [/davivienda|bancolombia|prestamo|pr[eé]stamo|cuota.*credito|cuota.*pr[eé]stamo|amortiz/i, "debt"],
 
   // Top-ups / transfers / fees (generic fallbacks)
   [/top.?up|topup/i,           "income"],
