@@ -945,6 +945,16 @@ export function getActualSpendVsBudget(period) {
     leftover[c].count += 1;
   }
 
+  // Track post-attribution category for each transaction. If a tx is claimed
+  // by a budget line, we display it under THAT line's category in the donut
+  // (so rent tagged 'transfers' but claimed by Arriendo (housing) shows under
+  // 'housing'). Unclaimed transactions keep their raw transaction.category.
+  const attributedByCategory = {};
+  function addAttributed(cat, amt) {
+    const c = cat || "uncategorised";
+    attributedByCategory[c] = (attributedByCategory[c] || 0) + amt;
+  }
+
   for (const tx of txs) {
     // 1. Cross-category keyword match (first wins) — checks fixed AND variables
     let matched = null;
@@ -956,6 +966,7 @@ export function getActualSpendVsBudget(period) {
     if (matched) {
       const k = `${matched._kind}:${matched.id}`;
       actualById.set(k, actualById.get(k) + tx.amt);
+      addAttributed(matched.category, tx.amt);   // ← attribution view uses budget-line category
       continue;
     }
 
@@ -977,8 +988,10 @@ export function getActualSpendVsBudget(period) {
           actualById.set(k, actualById.get(k) + share);
         }
       }
+      addAttributed(cat, tx.amt);  // proportional fallback → category is same as raw
     } else {
       addLeftover(cat, tx.amt);
+      addAttributed(cat, tx.amt);  // orphan → original category
     }
   }
 
@@ -1017,7 +1030,11 @@ export function getActualSpendVsBudget(period) {
     .map(([category, v]) => ({ category, total: Math.round(v.total * 100) / 100, count: v.count }))
     .sort((a, b) => b.total - a.total);
 
-  return { rows, variableRows, leftovers };
+  const byCategoryAttributed = Object.entries(attributedByCategory)
+    .map(([category, total]) => ({ category, total: Math.round(total * 100) / 100 }))
+    .sort((a, b) => b.total - a.total);
+
+  return { rows, variableRows, leftovers, byCategoryAttributed };
 }
 
 /** Full payload for the dashboard JSON endpoint. */
@@ -1043,7 +1060,13 @@ export function getDashboardSummary(period) {
   const residual    = Math.round((incomeTotal - fixedTotal - variableTotal) * 100) / 100;
   const pctSpent    = incomeTotal > 0 ? Math.round(((fixedTotal + variableTotal) / incomeTotal) * 1000) / 10 : null;
 
-  const byCategoryActual = db.prepare(`
+  // Use post-attribution categories so the donut reflects where the money
+  // ACTUALLY landed (rent claimed by Arriendo → housing, even if tagged
+  // 'transfers' in the raw transactions table). Falls back to raw aggregate
+  // if no attribution available.
+  const byCategoryActual = attrib.byCategoryAttributed && attrib.byCategoryAttributed.length
+    ? attrib.byCategoryAttributed
+    : db.prepare(`
     SELECT COALESCE(category, 'uncategorised') AS category,
            ROUND(SUM(ABS(amount)), 2)          AS total
     FROM transactions

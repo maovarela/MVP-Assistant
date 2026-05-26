@@ -204,8 +204,8 @@ export function renderDashboard(period) {
       <table class="w-full text-sm">
         <thead class="bg-surface-container">
           <tr class="text-left text-[10px] uppercase tracking-wider text-outline">
-            <th class="px-3 py-2.5 w-16">Tipo</th>
-            <th class="px-3 py-2.5">Concepto</th>
+            <th class="px-3 py-2.5">Categoría</th>
+            <th class="px-3 py-2.5 w-20 text-center">Tipo</th>
             <th class="px-3 py-2.5 text-right">Budget</th>
             <th class="px-3 py-2.5 text-right">Real</th>
             <th class="px-3 py-2.5 text-right w-16">%</th>
@@ -854,18 +854,27 @@ export function renderDashboard(period) {
         </div>\`;
     }
 
-    // Combined table + filter chips
-    const fijos = d.fixed.map((f) => ({
-      type: "fijo", label: f.label, category: f.category,
-      budget_eur: f.budget_eur, actual_eur: f.actual_eur, pct_used: f.pct_used,
-    }));
-    const variables = d.variable.map((v) => ({
-      type: "variable", label: v.label, category: v.category,
-      budget_eur: v.amount_eur, actual_eur: v.actual_eur, pct_used: v.pct_used,
-      match_keyword: v.match_keyword,
-    }));
-    const fijosTotal = fijos.reduce((s, r) => s + r.budget_eur, 0);
-    const varTotal   = variables.reduce((s, r) => s + r.budget_eur, 0);
+    // Aggregate by category (no per-concepto rows). Each row collapses all
+    // fijos+variables sharing a category into a single line: TIPO badge (F /
+    // V / FV), summed budget, summed actual, weighted % used.
+    const catAgg = {};
+    for (const f of d.fixed) {
+      const cat = f.category || "uncategorised";
+      catAgg[cat] = catAgg[cat] || { category: cat, hasFixed: false, hasVar: false, budget: 0, actual: 0 };
+      catAgg[cat].hasFixed = true;
+      catAgg[cat].budget += f.budget_eur || 0;
+      catAgg[cat].actual += f.actual_eur || 0;
+    }
+    for (const v of d.variable) {
+      const cat = v.category || "uncategorised";
+      catAgg[cat] = catAgg[cat] || { category: cat, hasFixed: false, hasVar: false, budget: 0, actual: 0 };
+      catAgg[cat].hasVar = true;
+      catAgg[cat].budget += v.amount_eur || 0;
+      catAgg[cat].actual += v.actual_eur || 0;
+    }
+
+    const fijosTotal = d.fixed.reduce((s, r) => s + (r.budget_eur || 0), 0);
+    const varTotal   = d.variable.reduce((s, r) => s + (r.amount_eur || 0), 0);
 
     const chipsEl = document.getElementById("filterChips");
     function chip(name, label, count, total, active) {
@@ -882,52 +891,55 @@ export function renderDashboard(period) {
       b.onclick = () => { activeFilter = b.dataset.filter; render(currentData); };
     });
 
-    const filtered = activeFilter === "fijos" ? fijos : activeFilter === "variables" ? variables : [...fijos, ...variables];
+    // Render rows aggregated by category (no per-concepto)
+    const includeFixed   = activeFilter !== "variables";
+    const includeVar     = activeFilter !== "fijos";
+    const filteredCats = Object.values(catAgg).filter((c) =>
+      (includeFixed && c.hasFixed) || (includeVar && c.hasVar)
+    ).sort((a, b) => b.budget - a.budget);
+
     const tbl = document.getElementById("gastosTbl");
-    if (!filtered.length) {
-      tbl.innerHTML = \`<tr><td colspan="5" class="px-3 py-8 text-outline italic text-center">Sin gastos en \${activeFilter} para \${d.period}</td></tr>\`;
+    if (!filteredCats.length && (!d.leftovers || !d.leftovers.length)) {
+      tbl.innerHTML = \`<tr><td colspan="5" class="px-3 py-8 text-outline italic text-center">Sin categorías para \${d.period}</td></tr>\`;
     } else {
-      // Build leftover rows (only for "fijos" or "todos" view — they don't apply to variables)
       const showLeftovers = activeFilter !== "variables";
       const leftoverRows = showLeftovers && d.leftovers ? d.leftovers.filter((l) => l.total > 0.5) : [];
 
-      tbl.innerHTML = filtered.map((r) => {
-        const typeBadge = r.type === "fijo"
-          ? \`<span class="px-2 py-0.5 rounded text-[10px] font-bold uppercase tracking-wider bg-primary-container text-on-primary-container">Fijo</span>\`
-          : \`<span class="px-2 py-0.5 rounded text-[10px] font-bold uppercase tracking-wider bg-secondary-container text-on-surface">Var</span>\`;
-        const pctClr = r.pct_used == null ? "bg-surface-container text-on-surface-variant" :
-                       r.pct_used > 100 ? "bg-error-container text-error" :
-                       r.pct_used > 80  ? "bg-warn-container text-warn"   : "bg-primary-container text-on-primary-container";
-        const real = (r.type === "fijo" || r.type === "variable") ? fmt(r.actual_eur) : "—";
-        const pct  = (r.type === "fijo" || r.type === "variable") ? \`<span class="px-2 py-0.5 rounded-full text-[10px] font-semibold \${pctClr}">\${fmtPct(r.pct_used)}</span>\` : \`<span class="text-outline">—</span>\`;
-        const kwBadge = r.match_keyword ? \`<span title="\${r.match_keyword}" class="text-[9px] text-outline font-mono">/\${r.match_keyword.slice(0,18)}\${r.match_keyword.length > 18 ? "…" : ""}/</span>\` : "";
-        const editBtn = (r.type === "fijo" || r.type === "variable") ? \`<button class="ml-1.5 opacity-40 hover:opacity-100 transition-opacity" onclick="openKeywordEdit('\${r.label.replace(/'/g, "\\\\'")}', '\${(r.match_keyword || '').replace(/'/g, "\\\\'")}', '\${r.type}')" title="Editar match keyword"><span class="material-symbols-outlined" style="font-size:13px;">edit</span></button>\` : "";
-        return \`<tr class="border-b border-outline-variant/15 last:border-0">
-          <td class="px-3 py-2.5">\${typeBadge}</td>
+      tbl.innerHTML = filteredCats.map((c) => {
+        const pct = c.budget > 0 ? Math.round((c.actual / c.budget) * 1000) / 10 : null;
+        const pctClr = pct == null ? "bg-surface-container text-on-surface-variant" :
+                       pct > 100 ? "bg-error-container text-error" :
+                       pct > 80  ? "bg-warn-container text-warn"   : "bg-primary-container text-on-primary-container";
+        const tipoBadge = c.hasFixed && c.hasVar
+          ? \`<span class="px-2 py-0.5 rounded text-[10px] font-bold uppercase tracking-wider bg-tertiary-container/40 text-tertiary">F+V</span>\`
+          : c.hasFixed
+            ? \`<span class="px-2 py-0.5 rounded text-[10px] font-bold uppercase tracking-wider bg-primary-container text-on-primary-container">Fijo</span>\`
+            : \`<span class="px-2 py-0.5 rounded text-[10px] font-bold uppercase tracking-wider bg-secondary-container text-on-surface">Var</span>\`;
+        return \`<tr class="border-b border-outline-variant/15 last:border-0 hover:bg-surface-container-low cursor-pointer" onclick="openCategoryDrill('\${c.category}', '\${d.period}')">
           <td class="px-3 py-2.5">
             <div class="flex items-center gap-2">
-              <span class="material-symbols-outlined text-outline" style="font-size: 16px" title="\${r.category || "—"}">\${ICON[r.category] || ICON.other}</span>
-              <span class="text-on-surface font-medium">\${r.label}</span>
-              \${editBtn}
+              <span class="material-symbols-outlined text-outline" style="font-size: 16px">\${ICON[c.category] || ICON.other}</span>
+              <span class="text-on-surface font-medium capitalize">\${c.category}</span>
             </div>
-            \${kwBadge ? \`<div class="mt-0.5 ml-6">\${kwBadge}</div>\` : ""}
           </td>
-          <td class="px-3 py-2.5 text-right tabular-nums">\${fmt(r.budget_eur)}</td>
-          <td class="px-3 py-2.5 text-right tabular-nums">\${real}</td>
-          <td class="px-3 py-2.5 text-right">\${pct}</td>
+          <td class="px-3 py-2.5 text-center">\${tipoBadge}</td>
+          <td class="px-3 py-2.5 text-right tabular-nums">\${fmt(c.budget)}</td>
+          <td class="px-3 py-2.5 text-right tabular-nums">\${fmt(c.actual)}</td>
+          <td class="px-3 py-2.5 text-right"><span class="px-2 py-0.5 rounded-full text-[10px] font-semibold \${pctClr}">\${fmtPct(pct)}</span></td>
         </tr>\`;
       }).join("") + leftoverRows.map((l) => \`
-        <tr class="border-b border-outline-variant/15 last:border-0 bg-warn-container/30">
-          <td class="px-3 py-2.5"><span class="px-2 py-0.5 rounded text-[10px] font-bold uppercase tracking-wider bg-warn-container text-warn">Sin asignar</span></td>
+        <tr class="border-b border-outline-variant/15 last:border-0 bg-warn-container/30 hover:bg-warn-container/50 cursor-pointer" onclick="openCategoryDrill('\${l.category}', '\${d.period}')">
           <td class="px-3 py-2.5">
             <div class="flex items-center gap-2">
-              <span class="material-symbols-outlined text-outline" style="font-size: 16px">\${ICON[l.category] || ICON.other}</span>
-              <span class="text-on-surface italic">otros \${l.category}</span>
+              <span class="material-symbols-outlined text-warn" style="font-size: 16px">\${ICON[l.category] || ICON.other}</span>
+              <span class="text-on-surface italic capitalize">\${l.category}</span>
+              <span class="text-[9px] text-outline">(sin presupuesto)</span>
             </div>
           </td>
+          <td class="px-3 py-2.5 text-center"><span class="px-2 py-0.5 rounded text-[10px] font-bold uppercase tracking-wider bg-warn-container text-warn">Orphan</span></td>
           <td class="px-3 py-2.5 text-right tabular-nums text-outline">—</td>
           <td class="px-3 py-2.5 text-right tabular-nums">\${fmt(l.total)}</td>
-          <td class="px-3 py-2.5 text-right"><button class="text-[10px] text-primary font-semibold hover:underline" onclick="openCategoryDrill('\${l.category}', '\${d.period}')">ver</button></td>
+          <td class="px-3 py-2.5 text-right"><span class="text-outline">—</span></td>
         </tr>\`).join("");
     }
 
@@ -943,10 +955,12 @@ export function renderDashboard(period) {
     // ── DONUT: dual ring + center total ────────────────────────────────
     const total = d.by_category_actual.reduce((s, r) => s + r.total, 0);
     document.getElementById("donutCenter").textContent = fmt(total);
-    const plannedTotal = d.totals.fixed_eur + d.totals.variable_eur;
-    const pctOfPlan = plannedTotal > 0 ? Math.round((total / plannedTotal) * 1000) / 10 : null;
-    const subClr = pctOfPlan == null ? "text-outline" : pctOfPlan > 100 ? "text-error" : pctOfPlan > 80 ? "text-warn" : "text-primary";
-    document.getElementById("donutSubtitle").textContent = pctOfPlan != null ? \`\${pctOfPlan}% del plan\` : "Sin plan";
+    // Compare to INCOME (more meaningful for cashflow). vs plan can show 200%+
+    // when there are big one-offs and is confusing.
+    const incomeEur = d.totals.income_eur || 0;
+    const pctOfIncome = incomeEur > 0 ? Math.round((total / incomeEur) * 1000) / 10 : null;
+    const subClr = pctOfIncome == null ? "text-outline" : pctOfIncome > 100 ? "text-error" : pctOfIncome > 85 ? "text-warn" : "text-primary";
+    document.getElementById("donutSubtitle").textContent = pctOfIncome != null ? \`\${pctOfIncome}% del ingreso\` : "—";
     document.getElementById("donutSubtitle").className = "text-[11px] mt-1 " + subClr;
 
     if (donutChart) donutChart.destroy();
@@ -995,11 +1009,13 @@ export function renderDashboard(period) {
     for (const v of d.variable) if (v.category) planMap[v.category] = (planMap[v.category] || 0) + v.amount_eur;
     const actualMap = Object.fromEntries(d.by_category_actual.map((r) => [r.category, r.total]));
     const allCats = Array.from(new Set([...Object.keys(planMap), ...Object.keys(actualMap)]));
+    // Only show categories that have a budget. Orphan-only (no plan) clutter
+    // the chart and dominate visually (e.g. 'other' from one-off shopping).
     const variance = allCats.map((c) => ({
       category: c, planned: planMap[c] || 0, actual: actualMap[c] || 0,
       pct: planMap[c] > 0 ? (actualMap[c] || 0) / planMap[c] * 100 : null,
-    })).filter((x) => x.planned > 0 || x.actual > 0)
-       .sort((a, b) => Math.max(b.planned, b.actual) - Math.max(a.planned, a.actual));
+    })).filter((x) => x.planned > 0)
+       .sort((a, b) => b.planned - a.planned);
 
     const barColor = variance.map((v) => v.pct == null ? "#565e74" : v.pct > 100 ? "#ba1a1a" : v.pct > 80 ? "#a76900" : "#006d32");
 
