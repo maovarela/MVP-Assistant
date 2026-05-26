@@ -192,6 +192,15 @@ export function renderDashboard(period) {
     <div class="grid grid-cols-1 md:grid-cols-4 gap-3" id="accountsGrid">
       <!-- populated by JS — one card per account + a Total card -->
     </div>
+    <!-- Internal-transfer panel — BNP madre → hijas Amex/Revolut -->
+    <div id="internalFlowsPanel" class="hidden rounded-2xl bg-surface-container-lowest border border-outline-variant/15 p-4">
+      <div class="flex items-center gap-2 mb-2.5">
+        <span class="material-symbols-outlined text-outline" style="font-size:16px">sync_alt</span>
+        <h4 class="font-headline font-bold text-xs uppercase tracking-wider text-outline">Transferencias internas (BNP madre → hijas)</h4>
+      </div>
+      <div id="internalFlowsBody" class="grid grid-cols-1 md:grid-cols-3 gap-2 text-xs"></div>
+      <p class="text-[10px] text-outline mt-2">Estas no cuentan como gasto real — solo mueven dinero entre tus cuentas. Excluidas del "% del ingreso" y del donut.</p>
+    </div>
   </section>
 
   <!-- YTD strip — consolidado del año hasta ahora -->
@@ -262,11 +271,11 @@ export function renderDashboard(period) {
           <span class="flex items-center gap-1"><span class="w-2 h-2 bg-error rounded-full"></span>Sobre</span>
         </div>
       </div>
-      <canvas id="varianceBar" style="max-height: 360px"></canvas>
+      <div id="varianceList" class="space-y-2.5"></div>
     </div>
     <div class="rounded-2xl bg-surface-container-lowest p-5 border border-outline-variant/15 flex flex-col">
       <div class="text-sm font-semibold text-on-surface mb-2">Mix de gasto</div>
-      <div class="relative flex-1 min-h-[260px]">
+      <div class="relative h-[200px]">
         <canvas id="donut"></canvas>
         <div class="absolute inset-0 flex flex-col items-center justify-center pointer-events-none">
           <div class="text-[10px] uppercase tracking-wider text-outline">Total real</div>
@@ -274,6 +283,7 @@ export function renderDashboard(period) {
           <div class="text-[11px] text-outline mt-1" id="donutSubtitle">—</div>
         </div>
       </div>
+      <div id="donutLegend" class="mt-3 space-y-1 text-[11px]"></div>
     </div>
   </section>
 
@@ -305,19 +315,36 @@ export function renderDashboard(period) {
 <!-- VIEW: Histórico (flat editable transactions list) -->
 <main id="viewHistorico" class="hidden max-w-6xl mx-auto px-4 pt-4 space-y-4">
   <section class="rounded-2xl bg-surface-container-lowest border border-outline-variant/15 p-5">
-    <div class="flex flex-wrap items-center justify-between gap-3 mb-4">
+    <div class="flex flex-wrap items-start justify-between gap-3 mb-4">
       <div>
         <h2 class="font-headline text-lg font-bold tracking-tight text-on-surface">Transacciones</h2>
         <p class="text-xs text-outline">Lista plana — edita la categoría inline para corregir rápido.</p>
       </div>
       <div class="flex items-center gap-2 flex-wrap">
-        <select id="histPeriodSel" class="bg-surface-container border-0 rounded-full text-xs font-medium px-3 py-1.5 focus:ring-2 focus:ring-primary">
-          <!-- populated by JS -->
-        </select>
-        <input id="histSearch" type="search" placeholder="Buscar merchant…" class="bg-surface-container border-0 rounded-full text-xs font-medium px-3 py-1.5 w-44 focus:ring-2 focus:ring-primary focus:outline-none" />
-        <span id="histCount" class="text-[11px] text-outline tabular-nums"></span>
+        <input id="histSearch" type="search" placeholder="🔎 Buscar merchant…" class="bg-surface-container border-0 rounded-full text-xs font-medium px-3 py-1.5 w-48 focus:ring-2 focus:ring-primary focus:outline-none" />
       </div>
     </div>
+
+    <!-- Filter row -->
+    <div class="flex flex-wrap items-center gap-2 mb-3 pb-3 border-b border-outline-variant/15">
+      <div class="flex items-center gap-1.5">
+        <label class="text-[10px] uppercase tracking-wider text-outline font-bold">Desde</label>
+        <select id="histPeriodFrom" class="bg-surface-container border-0 rounded text-xs px-2 py-1 focus:ring-2 focus:ring-primary focus:outline-none"></select>
+      </div>
+      <div class="flex items-center gap-1.5">
+        <label class="text-[10px] uppercase tracking-wider text-outline font-bold">Hasta</label>
+        <select id="histPeriodTo" class="bg-surface-container border-0 rounded text-xs px-2 py-1 focus:ring-2 focus:ring-primary focus:outline-none"></select>
+      </div>
+      <span class="text-outline">·</span>
+      <div class="flex items-center gap-1.5" id="histAccountFilter">
+        <span class="text-[10px] uppercase tracking-wider text-outline font-bold mr-1">Cuentas</span>
+        <!-- chips populated by JS -->
+      </div>
+    </div>
+
+    <!-- Stats line -->
+    <div id="histStats" class="text-xs text-outline mb-3 tabular-nums">—</div>
+
     <div class="overflow-x-auto">
       <table class="w-full text-sm" id="historicoTbl">
         <thead class="bg-surface-container">
@@ -471,20 +498,73 @@ export function renderDashboard(period) {
   }, 0);
 
   let histSearchTimer = null;
-  async function loadHistorico() {
-    const periodSel = document.getElementById("histPeriodSel");
-    // Populate period dropdown from currentData.available_periods if empty
-    if (periodSel && !periodSel.options.length && currentData?.available_periods?.length) {
-      const opts = ['<option value="">Todos los meses</option>']
-        .concat(currentData.available_periods.map((p) => \`<option value="\${p}">\${p}</option>\`));
-      periodSel.innerHTML = opts.join("");
-      periodSel.value = currentData.period || "";
+  let histAccounts = new Set(["bnp", "amex", "revolut"]); // default: all
+  let histInitialized = false;
+
+  function ensureHistoricoInit() {
+    if (histInitialized) return;
+    const fromSel = document.getElementById("histPeriodFrom");
+    const toSel   = document.getElementById("histPeriodTo");
+    const periods = (currentData?.available_periods || [currentData?.period]).filter(Boolean);
+    if (periods.length) {
+      const opts = periods.map((p) => \`<option value="\${p}">\${p}</option>\`).join("");
+      fromSel.innerHTML = opts;
+      toSel.innerHTML   = opts;
+      // default range: current month only
+      const cur = currentData?.period || periods[0];
+      fromSel.value = cur;
+      toSel.value   = cur;
     }
-    const period = periodSel?.value || "";
+    // Account chips
+    const filterEl = document.getElementById("histAccountFilter");
+    const accountList = [
+      { id: "bnp",     label: "BNP",     clr: "emerald" },
+      { id: "amex",    label: "Amex",    clr: "blue"    },
+      { id: "revolut", label: "Revolut", clr: "zinc"    },
+    ];
+    // Preserve the label span, then append chips
+    filterEl.querySelectorAll(".acctChip").forEach((el) => el.remove());
+    accountList.forEach((a) => {
+      const b = document.createElement("button");
+      b.className = "acctChip";
+      b.dataset.acct = a.id;
+      filterEl.appendChild(b);
+      b.onclick = () => {
+        if (histAccounts.has(a.id) && histAccounts.size === 1) {
+          // clicking the only-active acct → re-enable all
+          histAccounts = new Set(accountList.map((x) => x.id));
+        } else if (histAccounts.has(a.id)) {
+          histAccounts.delete(a.id);
+        } else {
+          histAccounts.add(a.id);
+        }
+        renderAcctChips();
+        loadHistorico();
+      };
+    });
+    function renderAcctChips() {
+      filterEl.querySelectorAll(".acctChip").forEach((b) => {
+        const id = b.dataset.acct;
+        const active = histAccounts.has(id);
+        b.textContent = accountList.find((x) => x.id === id).label;
+        b.className = "acctChip px-2.5 py-1 rounded-full text-[11px] font-semibold transition-colors " +
+          (active ? "bg-primary text-on-primary" : "bg-surface-container text-outline hover:bg-surface-container-high");
+      });
+    }
+    renderAcctChips();
+    histInitialized = true;
+  }
+
+  async function loadHistorico() {
+    ensureHistoricoInit();
+    const from = document.getElementById("histPeriodFrom")?.value || "";
+    const to   = document.getElementById("histPeriodTo")?.value   || "";
     const search = document.getElementById("histSearch")?.value.trim() || "";
     const qs = new URLSearchParams({ key });
-    if (period) qs.set("period", period);
+    if (from) qs.set("period_from", from);
+    if (to)   qs.set("period_to",   to);
     if (search) qs.set("search", search);
+    if (histAccounts.size && histAccounts.size < 3) qs.set("accounts", [...histAccounts].join(","));
     document.getElementById("historicoBody").innerHTML = \`<tr><td colspan="5" class="px-3 py-8 text-center text-outline italic">Cargando…</td></tr>\`;
     const r = await fetch("/api/transactions.json?" + qs.toString());
     if (!r.ok) return;
@@ -493,8 +573,10 @@ export function renderDashboard(period) {
   }
   function renderHistorico(d) {
     const tbody = document.getElementById("historicoBody");
-    const countEl = document.getElementById("histCount");
-    if (countEl) countEl.textContent = \`\${d.count} · −\${fmt(d.total_out)} · +\${fmt(d.total_in)}\`;
+    const statsEl = document.getElementById("histStats");
+    if (statsEl) {
+      statsEl.innerHTML = \`<strong class="text-on-surface">\${d.count}</strong> transacciones · <span class="text-error">€\${fmt(d.total_out)} salidas</span> · <span class="text-primary">€\${fmt(d.total_in)} entradas</span> · neto <strong class="\${d.total_in - d.total_out >= 0 ? "text-primary" : "text-error"}">€\${fmt(d.total_in - d.total_out)}</strong>\`;
+    }
     if (!d.rows.length) { tbody.innerHTML = \`<tr><td colspan="5" class="px-3 py-8 text-center text-outline italic">Sin transacciones</td></tr>\`; return; }
 
     const ACCT_CLR = { BNP: "bg-emerald-50 text-emerald-800", Amex: "bg-blue-50 text-blue-800", Revolut: "bg-zinc-100 text-zinc-800" };
@@ -548,9 +630,11 @@ export function renderDashboard(period) {
   }
 
   setTimeout(() => {
-    const periodSel = document.getElementById("histPeriodSel");
-    const searchEl  = document.getElementById("histSearch");
-    if (periodSel) periodSel.onchange = loadHistorico;
+    const fromSel  = document.getElementById("histPeriodFrom");
+    const toSel    = document.getElementById("histPeriodTo");
+    const searchEl = document.getElementById("histSearch");
+    if (fromSel) fromSel.onchange = loadHistorico;
+    if (toSel)   toSel.onchange   = loadHistorico;
     if (searchEl) {
       searchEl.oninput = () => {
         clearTimeout(histSearchTimer);
@@ -678,6 +762,23 @@ export function renderDashboard(period) {
       totals.debits  += d.debits_eur;
       totals.net     += d.net_change_eur;
       totals.tx      += d.tx_count;
+      // Internal-transfer breakdown — shows BNP↔hijas flows so the
+      // mother/child hierarchy is visible. BNP shows "Movido a hijas",
+      // Amex/Revolut show "Recibido de BNP".
+      const intIn  = d.internal_credits_eur || 0;
+      const intOut = d.internal_debits_eur  || 0;
+      let intLine = "";
+      if (acct === "bnp" && intOut > 0) {
+        intLine = \`<div class="mt-2 text-[10px] flex items-center justify-between rounded-lg bg-amber-50 text-amber-900 px-2 py-1.5">
+          <span class="font-semibold">↦ Movido a hijas</span>
+          <span class="tabular-nums font-bold">€\${fmt(intOut).replace("€","")}</span>
+        </div>\`;
+      } else if (acct !== "bnp" && intIn > 0) {
+        intLine = \`<div class="mt-2 text-[10px] flex items-center justify-between rounded-lg bg-emerald-50 text-emerald-900 px-2 py-1.5">
+          <span class="font-semibold">↤ Recibido de BNP</span>
+          <span class="tabular-nums font-bold">€\${fmt(intIn).replace("€","")}</span>
+        </div>\`;
+      }
       document.getElementById("acct-" + acct).innerHTML = \`
         <div class="flex items-center justify-between mb-3">
           <div class="flex items-center gap-2">
@@ -705,7 +806,8 @@ export function renderDashboard(period) {
             <div class="font-headline text-base font-bold tabular-nums text-error">\${fmt(d.debits_eur)}</div>
             <div class="text-[9px] \${netClr}">net \${d.net_change_eur >= 0 ? "+" : ""}\${fmt(d.net_change_eur)}</div>
           </div>
-        </div>\`;
+        </div>
+        \${intLine}\`;
     }
 
     // Total card — consolidated of all 3 accounts
@@ -743,6 +845,45 @@ export function renderDashboard(period) {
     // Re-bind the edit button for BNP since it was just rendered
     const bnpBtn = document.getElementById("bnpEditBtn");
     if (bnpBtn) bnpBtn.onclick = openBnpBalanceEditor;
+
+    // Internal-flows panel: render BNP→hijas amounts using internal_debits
+    // from BNP (what BNP sent) + internal_credits from each child (what they
+    // received). They should match — if they don't, the delta is shown as
+    // "pendiente" (e.g. BNP statement not loaded yet for the period).
+    try {
+      const bnp = await (await fetch("/api/cashflow.json?key=" + encodeURIComponent(key) + "&account=bnp&period="     + period)).json();
+      const amx = await (await fetch("/api/cashflow.json?key=" + encodeURIComponent(key) + "&account=amex&period="    + period)).json();
+      const rvl = await (await fetch("/api/cashflow.json?key=" + encodeURIComponent(key) + "&account=revolut&period=" + period)).json();
+      const bnpOut    = bnp.internal_debits_eur  || 0;
+      const amexIn    = amx.internal_credits_eur || 0;
+      const revolutIn = rvl.internal_credits_eur || 0;
+      const totalIn   = amexIn + revolutIn;
+      const panel = document.getElementById("internalFlowsPanel");
+      const body  = document.getElementById("internalFlowsBody");
+      if (bnpOut === 0 && totalIn === 0) {
+        panel.classList.add("hidden");
+      } else {
+        panel.classList.remove("hidden");
+        const cell = (from, to, amt, note) => \`
+          <div class="rounded-lg bg-surface-container px-3 py-2 flex items-center justify-between gap-2">
+            <div class="flex items-center gap-1.5 min-w-0">
+              <span class="px-1.5 py-0.5 rounded text-[10px] font-bold bg-emerald-100 text-emerald-800">\${from}</span>
+              <span class="material-symbols-outlined text-outline" style="font-size:14px">arrow_forward</span>
+              <span class="px-1.5 py-0.5 rounded text-[10px] font-bold bg-blue-100 text-blue-800">\${to}</span>
+            </div>
+            <div class="text-right">
+              <div class="font-headline font-bold tabular-nums text-on-surface">€\${fmt(amt).replace("€","")}</div>
+              \${note ? \`<div class="text-[9px] text-outline">\${note}</div>\` : ""}
+            </div>
+          </div>\`;
+        const delta = Math.round((totalIn - bnpOut) * 100) / 100;
+        body.innerHTML = [
+          cell("BNP", "Amex",    amexIn,    "prélèvement"),
+          cell("BNP", "Revolut", revolutIn, "top-up"),
+          cell("BNP", "Total",   bnpOut,    Math.abs(delta) > 0.5 ? \`vs €\${fmt(totalIn).replace("€","")} recibido (Δ €\${fmt(delta).replace("€","")})\` : "match ✓"),
+        ].join("");
+      }
+    } catch (e) { /* silent — panel just stays hidden */ }
   }
 
   let openBnpBalanceEditor = () => {};   // populated below
@@ -1328,23 +1469,28 @@ export function renderDashboard(period) {
     const allRows = d.category_rows || [];
     const budgetTotal = allRows.reduce((s, r) => s + (r.budget_eur || 0), 0);
     const actualTotal = allRows.reduce((s, r) => s + (r.actual_eur || 0), 0);
+    const withBudget  = allRows.filter((r) => r.budget_eur > 0).length;
+    const pctOverall  = budgetTotal > 0 ? Math.round((actualTotal / budgetTotal) * 1000) / 10 : null;
 
+    // Single stats line + one toggle: "Mostrar sin presupuesto".
+    const showAll = activeFilter === "all";
+    const statsClr = pctOverall == null ? "text-outline" : pctOverall > 100 ? "text-error" : pctOverall > 85 ? "text-warn" : "text-primary";
     const chipsEl = document.getElementById("filterChips");
-    function chip(name, label, count, total, active) {
-      return \`<button data-filter="\${name}" class="px-3 py-1.5 rounded-full text-xs font-semibold transition-colors \${active ? "bg-primary text-on-primary" : "bg-surface-container text-on-surface hover:bg-surface-container-high"}">
-        \${label} <span class="opacity-70 ml-1">\${count} · \${fmt(total)}</span>
+    chipsEl.innerHTML = \`
+      <div class="text-xs text-outline tabular-nums">
+        <strong class="text-on-surface">\${withBudget}</strong> categorías ·
+        plan <strong class="text-on-surface">€\${fmt(budgetTotal).replace("€","")}</strong> ·
+        real <strong class="text-on-surface">€\${fmt(actualTotal).replace("€","")}</strong>
+        \${pctOverall != null ? \`(<span class="\${statsClr} font-semibold">\${pctOverall}%</span>)\` : ""}
+      </div>
+      <button id="toggleNoBudget" class="px-3 py-1 rounded-full text-[11px] font-semibold transition-colors \${showAll ? "bg-primary text-on-primary" : "bg-surface-container text-outline hover:bg-surface-container-high"}">
+        \${showAll ? "✓ " : ""}Mostrar sin presupuesto
       </button>\`;
-    }
-    const withBudget = allRows.filter((r) => r.budget_eur > 0).length;
-    chipsEl.innerHTML = [
-      chip("budgeted", "Con presupuesto", withBudget,       budgetTotal, activeFilter === "budgeted" || !activeFilter || activeFilter === "fijos"),
-      chip("all",      "Todas",           allRows.length,   actualTotal, activeFilter === "all"      || activeFilter === "todos" || activeFilter === "variables"),
-    ].join("");
-    chipsEl.querySelectorAll("button").forEach((b) => {
-      b.onclick = () => { activeFilter = b.dataset.filter; render(currentData); };
-    });
+    document.getElementById("toggleNoBudget").onclick = () => {
+      activeFilter = showAll ? "budgeted" : "all";
+      render(currentData);
+    };
 
-    const showAll = activeFilter === "all" || activeFilter === "todos" || activeFilter === "variables";
     const filteredCats = allRows
       .filter((r) => showAll ? true : (r.budget_eur > 0 || r.actual_eur > 0))
       .sort((a, b) => (b.budget_eur + b.actual_eur) - (a.budget_eur + a.actual_eur));
@@ -1472,98 +1618,106 @@ export function renderDashboard(period) {
   }
 
   function renderCharts(d) {
-    // ── DONUT: dual ring + center total ────────────────────────────────
+    // ── DONUT: top 7 + agrupar el resto como "Otros" ───────────────────
+    // Reduce visual clutter: many tiny slices vs a single "Otros" sliver.
+    // Custom HTML legend below replaces Chart.js's clunky default.
     const total = d.by_category_actual.reduce((s, r) => s + r.total, 0);
     document.getElementById("donutCenter").textContent = fmt(total);
-    // Compare to INCOME (more meaningful for cashflow). vs plan can show 200%+
-    // when there are big one-offs and is confusing.
     const incomeEur = d.totals.income_eur || 0;
     const pctOfIncome = incomeEur > 0 ? Math.round((total / incomeEur) * 1000) / 10 : null;
     const subClr = pctOfIncome == null ? "text-outline" : pctOfIncome > 100 ? "text-error" : pctOfIncome > 85 ? "text-warn" : "text-primary";
     document.getElementById("donutSubtitle").textContent = pctOfIncome != null ? \`\${pctOfIncome}% del ingreso\` : "—";
     document.getElementById("donutSubtitle").className = "text-[11px] mt-1 " + subClr;
 
+    const sorted = [...d.by_category_actual].sort((a, b) => b.total - a.total);
+    const TOP_N = 7;
+    const top = sorted.slice(0, TOP_N);
+    const rest = sorted.slice(TOP_N);
+    const restTotal = rest.reduce((s, r) => s + r.total, 0);
+    const donutData = restTotal > 0
+      ? [...top, { category: "otros", total: restTotal, _isOthers: true, _members: rest }]
+      : top;
+    // Cohesive palette: single hue family (slate-to-teal) for pro look
+    const DONUT_PALETTE = ["#1e3a8a","#1e4d8b","#2e7d5c","#4a90c2","#7c3aed","#c2410c","#0891b2","#6b7280"];
+
     if (donutChart) donutChart.destroy();
     donutChart = new Chart(document.getElementById("donut").getContext("2d"), {
       type: "doughnut",
       data: {
-        labels: d.by_category_actual.map((r) => r.category),
+        labels: donutData.map((r) => r.category),
         datasets: [{
-          data: d.by_category_actual.map((r) => r.total),
-          backgroundColor: d.by_category_actual.map((_, i) => PALETTE[i % PALETTE.length]),
-          borderColor: "#ffffff", borderWidth: 3, hoverOffset: 8,
-          spacing: 2,
+          data: donutData.map((r) => r.total),
+          backgroundColor: donutData.map((_, i) => DONUT_PALETTE[i % DONUT_PALETTE.length]),
+          borderColor: "#ffffff", borderWidth: 2, hoverOffset: 6,
         }],
       },
       options: {
-        responsive: true, maintainAspectRatio: false, cutout: "72%",
+        responsive: true, maintainAspectRatio: false, cutout: "75%",
         plugins: {
-          legend: {
-            position: "bottom",
-            labels: { boxWidth: 10, padding: 6, font: FONT, generateLabels: (chart) => {
-              const data = chart.data;
-              return data.labels.map((label, i) => {
-                const val = data.datasets[0].data[i];
-                const pct = total > 0 ? Math.round(val / total * 100) : 0;
-                return {
-                  text: \`\${label} · \${fmt(val)} (\${pct}%)\`,
-                  fillStyle: data.datasets[0].backgroundColor[i],
-                  strokeStyle: data.datasets[0].backgroundColor[i],
-                  hidden: false, index: i,
-                };
-              });
-            }},
-            onClick: (e, item) => openCategoryDrill(item.text.split(" · ")[0], d.period),
+          legend: { display: false },
+          tooltip: {
+            backgroundColor: "rgba(15,23,42,0.95)", padding: 10,
+            callbacks: { label: (ctx) => \`\${ctx.label}: \${fmt(ctx.parsed)} (\${(ctx.parsed / total * 100).toFixed(1)}%)\` },
           },
-          tooltip: { callbacks: { label: (ctx) => \`\${ctx.label}: \${fmt(ctx.parsed)} (\${(ctx.parsed / total * 100).toFixed(1)}%)\` } },
         },
         onClick: (evt, elements) => {
           if (!elements.length) return;
-          openCategoryDrill(d.by_category_actual[elements[0].index].category, d.period);
+          const r = donutData[elements[0].index];
+          if (!r._isOthers) openCategoryDrill(r.category, d.period);
         },
       },
     });
 
-    // ── VARIANCE BARS: horizontal, sorted, color-coded ─────────────────
-    // Driven by category_budgets (MECE source of truth). Only categories with
-    // a budget render — orphan actuals show up in the donut + table instead.
+    // Custom HTML legend (right side / below donut) — much cleaner than Chart.js default
+    const legendEl = document.getElementById("donutLegend");
+    legendEl.innerHTML = donutData.map((r, i) => {
+      const pct = total > 0 ? Math.round(r.total / total * 100) : 0;
+      const meta = CAT_META[r.category] || { emoji: "", label: r.category };
+      const clr = DONUT_PALETTE[i % DONUT_PALETTE.length];
+      const clickable = !r._isOthers;
+      return \`<div class="flex items-center gap-2 \${clickable ? "cursor-pointer hover:bg-surface-container px-1 py-0.5 -mx-1 rounded" : ""}" \${clickable ? \`onclick="openCategoryDrill('\${r.category}','\${d.period}')"\` : ""}>
+        <span class="w-2.5 h-2.5 rounded-sm flex-shrink-0" style="background:\${clr}"></span>
+        <span class="flex-1 truncate text-on-surface">\${meta.emoji} \${meta.label}</span>
+        <span class="text-outline tabular-nums">\${pct}%</span>
+        <span class="text-on-surface tabular-nums font-semibold">€\${fmt(r.total).replace("€","")}</span>
+      </div>\`;
+    }).join("");
+
+    // ── VARIANCE: HTML progress bars (Linear/Notion style) ─────────────
+    // Cleaner than Chart.js — no axis, no grid; bar inside a "ghost" track,
+    // numbers prominent on the right.
     const variance = (d.category_rows || [])
       .filter((r) => r.budget_eur > 0)
-      .map((r) => ({
-        category: r.category, planned: r.budget_eur, actual: r.actual_eur,
-        pct: r.pct_used,
-      }))
-      .sort((a, b) => b.planned - a.planned);
+      .sort((a, b) => b.budget_eur - a.budget_eur);
 
-    // Color-coded variance: muted green / amber / red — same hue family as palette
-    const barColor = variance.map((v) => v.pct == null ? "#94a3b8" : v.pct > 100 ? "#dc2626" : v.pct > 80 ? "#d97706" : "#2e7d5c");
-
-    if (barChart) barChart.destroy();
-    barChart = new Chart(document.getElementById("varianceBar").getContext("2d"), {
-      type: "bar",
-      data: {
-        labels: variance.map((v) => v.category),
-        datasets: [
-          { label: "Real",     data: variance.map((v) => v.actual),  backgroundColor: barColor, borderRadius: 6, borderSkipped: false, barPercentage: 0.7, categoryPercentage: 0.85 },
-          { label: "Planeado", data: variance.map((v) => v.planned), backgroundColor: "rgba(30,77,139,0.10)", borderColor: "#1e4d8b", borderWidth: 1.5, borderRadius: 6, borderSkipped: false, barPercentage: 0.4, categoryPercentage: 0.85 },
-        ],
-      },
-      options: {
-        indexAxis: "y", responsive: true, maintainAspectRatio: false,
-        plugins: {
-          legend: { position: "top", labels: { font: FONT, boxWidth: 10 } },
-          tooltip: { callbacks: { label: (ctx) => \`\${ctx.dataset.label}: \${fmt(ctx.parsed.x)}\${ctx.datasetIndex === 0 && variance[ctx.dataIndex].pct != null ? " (" + variance[ctx.dataIndex].pct.toFixed(0) + "%)" : ""}\` } },
-        },
-        scales: {
-          x: { ticks: { font: FONT, callback: (v) => "€" + v }, grid: { color: "#e5eeff" }, beginAtZero: true },
-          y: { ticks: { font: FONT }, grid: { display: false } },
-        },
-        onClick: (evt, elements) => {
-          if (!elements.length) return;
-          openCategoryDrill(variance[elements[0].index].category, d.period);
-        },
-      },
-    });
+    const maxBudget = Math.max(1, ...variance.map((r) => Math.max(r.budget_eur, r.actual_eur)));
+    const list = document.getElementById("varianceList");
+    if (!variance.length) {
+      list.innerHTML = \`<div class="text-xs text-outline italic p-3 text-center">Sin categorías presupuestadas — pon presupuestos en "Editar budget"</div>\`;
+    } else {
+      list.innerHTML = variance.map((r) => {
+        const meta = CAT_META[r.category] || { emoji: "", label: r.category };
+        const planPct   = Math.round((r.budget_eur / maxBudget) * 100);
+        const actualPct = Math.round((r.actual_eur / maxBudget) * 100);
+        const usedPct   = r.pct_used;
+        const barClr = usedPct == null ? "#94a3b8" : usedPct > 100 ? "#dc2626" : usedPct > 80 ? "#d97706" : "#2e7d5c";
+        const usedClr = usedPct == null ? "text-outline" : usedPct > 100 ? "text-error" : usedPct > 80 ? "text-warn" : "text-primary";
+        return \`<div class="cursor-pointer hover:bg-surface-container-low rounded-lg px-2 py-1.5 -mx-2" onclick="openCategoryDrill('\${r.category}','\${d.period}')">
+          <div class="flex items-baseline justify-between gap-3 mb-1">
+            <span class="text-sm font-medium text-on-surface truncate">\${meta.emoji} \${meta.label}</span>
+            <div class="flex items-baseline gap-2 text-xs tabular-nums">
+              <span class="text-on-surface font-semibold">€\${fmt(r.actual_eur).replace("€","")}</span>
+              <span class="text-outline">/ €\${fmt(r.budget_eur).replace("€","")}</span>
+              <span class="\${usedClr} font-bold w-12 text-right">\${fmtPct(usedPct)}</span>
+            </div>
+          </div>
+          <div class="relative h-2 rounded-full bg-surface-container overflow-hidden">
+            <div class="absolute inset-y-0 left-0 rounded-full bg-outline-variant/30" style="width: \${planPct}%"></div>
+            <div class="absolute inset-y-0 left-0 rounded-full transition-all" style="width: \${Math.min(actualPct, 100)}%; background: \${barClr}"></div>
+          </div>
+        </div>\`;
+      }).join("");
+    }
 
     // ── STACKED AREA: 6-month trend by category ────────────────────────
     const trendData = d.monthly_category_spend || [];

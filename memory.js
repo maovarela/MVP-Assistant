@@ -807,13 +807,19 @@ export function getAccountCashflow({ account = "bnp", period }) {
     SELECT
       ROUND(SUM(CASE WHEN amount>0 THEN amount       ELSE 0 END), 2) AS credits,
       ROUND(SUM(CASE WHEN amount<0 THEN ABS(amount)  ELSE 0 END), 2) AS debits,
-      COUNT(*)                                                       AS tx_count
+      ROUND(SUM(CASE WHEN amount>0 AND is_internal_transfer=1 THEN amount      ELSE 0 END), 2) AS internal_credits,
+      ROUND(SUM(CASE WHEN amount<0 AND is_internal_transfer=1 THEN ABS(amount) ELSE 0 END), 2) AS internal_debits,
+      COUNT(*) AS tx_count
     FROM transactions
     WHERE external_id LIKE ? AND strftime('%Y-%m', date) = ?
   `).get(prefix + "%", p);
 
   const credits = flows.credits || 0;
   const debits  = flows.debits  || 0;
+  const internalCredits = flows.internal_credits || 0;
+  const internalDebits  = flows.internal_debits  || 0;
+  const externalCredits = Math.round((credits - internalCredits) * 100) / 100;
+  const externalDebits  = Math.round((debits  - internalDebits)  * 100) / 100;
   const netChange = Math.round((credits - debits) * 100) / 100;
 
   const stored = db.prepare(`SELECT * FROM account_balances WHERE account = ? AND period = ?`).get(account, p);
@@ -842,6 +848,10 @@ export function getAccountCashflow({ account = "bnp", period }) {
     opening_eur:     opening,
     credits_eur:     credits,
     debits_eur:      debits,
+    external_credits_eur: externalCredits,
+    external_debits_eur:  externalDebits,
+    internal_credits_eur: internalCredits,
+    internal_debits_eur:  internalDebits,
     net_change_eur:  netChange,
     closing_eur:     closing,
     tx_count:        flows.tx_count || 0,
@@ -1531,8 +1541,9 @@ export function listYears() {
 /** Transactions in a category for a period (month YYYY-MM or year YYYY).
  *  Returns the rows + total, sorted by absolute amount desc. */
 /** Flat list of all transactions for a period (any category), for the
- *  Histórico editor. Supports optional merchant/description search. */
-export function listAllTransactions({ period, search, limit = 500 } = {}) {
+ *  Histórico editor. Supports optional merchant/description search, account
+ *  multi-filter (['bnp','amex']), and a period range (period_from/period_to). */
+export function listAllTransactions({ period, period_from, period_to, accounts, search, limit = 500 } = {}) {
   const conds = ["1=1"];
   const args  = [];
   if (period && /^\d{4}-\d{2}$/.test(period)) {
@@ -1541,6 +1552,22 @@ export function listAllTransactions({ period, search, limit = 500 } = {}) {
   } else if (period && /^\d{4}$/.test(period)) {
     conds.push("strftime('%Y', date) = ?");
     args.push(period);
+  } else {
+    if (period_from && /^\d{4}-\d{2}$/.test(period_from)) {
+      conds.push("strftime('%Y-%m', date) >= ?");
+      args.push(period_from);
+    }
+    if (period_to && /^\d{4}-\d{2}$/.test(period_to)) {
+      conds.push("strftime('%Y-%m', date) <= ?");
+      args.push(period_to);
+    }
+  }
+  if (Array.isArray(accounts) && accounts.length) {
+    const valid = accounts.filter((a) => /^[a-z]+$/.test(a));
+    if (valid.length) {
+      conds.push("(" + valid.map(() => "external_id LIKE ?").join(" OR ") + ")");
+      for (const a of valid) args.push(a + ":%");
+    }
   }
   if (search) {
     conds.push("(LOWER(merchant) LIKE ? OR LOWER(description) LIKE ?)");

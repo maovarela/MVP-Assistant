@@ -576,10 +576,13 @@ app.get("/api/audit.json", (req, res) => {
 app.get("/api/transactions.json", (req, res) => {
   if (!requireKey(req, res, "DASH_KEY")) return;
   try {
-    const period = (req.query.period || "").toString().match(/^\d{4}(-\d{2})?$/) ? req.query.period : undefined;
-    const search = (req.query.search || "").toString().trim() || undefined;
-    const limit  = Math.min(parseInt(req.query.limit || "500", 10) || 500, 2000);
-    res.json(listAllTransactions({ period, search, limit }));
+    const period      = (req.query.period      || "").toString().match(/^\d{4}(-\d{2})?$/) ? req.query.period      : undefined;
+    const period_from = (req.query.period_from || "").toString().match(/^\d{4}-\d{2}$/)    ? req.query.period_from : undefined;
+    const period_to   = (req.query.period_to   || "").toString().match(/^\d{4}-\d{2}$/)    ? req.query.period_to   : undefined;
+    const search      = (req.query.search      || "").toString().trim() || undefined;
+    const accounts    = (req.query.accounts    || "").toString().split(",").map((s) => s.trim().toLowerCase()).filter(Boolean);
+    const limit       = Math.min(parseInt(req.query.limit || "500", 10) || 500, 2000);
+    res.json(listAllTransactions({ period, period_from, period_to, accounts, search, limit }));
   } catch (err) {
     console.error("[transactions.json]", err);
     res.status(500).json({ error: err.message });
