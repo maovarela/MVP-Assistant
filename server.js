@@ -440,6 +440,103 @@ app.post("/api/transactions/delete-by-merchant", express.json({ limit: "10kb" })
   }
 });
 
+// Bulk LLM-categorize transactions currently tagged 'other' (or any category
+// via ?from=other). Dedups by merchant so we only ask the LLM about each
+// distinct name once. Returns count of rows updated.
+// Body: { period?: "YYYY-MM", from?: "other" (default), dry_run?: true }
+app.post("/api/bulk-recategorize", express.json({ limit: "10kb" }), async (req, res) => {
+  if (!requireKey(req, res, "DASH_KEY")) return;
+  try {
+    const { period, from = "other", dry_run = false } = req.body || {};
+    const periodFilter = period && /^\d{4}-\d{2}$/.test(period) ? `AND strftime('%Y-%m', date) = ?` : "";
+    const args = periodFilter ? [from, period] : [from];
+
+    // Distinct merchants in 'from' category
+    const merchants = db.prepare(`
+      SELECT merchant, COUNT(*) AS n, ROUND(SUM(ABS(amount)),2) AS total
+      FROM transactions
+      WHERE category = ? ${periodFilter} AND merchant IS NOT NULL AND merchant != ''
+      GROUP BY merchant ORDER BY total DESC
+    `).all(...args);
+
+    if (!merchants.length) return res.json({ ok: true, merchants_scanned: 0, rows_updated: 0 });
+    console.log(`[bulk-recat] ${merchants.length} distinct merchants in '${from}' for ${period || "all"}`);
+
+    // Import here to avoid circular import problems on boot
+    const { callLLMText } = await import("./llm.js");
+    const CATS = ["groceries","restaurants","transport","travel","subscriptions","shopping","health","housing","entertainment","transfers","deuda","income","fees","other"];
+
+    const merchantToCat = {};
+    const BATCH = 25;
+    for (let i = 0; i < merchants.length; i += BATCH) {
+      const batch = merchants.slice(i, i + BATCH);
+      const prompt = `Categorize each merchant into EXACTLY ONE of: ${CATS.join(", ")}.
+Return STRICT JSON array of same length and order: [{"merchant":"...","category":"..."}].
+Use 'other' only when truly ambiguous (person names without context, unknown abbreviations).
+- food/cafe/restaurant chains → restaurants
+- supermarkets → groceries
+- Uber/Bolt/Cabify/Metro/Vélib → transport
+- flights/hotels/Airbnb → travel
+- Netflix/Spotify/Claude.ai/Google subscriptions → subscriptions
+- electronics/clothes → shopping
+- pharmacies/medical → health
+- rent/utilities/internet/insurance → housing or fees (utilities=housing, insurance=fees)
+- bank fees/commissions → fees
+- bank transfers to other people → transfers
+- loan payments → deuda
+- salary → income
+
+Merchants:
+${batch.map((m, j) => `${j+1}. ${m.merchant}`).join("\n")}`;
+
+      try {
+        const text = await callLLMText({
+          messages: [{ role: "user", content: prompt }],
+          max_tokens: 2000, temperature: 0.1,
+        });
+        const cleaned = text.replace(/^```(?:json)?\s*|\s*```$/g, "").trim();
+        const parsed = JSON.parse(cleaned);
+        for (const item of parsed) {
+          if (item.merchant && item.category && CATS.includes(item.category)) {
+            merchantToCat[item.merchant] = item.category;
+          }
+        }
+      } catch (err) {
+        console.error(`[bulk-recat] batch ${i} failed: ${err.message}`);
+      }
+    }
+
+    // Apply updates
+    let rowsUpdated = 0;
+    const transitions = {};
+    if (!dry_run) {
+      const upd = db.prepare(`UPDATE transactions SET category = ? WHERE merchant = ? AND category = ? ${periodFilter}`);
+      for (const [merchant, newCat] of Object.entries(merchantToCat)) {
+        if (newCat === from) continue; // no change
+        const updateArgs = periodFilter ? [newCat, merchant, from, period] : [newCat, merchant, from];
+        const r = upd.run(...updateArgs);
+        rowsUpdated += r.changes;
+        const key = `${from} → ${newCat}`;
+        transitions[key] = (transitions[key] || 0) + r.changes;
+      }
+    }
+
+    res.json({
+      ok: true,
+      period: period || "all",
+      merchants_scanned: merchants.length,
+      merchants_recategorised: Object.keys(merchantToCat).length,
+      rows_updated: rowsUpdated,
+      transitions,
+      dry_run,
+      sample_assignments: Object.entries(merchantToCat).slice(0, 20).map(([m, c]) => ({ merchant: m, category: c })),
+    });
+  } catch (err) {
+    console.error("[bulk-recat]", err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // Audit report for a period: orphan transactions, conflicts, and what each
 // fixed line claimed. Used by the dashboard audit modal.
 app.get("/api/audit.json", (req, res) => {
