@@ -207,30 +207,54 @@ Dedup is keyed by Amex transaction reference / Revolut row hash, so re-running i
 
 ## Budget dashboard (Cuentas MVP)
 
-Open `https://<your-host>/dashboard?key=$DASH_KEY` on your phone. Replaces the manual monthly Google Sheet.
+Open `https://<your-host>/dashboard?key=$DASH_KEY` on your phone. Replaces the manual monthly Google Sheet. UI is in English.
 
-**Blocks:**
-- KPIs: Ingresos · Planeado (fijos+variables) · Gasto real (transacciones) · Residual + % gastado
-- Tabla de gastos fijos con budget vs actual + bar de % consumido + pill (verde/ámbar/rojo)
-- Lista de gastos variables planeados
-- Donut chart: gastos reales por categoría
-- Bar chart: budget vs real por categoría
-- Deuda: original + EUR, con total
-- FOREX: USD-COP, EUR-USD, tax FR
+### Two-tab layout
 
-**Cómo lo alimentas:**
-1. **Inicial (una vez):** copia `scripts/budget-seed.example.json` a `scripts/budget-seed.json`, edita con tus valores del mes, luego:
-   ```powershell
-   $env:DASH_KEY = "tu-key"
-   node scripts/seed-budget.mjs
-   ```
-2. **Día a día por Telegram:** habla con el bot.
-   - `"mi arriendo este mes son 1600€"` → `set_fixed_expense`
+- **Overview** — KPIs, dial, budget vs actual per category, donut/charts, accounts, internal-transfer panel, pending items.
+- **Transactions** — flat editable transaction list with from/to month range, account multi-filter, category/type/min-amount filters, sortable columns, inline category dropdown (per-tx fix in one click).
+
+### Source-of-truth model (MECE per category)
+
+- `category_budgets(period, category, budget_eur)` — **single number per category per month**. This is the budget. The 14 categories (groceries, restaurants, transport, travel, subscriptions, shopping, health, housing, entertainment, transfers, internal_transfer, savings, debt, income, fees, other) are mutually exclusive and collectively exhaustive.
+- `fixed_expenses(period, label, budget_eur, category, match_keyword)` — **informational sub-items** (Arriendo €1604, Internet €50, Gym €50…). Shown as "↳" sub-detail under their category. `match_keyword` is still useful for transaction attribution (regex routes matching txs to that line's category so the donut shows them correctly).
+- `variable_expenses` — legacy, hidden from UI but kept in DB for now.
+
+### Top-level dial — "Spent this month"
+
+Single ring, % of income actually spent. Green < 60%, amber 60-90%, red > 90%. Center shows `€spent · X% · of €income · €available still`. No formulas, no jargon.
+
+### Account hierarchy (BNP = parent, Amex + Revolut = children)
+
+- `is_internal_transfer` column on `transactions` flags BNP↔children movements (PRELEVEMENT SEPA AMERICAN EXPRESS, REVOLUT card top-ups). They are **excluded from all spend/income aggregates**.
+- New category `internal_transfer` (🔄 emoji) makes these visible without polluting the `transfers` category, which is now reserved for **real third-party movements** (Inversion PERCO → savings, Pago Deuda → debt, friend transfers).
+- Internal-transfer panel below the 3 account cards reconciles BNP→Amex and BNP→Revolut amounts so the parent/child flows are visible at a glance.
+- 4th "Real cashflow" card sums real In/Out **excluding internals** — the only consolidated number that means something.
+
+### Pending items (off-account ledger)
+
+Panel for things outside the bank accounts:
+- 💰 Owed to me — friends, advances
+- 📤 I owe — friends, debts
+- 🔁 Reimbursement — mutuelle (HENNER), train refunds, etc.
+
+Add inline form, mark as settled (✓), delete (🗑). Net pending totals at the top.
+
+### Categorization audit modal
+
+Detects drift between the parser regex (`bankCsv.js:categorize()`) and stored categories. After adding a new rule (e.g. SWISSLIFE→savings, HENNER→health), old transactions imported before the rule keep the wrong category. The audit modal lets you bulk-fix with checkboxes (opt-in) + per-row Apply or Dismiss buttons.
+
+### How you feed it
+
+1. **In-dashboard editor:** click "Edit budget" → table of 14 categories with inline editable € per month. Saves instantly. "Copy from…" button copies budgets from another month.
+2. **Telegram (legacy line-item path):**
+   - `"mi arriendo este mes son 1600€"` → `set_fixed_expense(label, budget_eur, category)`
    - `"el dolar está a 4100"` → `set_fx_rate`
    - `"mi salario neto este mes fueron 3700"` → `set_income`
-   - `"añade gasto variable: medicina 70"` → `add_variable_expense`
-   - `"cómo voy este mes"` → `get_budget_summary` con totales + top categorías
-3. **FX automático:** un cron del 1 de cada mes a las 06:00 Paris pulla `exchangerate.host` y guarda el row. Tus entradas manuales (source='manual') nunca son sobrescritas.
+   - `"cómo voy este mes"` → `get_budget_summary` (= same payload as `/api/dashboard.json`)
+   - `"dame consejos"` → `financial_advisor_review` (CFO-style review)
+3. **FX automático:** un cron del 1 de cada mes a las 06:00 Paris pulla `exchangerate.host`. Entradas manuales (source='manual') nunca son sobrescritas.
+4. **Reconcile after import:** `POST /api/reconcile-categories` is idempotent — run anytime to (a) tag all `is_internal_transfer=1` rows as `internal_transfer`, and (b) reclassify txs claimed by a fixed_expense's `match_keyword` to that line's category.
 
 ## Bot commands & natural language
 
@@ -249,15 +273,24 @@ Open `https://<your-host>/dashboard?key=$DASH_KEY` on your phone. Replaces the m
 
 **Tasks/projects:** `create_project`, `list_projects`, `create_task`, `update_task_status`, `list_tasks`, `get_daily_summary`
 
-**Finance:** `list_transactions`, `spend_by_category`, `spend_by_merchant`, `monthly_totals`, `transaction_stats`, `spend_pace`, `scan_inbox_now`
+**Finance — read:** `list_transactions`, `spend_by_category`, `spend_by_merchant`, `monthly_totals`, `transaction_stats`, `spend_pace`, `get_account_cashflow`, `scan_inbox_now`
 
-**Budget planning:** `set_fx_rate`, `set_income`, `set_fixed_expense`, `add_variable_expense`, `set_debt`, `get_budget_summary`
+**Finance — budget planning:** `set_fx_rate`, `set_income`, `set_fixed_expense`, `add_variable_expense`, `set_debt`, `get_budget_summary`
+
+**Finance — analysis:** `financial_advisor_review` — CFO-style monthly review (markdown), runs a second LLM call with trend/anomaly context. Use for "dame consejos / analiza mis finanzas".
 
 **Notion:** `search_notion`, `read_notion_page`, `query_notion_database`
 
 **Google Calendar (read-only):** `list_calendar_events`, `search_calendar`
 
-**Gmail send:** `send_email` (uses same App Password as IMAP)
+**Gmail:** `search_emails`, `read_email`, `send_email` (uses same App Password as IMAP). Send requires user confirmation.
+
+### Web-only mutations (no Telegram tool, edit via dashboard or curl)
+
+- Category budgets (`category_budgets`) — Edit via "Edit budget" modal in the dashboard, or `POST /api/budget {kind:'category', payload:{category, budget_eur}}`.
+- Pending items — Inline form in the Pending panel, or `POST /api/pending`.
+- Bulk recategorize / reconcile — `POST /api/transactions/update-by-text` or `POST /api/reconcile-categories`.
+- Categorization audit — open the 🩺 modal in the dashboard when the badge shows up.
 
 ## Connecting Notion + Calendar
 
@@ -274,11 +307,21 @@ Open `https://<your-host>/dashboard?key=$DASH_KEY` on your phone. Replaces the m
 
 ## Schema
 
-- `messages` — conversation history (last 20 fed back to Claude per turn)
+- `messages` — conversation history (last 20 fed back to LLM per turn). `channel` col distinguishes telegram/whatsapp.
 - `projects` — name, description, status
 - `tasks` — linked to projects, priority, status, due_date, owner
-- `transactions` — date, merchant, amount (signed), currency, category, source (email/csv/pdf/manual)
+- `transactions` — date, merchant, amount (signed), currency, **category**, source (email/csv/pdf/manual), **is_internal_transfer**, external_id (prefixed `bnp:` / `amex:` / `revolut:` for account inference)
 - `processed_emails` — Gmail message IDs already parsed (dedup)
+- **Budget tables (per-period `YYYY-MM`):**
+  - `category_budgets(period, category, budget_eur)` — **MECE source of truth**, one row per category per month
+  - `fixed_expenses(period, label, budget_eur, category, match_keyword)` — informational sub-items + attribution keywords
+  - `variable_expenses(period, label, amount_eur, category)` — legacy, hidden from UI
+  - `incomes(period, label, amount_eur, kind)` — Salary Bruto/Neto + others
+  - `debts(period, label, amount_src, currency, amount_eur, kind)` — loans, card balances
+  - `fx_rates(period PK, usd_cop, eur_usd, tax_fr_pct, source)`
+- `account_balances(account, period, opening_eur, closing_eur, source)` — explicit opening/closing per (account, month), used to display the Inicial/Final cells. Inferred from prior period's closing when missing.
+- `pending_items(id, kind, who, amount_eur, description, expected_date, status)` — off-account receivables/payables/reimbursements. `kind ∈ ('receivable', 'payable', 'reimbursement')`, `status ∈ ('open', 'settled', 'cancelled')`.
+- `llm_calls` — observability table for every LLM round-trip (provider, model, latency, tokens, ok)
 
 ## HTTP endpoints
 
@@ -287,12 +330,26 @@ Open `https://<your-host>/dashboard?key=$DASH_KEY` on your phone. Replaces the m
 | GET  | `/` | Liveness — `{ status }` |
 | GET  | `/healthz` | Railway healthcheck |
 | GET  | `/debug/stats` | Aggregates: tx count, by_source, by_sign, by_month, latest_10, spend_pace, `db_path`. Read-only, no PII. |
-| GET  | `/dashboard?key=$DASH_KEY[&period=YYYY-MM]` | Budget dashboard HTML (replaces the "Cuentas MVP" Sheet). Mobile-friendly. |
-| GET  | `/api/dashboard.json?key=$DASH_KEY[&period=YYYY-MM]` | Dashboard JSON payload (incomes, fixed/variable expenses, debts, FX, totals, donut data). |
-| POST | `/api/budget?key=$DASH_KEY` | Mutate a budget row. JSON body `{period, kind: 'income'\|'fixed'\|'variable'\|'debt'\|'fx', payload}`. |
+| GET  | `/dashboard?key=$DASH_KEY[&period=YYYY-MM]` | Budget dashboard HTML (Overview + Transactions tabs). |
+| GET  | `/api/dashboard.json?key=$DASH_KEY[&period=YYYY-MM]` | Full dashboard payload (incomes, category_rows MECE, debts, FX, totals, donut/variance data, internal-transfer breakdown). |
+| GET  | `/api/cashflow.json?key=$DASH_KEY&account=bnp\|amex\|revolut&period=YYYY-MM` | Per-account cashflow: opening/closing balance + credits/debits split into external vs internal. |
+| GET  | `/api/transactions.json?key=$DASH_KEY` | Flat tx list for Transactions tab. Params: `period_from`, `period_to`, `accounts` (csv), `search`, `limit`. |
+| GET  | `/api/category.json?key=$DASH_KEY&category=X[&period=Y]` | Drilldown — txs in a single category (handles NULL → 'uncategorised'). |
+| GET  | `/api/audit.json?key=$DASH_KEY[&period=Y]` | Legacy "orphan" audit (button hidden in UI — concept obsolete with MECE per-category). |
+| GET  | `/api/categorization-audit.json?key=$DASH_KEY[&period=Y]` | Drift detector: tx where `bankCsv.categorize(desc)` suggests a different category than stored. |
+| POST | `/api/categorization-audit/apply?key=$DASH_KEY` | Apply selected drift fixes. Body `{items: [{id, category}]}`. |
+| POST | `/api/reconcile-categories?key=$DASH_KEY` | Idempotent two-pass reconcile: (1) `is_internal_transfer=1` → `internal_transfer`, (2) claim-based category rewrite from fixed_expenses keywords. |
+| POST | `/api/transactions/category?key=$DASH_KEY` | Body `{ids:[], category}` — recategorize given txs. Used by inline dropdown in Transactions tab. |
+| POST | `/api/transactions/update-by-text?key=$DASH_KEY` | Body `{needle, category?, is_internal_transfer?, dry_run?}` — bulk update tx by merchant/description substring. One-shot maintenance. |
+| POST | `/api/transactions/delete-by-merchant?key=$DASH_KEY` | Bulk delete txs by merchant substring. Used to dedup parser-pre-fix imports. |
+| POST | `/api/budget?key=$DASH_KEY` | Mutate budget. JSON `{period, kind: 'income'\|'fixed'\|'variable'\|'debt'\|'fx'\|'category'\|'copy_categories', payload, op?: 'delete'}`. `kind:'category'` writes to `category_budgets` (MECE source of truth). `copy_categories` clones a period's category budgets into the current period. |
+| GET  | `/api/pending.json?key=$DASH_KEY[&include_settled=1]` | Pending items (receivables/payables/reimbursements) + totals. |
+| POST | `/api/pending?key=$DASH_KEY` | Mutate pending. JSON `{op?: 'delete'\|'settle', payload: {id?, kind, who, amount_eur, description?, expected_date?}}`. |
+| POST | `/api/maintenance/update-variable-category?key=$DASH_KEY` | One-shot fix: re-tag `variable_expenses.category` by label across all periods. |
 | POST | `/webhook/telegram` | Telegram update webhook (HMAC-secret-validated) |
 | POST | `/webhook/whatsapp/<secret>` | Evolution API webhook (gated by `ENABLE_WHATSAPP`) |
 | POST | `/import/normalized?key=$INTERNAL_IMPORT_KEY` | Bulk-load `text/csv` produced by `scripts/import-local.mjs`. Body limit 20 MB. |
+| POST | `/import/pdf?key=$INTERNAL_IMPORT_KEY` | Single PDF statement upload (Gemini-parsed). Body limit 20 MB. |
 
 ## Scheduled jobs (Europe/Paris)
 
