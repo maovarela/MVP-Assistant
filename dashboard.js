@@ -206,7 +206,6 @@ export function renderDashboard(period) {
           <tr class="text-left text-[10px] uppercase tracking-wider text-outline">
             <th class="px-3 py-2.5 w-16">Tipo</th>
             <th class="px-3 py-2.5">Concepto</th>
-            <th class="px-3 py-2.5">Categoría</th>
             <th class="px-3 py-2.5 text-right">Budget</th>
             <th class="px-3 py-2.5 text-right">Real</th>
             <th class="px-3 py-2.5 text-right w-16">%</th>
@@ -847,7 +846,7 @@ export function renderDashboard(period) {
     const filtered = activeFilter === "fijos" ? fijos : activeFilter === "variables" ? variables : [...fijos, ...variables];
     const tbl = document.getElementById("gastosTbl");
     if (!filtered.length) {
-      tbl.innerHTML = \`<tr><td colspan="6" class="px-3 py-8 text-outline italic text-center">Sin gastos en \${activeFilter} para \${d.period}</td></tr>\`;
+      tbl.innerHTML = \`<tr><td colspan="5" class="px-3 py-8 text-outline italic text-center">Sin gastos en \${activeFilter} para \${d.period}</td></tr>\`;
     } else {
       // Build leftover rows (only for "fijos" or "todos" view — they don't apply to variables)
       const showLeftovers = activeFilter !== "variables";
@@ -866,8 +865,14 @@ export function renderDashboard(period) {
         const editBtn = (r.type === "fijo" || r.type === "variable") ? \`<button class="ml-1.5 opacity-40 hover:opacity-100 transition-opacity" onclick="openKeywordEdit('\${r.label.replace(/'/g, "\\\\'")}', '\${(r.match_keyword || '').replace(/'/g, "\\\\'")}', '\${r.type}')" title="Editar match keyword"><span class="material-symbols-outlined" style="font-size:13px;">edit</span></button>\` : "";
         return \`<tr class="border-b border-outline-variant/15 last:border-0">
           <td class="px-3 py-2.5">\${typeBadge}</td>
-          <td class="px-3 py-2.5 text-on-surface font-medium">\${r.label}\${editBtn}<div class="mt-0.5">\${kwBadge}</div></td>
-          <td class="px-3 py-2.5"><span class="inline-flex items-center gap-1 text-outline"><span class="material-symbols-outlined" style="font-size: 14px">\${ICON[r.category] || ICON.other}</span>\${r.category || "—"}</span></td>
+          <td class="px-3 py-2.5">
+            <div class="flex items-center gap-2">
+              <span class="material-symbols-outlined text-outline" style="font-size: 16px" title="\${r.category || "—"}">\${ICON[r.category] || ICON.other}</span>
+              <span class="text-on-surface font-medium">\${r.label}</span>
+              \${editBtn}
+            </div>
+            \${kwBadge ? \`<div class="mt-0.5 ml-6">\${kwBadge}</div>\` : ""}
+          </td>
           <td class="px-3 py-2.5 text-right tabular-nums">\${fmt(r.budget_eur)}</td>
           <td class="px-3 py-2.5 text-right tabular-nums">\${real}</td>
           <td class="px-3 py-2.5 text-right">\${pct}</td>
@@ -875,8 +880,12 @@ export function renderDashboard(period) {
       }).join("") + leftoverRows.map((l) => \`
         <tr class="border-b border-outline-variant/15 last:border-0 bg-warn-container/30">
           <td class="px-3 py-2.5"><span class="px-2 py-0.5 rounded text-[10px] font-bold uppercase tracking-wider bg-warn-container text-warn">Sin asignar</span></td>
-          <td class="px-3 py-2.5 text-on-surface italic">(otros \${l.category})</td>
-          <td class="px-3 py-2.5"><span class="inline-flex items-center gap-1 text-outline"><span class="material-symbols-outlined" style="font-size: 14px">\${ICON[l.category] || ICON.other}</span>\${l.category}</span></td>
+          <td class="px-3 py-2.5">
+            <div class="flex items-center gap-2">
+              <span class="material-symbols-outlined text-outline" style="font-size: 16px">\${ICON[l.category] || ICON.other}</span>
+              <span class="text-on-surface italic">otros \${l.category}</span>
+            </div>
+          </td>
           <td class="px-3 py-2.5 text-right tabular-nums text-outline">—</td>
           <td class="px-3 py-2.5 text-right tabular-nums">\${fmt(l.total)}</td>
           <td class="px-3 py-2.5 text-right"><button class="text-[10px] text-primary font-semibold hover:underline" onclick="openCategoryDrill('\${l.category}', '\${d.period}')">ver</button></td>
