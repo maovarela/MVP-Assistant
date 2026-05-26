@@ -130,11 +130,12 @@ export function renderDashboard(period) {
                   stroke-dasharray="282.7" stroke-dashoffset="282.7" stroke-linecap="round" stroke-width="8"/>
         </svg>
 
-        <div class="z-10 text-center">
-          <div class="text-[10px] font-bold uppercase tracking-widest text-outline">Residual</div>
+        <div class="z-10 text-center" title="RESIDUAL = ingreso − presupuesto total. Lo que te DEBERÍA sobrar si gastas exactamente lo planeado. NO es saldo en cuenta (eso está en las cards de cuentas).">
+          <div class="text-[10px] font-bold uppercase tracking-widest text-outline">Residual planeado</div>
           <div class="font-headline text-4xl md:text-5xl font-bold text-on-surface tabular-nums leading-tight" id="dialResidual">—</div>
-          <div class="mt-1 text-xs text-outline">
-            <span id="dialPctSpent">—</span> del ingreso
+          <div class="mt-1 text-[10px] text-outline leading-tight">
+            ingreso − presupuesto<br/>
+            (<span id="dialPctSpent">—</span> del ingreso comprometido)
           </div>
         </div>
       </div>
@@ -329,19 +330,42 @@ export function renderDashboard(period) {
     </div>
 
     <!-- Filter row -->
-    <div class="flex flex-wrap items-center gap-3 mb-3 pb-3 border-b border-outline-variant/15">
-      <div class="flex items-center gap-1.5">
-        <label class="text-[11px] font-bold text-on-surface">Desde</label>
-        <select id="histPeriodFrom" class="bg-surface-container text-on-surface border border-outline-variant/30 rounded-md text-xs px-2 py-1 focus:ring-2 focus:ring-primary focus:outline-none"></select>
+    <div class="space-y-2 mb-3 pb-3 border-b border-outline-variant/15">
+      <div class="flex flex-wrap items-center gap-3">
+        <div class="flex items-center gap-1.5">
+          <label class="text-[11px] font-bold text-on-surface">Desde</label>
+          <select id="histPeriodFrom" class="bg-surface-container text-on-surface border border-outline-variant/30 rounded-md text-xs px-2 py-1 focus:ring-2 focus:ring-primary focus:outline-none"></select>
+        </div>
+        <div class="flex items-center gap-1.5">
+          <label class="text-[11px] font-bold text-on-surface">Hasta</label>
+          <select id="histPeriodTo" class="bg-surface-container text-on-surface border border-outline-variant/30 rounded-md text-xs px-2 py-1 focus:ring-2 focus:ring-primary focus:outline-none"></select>
+        </div>
+        <span class="text-outline-variant">|</span>
+        <div class="flex items-center gap-1.5 flex-wrap" id="histAccountFilter">
+          <span class="text-[11px] font-bold text-on-surface mr-1">Cuentas</span>
+          <!-- chips populated by JS -->
+        </div>
       </div>
-      <div class="flex items-center gap-1.5">
-        <label class="text-[11px] font-bold text-on-surface">Hasta</label>
-        <select id="histPeriodTo" class="bg-surface-container text-on-surface border border-outline-variant/30 rounded-md text-xs px-2 py-1 focus:ring-2 focus:ring-primary focus:outline-none"></select>
-      </div>
-      <span class="text-outline-variant">|</span>
-      <div class="flex items-center gap-1.5 flex-wrap" id="histAccountFilter">
-        <span class="text-[11px] font-bold text-on-surface mr-1">Cuentas</span>
-        <!-- chips populated by JS -->
+      <div class="flex flex-wrap items-center gap-3">
+        <div class="flex items-center gap-1.5">
+          <label class="text-[11px] font-bold text-on-surface">Categoría</label>
+          <select id="histCategoryFilter" class="bg-surface-container text-on-surface border border-outline-variant/30 rounded-md text-xs px-2 py-1 focus:ring-2 focus:ring-primary focus:outline-none">
+            <option value="">Todas</option>
+          </select>
+        </div>
+        <div class="flex items-center gap-1.5">
+          <label class="text-[11px] font-bold text-on-surface">Tipo</label>
+          <select id="histTypeFilter" class="bg-surface-container text-on-surface border border-outline-variant/30 rounded-md text-xs px-2 py-1 focus:ring-2 focus:ring-primary focus:outline-none">
+            <option value="all">Todos</option>
+            <option value="out">Solo salidas (−)</option>
+            <option value="in">Solo entradas (+)</option>
+            <option value="external">Excluir internos</option>
+          </select>
+        </div>
+        <div class="flex items-center gap-1.5">
+          <label class="text-[11px] font-bold text-on-surface">Monto min €</label>
+          <input id="histMinAmount" type="number" min="0" step="1" placeholder="0" class="w-20 bg-surface-container text-on-surface border border-outline-variant/30 rounded-md text-xs px-2 py-1 focus:ring-2 focus:ring-primary focus:outline-none" />
+        </div>
       </div>
     </div>
 
@@ -352,11 +376,11 @@ export function renderDashboard(period) {
       <table class="w-full text-sm" id="historicoTbl">
         <thead class="bg-surface-container">
           <tr class="text-left text-[10px] uppercase tracking-wider text-outline">
-            <th class="px-3 py-2.5 w-24">Fecha</th>
-            <th class="px-3 py-2.5 w-20">Cuenta</th>
-            <th class="px-3 py-2.5">Merchant</th>
-            <th class="px-3 py-2.5 text-right w-24">Monto €</th>
-            <th class="px-3 py-2.5 w-56">Categoría</th>
+            <th class="px-3 py-2.5 w-24 cursor-pointer select-none hover:text-on-surface" data-histsort="date">Fecha <span class="histSortArrow" data-col="date"></span></th>
+            <th class="px-3 py-2.5 w-20 cursor-pointer select-none hover:text-on-surface" data-histsort="account">Cuenta <span class="histSortArrow" data-col="account"></span></th>
+            <th class="px-3 py-2.5 cursor-pointer select-none hover:text-on-surface" data-histsort="merchant">Merchant <span class="histSortArrow" data-col="merchant"></span></th>
+            <th class="px-3 py-2.5 text-right w-24 cursor-pointer select-none hover:text-on-surface" data-histsort="amount">Monto € <span class="histSortArrow" data-col="amount"></span></th>
+            <th class="px-3 py-2.5 w-56 cursor-pointer select-none hover:text-on-surface" data-histsort="category">Categoría <span class="histSortArrow" data-col="category"></span></th>
           </tr>
         </thead>
         <tbody id="historicoBody"><tr><td colspan="5" class="px-3 py-8 text-center text-outline italic">Cargando…</td></tr></tbody>
@@ -504,6 +528,8 @@ export function renderDashboard(period) {
   let histSearchTimer = null;
   let histAccounts = new Set(["bnp", "amex", "revolut"]); // default: all
   let histInitialized = false;
+  let histSort = { key: "date", dir: "desc" };
+  let histLastData = null;
 
   function ensureHistoricoInit() {
     if (histInitialized) return;
@@ -556,6 +582,20 @@ export function renderDashboard(period) {
       });
     }
     renderAcctChips();
+
+    // Populate category filter dropdown from CAT_GROUPS
+    const catSel = document.getElementById("histCategoryFilter");
+    if (catSel && catSel.options.length <= 1) {
+      const groups = CAT_GROUPS.map((g) => {
+        const opts = g.cats.map((c) => {
+          const m = CAT_META[c] || { emoji: "", label: c };
+          return \`<option value="\${c}">\${m.emoji}  \${m.label}</option>\`;
+        }).join("");
+        return \`<optgroup label="\${g.name}">\${opts}</optgroup>\`;
+      }).join("");
+      catSel.innerHTML = '<option value="">Todas</option>' + groups + '<option value="uncategorised">❓ Uncategorised</option>';
+    }
+
     histInitialized = true;
   }
 
@@ -576,15 +616,53 @@ export function renderDashboard(period) {
     renderHistorico(d);
   }
   function renderHistorico(d) {
+    histLastData = d;
     const tbody = document.getElementById("historicoBody");
+    // Apply client-side filters
+    const catFilter  = document.getElementById("histCategoryFilter")?.value || "";
+    const typeFilter = document.getElementById("histTypeFilter")?.value || "all";
+    const minAmount  = parseFloat(document.getElementById("histMinAmount")?.value || "0") || 0;
+    let rows = (d.rows || []).filter((r) => {
+      if (catFilter === "uncategorised") { if (r.category && r.category !== "uncategorised") return false; }
+      else if (catFilter && r.category !== catFilter) return false;
+      if (typeFilter === "out"      && r.amount >= 0) return false;
+      if (typeFilter === "in"       && r.amount <= 0) return false;
+      if (typeFilter === "external" && r.is_internal_transfer) return false;
+      if (minAmount > 0 && Math.abs(r.amount) < minAmount) return false;
+      return true;
+    });
+    // Sort
+    const sortFn = {
+      date:     (r) => r.date || "",
+      account:  (r) => r.account || "",
+      merchant: (r) => (r.merchant || "").toLowerCase(),
+      amount:   (r) => r.amount,
+      category: (r) => r.category || "zzz",
+    }[histSort.key];
+    rows.sort((a, b) => {
+      const av = sortFn(a), bv = sortFn(b);
+      if (av < bv) return histSort.dir === "asc" ? -1 : 1;
+      if (av > bv) return histSort.dir === "asc" ?  1 : -1;
+      return 0;
+    });
+    document.querySelectorAll(".histSortArrow").forEach((el) => {
+      el.textContent = el.dataset.col === histSort.key ? (histSort.dir === "asc" ? "↑" : "↓") : "";
+    });
+
+    // Filtered stats
+    const fOut = rows.filter((r) => r.amount < 0).reduce((s, r) => s + Math.abs(r.amount), 0);
+    const fIn  = rows.filter((r) => r.amount > 0).reduce((s, r) => s + r.amount, 0);
     const statsEl = document.getElementById("histStats");
     if (statsEl) {
-      statsEl.innerHTML = \`<strong class="text-on-surface">\${d.count}</strong> transacciones · <span class="text-error">€\${fmt(d.total_out)} salidas</span> · <span class="text-primary">€\${fmt(d.total_in)} entradas</span> · neto <strong class="\${d.total_in - d.total_out >= 0 ? "text-primary" : "text-error"}">€\${fmt(d.total_in - d.total_out)}</strong>\`;
+      const all = d.count || 0;
+      const shown = rows.length;
+      const filtered = shown !== all ? \` (de <strong>\${all}</strong> sin filtros)\` : "";
+      statsEl.innerHTML = \`<strong class="text-on-surface">\${shown}</strong> transacciones\${filtered} · <span class="text-error">€\${fmt(fOut)} salidas</span> · <span class="text-primary">€\${fmt(fIn)} entradas</span> · neto <strong class="\${fIn - fOut >= 0 ? "text-primary" : "text-error"}">€\${fmt(fIn - fOut)}</strong>\`;
     }
-    if (!d.rows.length) { tbody.innerHTML = \`<tr><td colspan="5" class="px-3 py-8 text-center text-outline italic">Sin transacciones</td></tr>\`; return; }
+    if (!rows.length) { tbody.innerHTML = \`<tr><td colspan="5" class="px-3 py-8 text-center text-outline italic">Sin transacciones para los filtros</td></tr>\`; return; }
 
     const ACCT_CLR = { BNP: "bg-emerald-50 text-emerald-800", Amex: "bg-blue-50 text-blue-800", Revolut: "bg-zinc-100 text-zinc-800" };
-    tbody.innerHTML = d.rows.map((tx) => {
+    tbody.innerHTML = rows.map((tx) => {
       const amtClr = tx.amount < 0 ? "text-error" : "text-primary";
       const sign   = tx.amount < 0 ? "−" : "+";
       const intMark = tx.is_internal_transfer ? \` <span class="text-[9px] uppercase text-outline" title="Transferencia interna">int</span>\` : "";
@@ -645,6 +723,25 @@ export function renderDashboard(period) {
         histSearchTimer = setTimeout(loadHistorico, 250);
       };
     }
+    // Client-side filters (no re-fetch needed — work on cached histLastData)
+    const reRender = () => { if (histLastData) renderHistorico(histLastData); };
+    ["histCategoryFilter","histTypeFilter"].forEach((id) => {
+      const el = document.getElementById(id);
+      if (el) el.onchange = reRender;
+    });
+    const minEl = document.getElementById("histMinAmount");
+    if (minEl) {
+      let mt; minEl.oninput = () => { clearTimeout(mt); mt = setTimeout(reRender, 200); };
+    }
+    // Sortable headers
+    document.querySelectorAll("[data-histsort]").forEach((th) => {
+      th.onclick = () => {
+        const k = th.dataset.histsort;
+        if (histSort.key === k) histSort.dir = histSort.dir === "asc" ? "desc" : "asc";
+        else { histSort.key = k; histSort.dir = (k === "amount" || k === "date") ? "desc" : "asc"; }
+        reRender();
+      };
+    });
   }, 100);
 
   const CIRCUM = 282.7;
@@ -1264,12 +1361,12 @@ export function renderDashboard(period) {
   document.getElementById("auditModal").onclick = (e) => { if (e.target.id === "auditModal") e.currentTarget.classList.add("hidden"); };
 
   function renderAudit(a) {
-    document.getElementById("auditSub").textContent = "Periodo " + a.period + " · " + a.totals.orphan_pct + "% sin asignar de €" + a.totals.total_outflow;
+    document.getElementById("auditSub").textContent = "Periodo " + a.period + " — txs no claim por ningún fijo (informativo con MECE por categoría)";
 
     document.getElementById("auditTotals").innerHTML = [
       \`<div class="bg-surface-container rounded-lg p-2.5"><div class="text-[10px] uppercase tracking-wider text-outline">Total mes</div><div class="font-headline font-bold text-base tabular-nums mt-0.5">\${fmt(a.totals.total_outflow)}</div></div>\`,
-      \`<div class="bg-primary-container rounded-lg p-2.5"><div class="text-[10px] uppercase tracking-wider text-on-primary-container/80">Asignado</div><div class="font-headline font-bold text-base tabular-nums mt-0.5 text-on-primary-container">\${fmt(a.totals.total_claimed)}</div></div>\`,
-      \`<div class="bg-warn-container rounded-lg p-2.5"><div class="text-[10px] uppercase tracking-wider text-warn">Huérfano</div><div class="font-headline font-bold text-base tabular-nums mt-0.5 text-warn">\${fmt(a.totals.total_orphan)} · \${a.totals.orphan_pct}%</div></div>\`,
+      \`<div class="bg-primary-container rounded-lg p-2.5"><div class="text-[10px] uppercase tracking-wider text-on-primary-container/80" title="Transacciones reconocidas por un keyword de fixed_expenses">Claim por fijo</div><div class="font-headline font-bold text-base tabular-nums mt-0.5 text-on-primary-container">\${fmt(a.totals.total_claimed)}</div></div>\`,
+      \`<div class="bg-warn-container rounded-lg p-2.5" title="No matchean ningún match_keyword de fixed_expenses. NO ES UN ERROR — solo no están atadas a un concepto fijo específico (rent/gym/etc). Su categoría se respeta y cuentan en su bucket del presupuesto por categoría."><div class="text-[10px] uppercase tracking-wider text-warn">Sin fijo asociado</div><div class="font-headline font-bold text-base tabular-nums mt-0.5 text-warn">\${fmt(a.totals.total_orphan)} · \${a.totals.orphan_pct}%</div></div>\`,
     ].join("");
 
     // Group orphans by category for visual clarity
