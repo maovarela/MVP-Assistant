@@ -200,7 +200,11 @@ const FR_MONTHS = {
   "septembre":"09", "octobre":"10", "novembre":"11", "décembre":"12", "decembre":"12",
 };
 
-const BNP_TX_RX     = /^(\d{2})\.(\d{2})\s+\d{2}\.\d{2}\s+(.+?)\s+(\d+)\s*,\s*([\d\s]+)$/;
+// Two dates per row: transaction date + value date. We use the VALUE date
+// for period attribution because that's what BNP uses to assign rows to a
+// statement and to update the SOLDE. Example: "31.03 01.04 REVOLUT 1000"
+// has transaction date Mar 31 but value date Apr 1 → belongs to April.
+const BNP_TX_RX     = /^(\d{2})\.(\d{2})\s+(\d{2})\.(\d{2})\s+(.+?)\s+(\d+)\s*,\s*([\d\s]+)$/;
 const BNP_PERIOD_RX = /du\s+\d{1,2}\s+([a-zûéôà]+)\s+(\d{4})\s+au\s+\d{1,2}\s+([a-zûéôà]+)\s+(\d{4})/i;
 
 function reverseFrenchAmount(centsStr, intStr) {
@@ -335,13 +339,15 @@ export function parseBnpPdfText(text) {
     const m = line.match(BNP_TX_RX);
     if (!m || currentSign == null) continue;
 
-    const [, dd, mm, descRaw, cents, intg] = m;
+    // m[1..2] = transaction date dd.mm, m[3..4] = value date dd.mm
+    // We use VALUE date for period attribution (matches BNP statement bucketing).
+    const [, , , valDd, valMm, descRaw, cents, intg] = m;
     const amount = reverseFrenchAmount(cents, intg);
     if (amount == null) continue;
 
     // Year inference based on statement period
-    const year = mm === endMonth ? endYear : (mm === startMonth ? startYear : endYear);
-    const date = `${year}-${mm}-${dd}`;
+    const year = valMm === endMonth ? endYear : (valMm === startMonth ? startYear : endYear);
+    const date = `${year}-${valMm}-${valDd}`;
 
     const desc = descRaw.trim().replace(/\s+/g, " ");
     const isInternal = BNP_INTERNAL_TX_RX.test(desc);
