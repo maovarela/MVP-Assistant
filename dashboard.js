@@ -423,10 +423,21 @@ export function renderDashboard(period) {
     loadBnpCashflow(currentData.period);
   }
 
+  // Brand-style account marks: small SVG/text-logo wordmark in the brand color
+  // instead of a generic Material icon, so the cashflow cards feel branded.
   const ACCOUNT_META = {
-    bnp:     { label: "BNP",     icon: "account_balance",       cardClass: "" },
-    amex:    { label: "Amex",    icon: "credit_card",           cardClass: "" },
-    revolut: { label: "Revolut", icon: "currency_exchange",     cardClass: "" },
+    bnp: {
+      label: "BNP Paribas",
+      brandHtml: \`<div class="w-7 h-7 rounded-md bg-[#00915a] flex items-center justify-center text-white text-[10px] font-headline font-extrabold tracking-tight">BNP</div>\`,
+    },
+    amex: {
+      label: "American Express",
+      brandHtml: \`<div class="w-7 h-7 rounded-md bg-[#006fcf] flex items-center justify-center text-white text-[8px] font-headline font-extrabold tracking-tight">AMEX</div>\`,
+    },
+    revolut: {
+      label: "Revolut",
+      brandHtml: \`<div class="w-7 h-7 rounded-md bg-black flex items-center justify-center text-white text-[14px] font-headline font-extrabold leading-none">R</div>\`,
+    },
   };
 
   async function loadBnpCashflow(period) {
@@ -448,8 +459,8 @@ export function renderDashboard(period) {
       const editBtn = acct === "bnp" ? \`<button id="bnpEditBtn" class="text-[10px] text-primary font-semibold hover:underline">Editar</button>\` : "";
       document.getElementById("acct-" + acct).innerHTML = \`
         <div class="flex items-center justify-between mb-3">
-          <div class="flex items-center gap-1.5">
-            <span class="material-symbols-outlined text-secondary" style="font-size: 16px;">\${meta.icon}</span>
+          <div class="flex items-center gap-2">
+            \${meta.brandHtml}
             <h4 class="font-headline font-bold text-sm">\${meta.label}</h4>
           </div>
           \${editBtn}
@@ -590,6 +601,9 @@ export function renderDashboard(period) {
           sel.dataset.currentCat = newCat;
           sel.classList.add("bg-primary-container", "text-on-primary-container");
           setTimeout(() => sel.classList.remove("bg-primary-container", "text-on-primary-container"), 1200);
+          // Refresh the underlying dashboard so totals/charts reflect the change.
+          // Modal stays open; user can keep retagging.
+          load(currentData.period);
         } else {
           alert("Error cambiando categoría");
           sel.value = oldCat;
@@ -800,9 +814,9 @@ export function renderDashboard(period) {
         if (ok) {
           sel.dataset.currentCat = newCat;
           sel.disabled = false;
-          // Visual confirm: tint cell briefly
           sel.classList.add("bg-primary-container", "text-on-primary-container");
           setTimeout(() => sel.classList.remove("bg-primary-container", "text-on-primary-container"), 1200);
+          load(currentData.period);  // refresh dashboard underneath
         } else {
           alert("Error cambiando categoría");
           sel.value = oldCat;
@@ -941,24 +955,27 @@ export function renderDashboard(period) {
         </div>\`;
     }
 
-    // Aggregate by category (no per-concepto rows). Each row collapses all
-    // fijos+variables sharing a category into a single line: TIPO badge (F /
-    // V / FV), summed budget, summed actual, weighted % used.
-    const catAgg = {};
+    // Aggregate by (category, type) — MECE: each row is either Fijo OR Variable
+    // for a category, never combined. So if a category has both, you get 2
+    // rows. Matches user's mental model: "savings via PERCO is a fixed plan,
+    // savings via one-off transfer is variable — show them apart".
+    const catAggList = [];
+    const fixedByCat = {};
     for (const f of d.fixed) {
       const cat = f.category || "uncategorised";
-      catAgg[cat] = catAgg[cat] || { category: cat, hasFixed: false, hasVar: false, budget: 0, actual: 0 };
-      catAgg[cat].hasFixed = true;
-      catAgg[cat].budget += f.budget_eur || 0;
-      catAgg[cat].actual += f.actual_eur || 0;
+      fixedByCat[cat] = fixedByCat[cat] || { category: cat, type: "fijo", budget: 0, actual: 0 };
+      fixedByCat[cat].budget += f.budget_eur || 0;
+      fixedByCat[cat].actual += f.actual_eur || 0;
     }
+    const varByCat = {};
     for (const v of d.variable) {
       const cat = v.category || "uncategorised";
-      catAgg[cat] = catAgg[cat] || { category: cat, hasFixed: false, hasVar: false, budget: 0, actual: 0 };
-      catAgg[cat].hasVar = true;
-      catAgg[cat].budget += v.amount_eur || 0;
-      catAgg[cat].actual += v.actual_eur || 0;
+      varByCat[cat] = varByCat[cat] || { category: cat, type: "variable", budget: 0, actual: 0 };
+      varByCat[cat].budget += v.amount_eur || 0;
+      varByCat[cat].actual += v.actual_eur || 0;
     }
+    Object.values(fixedByCat).forEach((r) => catAggList.push(r));
+    Object.values(varByCat).forEach((r)   => catAggList.push(r));
 
     const fijosTotal = d.fixed.reduce((s, r) => s + (r.budget_eur || 0), 0);
     const varTotal   = d.variable.reduce((s, r) => s + (r.amount_eur || 0), 0);
@@ -978,11 +995,11 @@ export function renderDashboard(period) {
       b.onclick = () => { activeFilter = b.dataset.filter; render(currentData); };
     });
 
-    // Render rows aggregated by category (no per-concepto)
+    // Render rows aggregated by (category, type) — MECE
     const includeFixed   = activeFilter !== "variables";
     const includeVar     = activeFilter !== "fijos";
-    const filteredCats = Object.values(catAgg).filter((c) =>
-      (includeFixed && c.hasFixed) || (includeVar && c.hasVar)
+    const filteredCats = catAggList.filter((c) =>
+      (includeFixed && c.type === "fijo") || (includeVar && c.type === "variable")
     ).sort((a, b) => b.budget - a.budget);
 
     const tbl = document.getElementById("gastosTbl");
@@ -997,11 +1014,9 @@ export function renderDashboard(period) {
         const pctClr = pct == null ? "bg-surface-container text-on-surface-variant" :
                        pct > 100 ? "bg-error-container text-error" :
                        pct > 80  ? "bg-warn-container text-warn"   : "bg-primary-container text-on-primary-container";
-        const tipoBadge = c.hasFixed && c.hasVar
-          ? \`<span class="px-2 py-0.5 rounded text-[10px] font-bold uppercase tracking-wider bg-tertiary-container/40 text-tertiary">F+V</span>\`
-          : c.hasFixed
-            ? \`<span class="px-2 py-0.5 rounded text-[10px] font-bold uppercase tracking-wider bg-primary-container text-on-primary-container">Fijo</span>\`
-            : \`<span class="px-2 py-0.5 rounded text-[10px] font-bold uppercase tracking-wider bg-secondary-container text-on-surface">Var</span>\`;
+        const tipoBadge = c.type === "fijo"
+          ? \`<span class="px-2 py-0.5 rounded text-[10px] font-bold uppercase tracking-wider bg-primary-container text-on-primary-container">Fijo</span>\`
+          : \`<span class="px-2 py-0.5 rounded text-[10px] font-bold uppercase tracking-wider bg-secondary-container text-on-surface">Var</span>\`;
         return \`<tr class="border-b border-outline-variant/15 last:border-0 hover:bg-surface-container-low cursor-pointer" onclick="openCategoryDrill('\${c.category}', '\${d.period}')">
           <td class="px-3 py-2.5">
             <div class="flex items-center gap-2">
@@ -1066,11 +1081,13 @@ export function renderDashboard(period) {
           \${movers.map((r) => {
             const arrow = r.delta_abs > 0 ? "↑" : "↓";
             const clr = r.delta_abs > 0 ? "text-error" : "text-primary";
+            // Each month cell is a separate click target → drills that specific month
             const monthCells = r.totals.map((v, i) => {
               const isLast = i === r.totals.length - 1;
-              return \`<td class="px-3 py-2 text-right tabular-nums \${isLast ? "font-semibold text-on-surface" : "text-outline"}">\${fmt(v)}</td>\`;
+              const m = c.months[i];
+              return \`<td class="px-3 py-2 text-right tabular-nums \${isLast ? "font-semibold text-on-surface" : "text-outline"} hover:bg-surface-container-high cursor-pointer" onclick="event.stopPropagation(); openCategoryDrill('\${r.category}', '\${m}')" title="Click → ver tx de \${m}">\${fmt(v)}</td>\`;
             }).join("");
-            return \`<tr class="border-b border-outline-variant/15 last:border-0 hover:bg-surface-container-low cursor-pointer" onclick="openCategoryDrill('\${r.category}', '\${c.months[c.months.length-1]}')">
+            return \`<tr class="border-b border-outline-variant/15 last:border-0">
               <td class="px-3 py-2"><span class="material-symbols-outlined text-outline mr-1.5" style="font-size:14px">\${ICON[r.category] || ICON.other}</span><span class="capitalize">\${r.category}</span></td>
               \${monthCells}
               <td class="px-3 py-2 text-right tabular-nums \${clr} font-semibold">\${arrow} \${fmt(Math.abs(r.delta_abs))}</td>
@@ -1083,8 +1100,38 @@ export function renderDashboard(period) {
 
   // ─── CFO-grade charts ───────────────────────────────────────────────────
   let trendChart, cashChart;
-  const PALETTE = ["#006d32","#0059bb","#a76900","#ba1a1a","#565e74","#bc8cff","#0070ea","#d29922","#ec775c","#3fb950","#7d56f3","#db61a2","#8b949e"];
-  const FONT = { size: 11, family: "Inter" };
+  // Softer, more curated palette (less rainbow, more editorial). Inspired by
+  // Bloomberg/FT/Stripe data viz: muted hues, good contrast on white.
+  const PALETTE = ["#1e4d8b","#2e7d5c","#a86b2d","#9b2c2c","#5d6d7e","#7d56f3","#3b82a4","#b7791f","#9333ea","#0891b2","#dc7a2c","#be185d","#737373"];
+  const FONT = { size: 11, family: "Inter", weight: "500" };
+
+  // Configure global Chart.js defaults for a consistent, polished look
+  if (window.Chart) {
+    Chart.defaults.font.family = "Inter";
+    Chart.defaults.font.size = 11;
+    Chart.defaults.color = "#475569";
+    Chart.defaults.borderColor = "rgba(15,23,42,0.06)";
+    Chart.defaults.plugins.tooltip.backgroundColor = "rgba(15,23,42,0.95)";
+    Chart.defaults.plugins.tooltip.titleFont = { family: "Space Grotesk", weight: "600", size: 12 };
+    Chart.defaults.plugins.tooltip.bodyFont  = { family: "Inter", size: 11 };
+    Chart.defaults.plugins.tooltip.padding = 10;
+    Chart.defaults.plugins.tooltip.cornerRadius = 8;
+    Chart.defaults.plugins.tooltip.displayColors = true;
+    Chart.defaults.plugins.tooltip.boxPadding = 4;
+    Chart.defaults.elements.line.tension = 0.4;
+    Chart.defaults.elements.point.radius = 0;
+    Chart.defaults.elements.point.hoverRadius = 5;
+    Chart.defaults.animation.duration = 600;
+    Chart.defaults.animation.easing = "easeOutQuart";
+  }
+
+  // Helper: create a vertical gradient (top-color → transparent) for area fills
+  function makeGradient(ctx, color) {
+    const grad = ctx.createLinearGradient(0, 0, 0, 280);
+    grad.addColorStop(0, color + "55");
+    grad.addColorStop(1, color + "00");
+    return grad;
+  }
 
   function renderCharts(d) {
     // ── DONUT: dual ring + center total ────────────────────────────────
@@ -1106,7 +1153,8 @@ export function renderDashboard(period) {
         datasets: [{
           data: d.by_category_actual.map((r) => r.total),
           backgroundColor: d.by_category_actual.map((_, i) => PALETTE[i % PALETTE.length]),
-          borderColor: "#ffffff", borderWidth: 2, hoverOffset: 6,
+          borderColor: "#ffffff", borderWidth: 3, hoverOffset: 8,
+          spacing: 2,
         }],
       },
       options: {
@@ -1152,7 +1200,8 @@ export function renderDashboard(period) {
     })).filter((x) => x.planned > 0)
        .sort((a, b) => b.planned - a.planned);
 
-    const barColor = variance.map((v) => v.pct == null ? "#565e74" : v.pct > 100 ? "#ba1a1a" : v.pct > 80 ? "#a76900" : "#006d32");
+    // Color-coded variance: muted green / amber / red — same hue family as palette
+    const barColor = variance.map((v) => v.pct == null ? "#94a3b8" : v.pct > 100 ? "#dc2626" : v.pct > 80 ? "#d97706" : "#2e7d5c");
 
     if (barChart) barChart.destroy();
     barChart = new Chart(document.getElementById("varianceBar").getContext("2d"), {
@@ -1160,8 +1209,8 @@ export function renderDashboard(period) {
       data: {
         labels: variance.map((v) => v.category),
         datasets: [
-          { label: "Real",     data: variance.map((v) => v.actual),  backgroundColor: barColor, borderRadius: 4, barPercentage: 0.85, categoryPercentage: 0.85 },
-          { label: "Planeado", data: variance.map((v) => v.planned), backgroundColor: "rgba(0,89,187,0.20)", borderColor: "#0059bb", borderWidth: 1, borderDash: [3,3], borderRadius: 4, barPercentage: 0.85, categoryPercentage: 0.85 },
+          { label: "Real",     data: variance.map((v) => v.actual),  backgroundColor: barColor, borderRadius: 6, borderSkipped: false, barPercentage: 0.7, categoryPercentage: 0.85 },
+          { label: "Planeado", data: variance.map((v) => v.planned), backgroundColor: "rgba(30,77,139,0.10)", borderColor: "#1e4d8b", borderWidth: 1.5, borderRadius: 6, borderSkipped: false, barPercentage: 0.4, categoryPercentage: 0.85 },
         ],
       },
       options: {
@@ -1187,20 +1236,25 @@ export function renderDashboard(period) {
     for (const m of trendData) for (const [c, v] of Object.entries(m.categories)) catTotals[c] = (catTotals[c] || 0) + v;
     const topCats = Object.entries(catTotals).sort((a, b) => b[1] - a[1]).slice(0, 8).map((x) => x[0]);
     const labels  = trendData.map((m) => m.month);
-    const datasets = topCats.map((cat, i) => ({
-      label: cat,
-      data: trendData.map((m) => m.categories[cat] || 0),
-      backgroundColor: PALETTE[i % PALETTE.length] + "cc",
-      borderColor:     PALETTE[i % PALETTE.length],
-      borderWidth: 1, fill: true, tension: 0.3, pointRadius: 2,
-    }));
+    const trendCtx = document.getElementById("trendStack").getContext("2d");
+    const datasets = topCats.map((cat, i) => {
+      const color = PALETTE[i % PALETTE.length];
+      return {
+        label: cat,
+        data: trendData.map((m) => m.categories[cat] || 0),
+        backgroundColor: color + "aa",
+        borderColor:     color,
+        borderWidth: 1.5, fill: true, tension: 0.4,
+        pointBackgroundColor: color, pointBorderColor: "#fff", pointBorderWidth: 1.5, pointHoverRadius: 5,
+      };
+    });
     const otherCats = Object.keys(catTotals).filter((c) => !topCats.includes(c));
     if (otherCats.length) {
       datasets.push({
         label: "Otros",
         data: trendData.map((m) => otherCats.reduce((s, c) => s + (m.categories[c] || 0), 0)),
-        backgroundColor: "#8b949ecc", borderColor: "#8b949e",
-        borderWidth: 1, fill: true, tension: 0.3, pointRadius: 2,
+        backgroundColor: "#9ca3af80", borderColor: "#9ca3af",
+        borderWidth: 1.5, fill: true, tension: 0.4,
       });
     }
 
@@ -1236,15 +1290,19 @@ export function renderDashboard(period) {
     document.getElementById("cashTrend").innerHTML = trend;
 
     if (cashChart) cashChart.destroy();
-    cashChart = new Chart(document.getElementById("cashLine").getContext("2d"), {
+    const cashCtx = document.getElementById("cashLine").getContext("2d");
+    cashChart = new Chart(cashCtx, {
       type: "line",
       data: {
         labels: cashLabels,
         datasets: [{
           label: "Closing BNP",
           data: closings,
-          borderColor: "#0059bb", backgroundColor: "rgba(0,89,187,0.1)",
-          borderWidth: 2, fill: true, tension: 0.3, pointRadius: 4, pointBackgroundColor: "#0059bb",
+          borderColor: "#1e4d8b",
+          backgroundColor: makeGradient(cashCtx, "#1e4d8b"),
+          borderWidth: 2.5, fill: true, tension: 0.45,
+          pointRadius: 0, pointHoverRadius: 6,
+          pointBackgroundColor: "#1e4d8b", pointBorderColor: "#fff", pointBorderWidth: 2,
         }],
       },
       options: {
