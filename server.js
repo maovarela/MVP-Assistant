@@ -32,7 +32,7 @@ import db, {
   getDashboardSummary, listBudgetPeriods,
   getYearSummary, listYears, listCategoryTransactions,
   setMatchKeyword, appendToMatchKeyword,
-  getAuditReport,
+  getAuditReport, updateTransactionCategory,
 } from "./memory.js";
 import { categorize as keywordCategorize } from "./bankCsv.js";
 import { refreshCurrentMonthFx } from "./fx.js";
@@ -367,6 +367,47 @@ app.post("/api/match-keyword", express.json({ limit: "10kb" }), (req, res) => {
     res.json({ ok: true, updated });
   } catch (err) {
     console.error("[match-keyword]", err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Change category on one or many transactions.
+// Body: { ids: [1, 2, 3], category: "income" }
+app.post("/api/transactions/category", express.json({ limit: "100kb" }), (req, res) => {
+  if (!requireKey(req, res, "DASH_KEY")) return;
+  try {
+    const { ids, category } = req.body || {};
+    const changed = updateTransactionCategory({ ids, category });
+    res.json({ ok: true, changed });
+  } catch (err) {
+    console.error("[tx category]", err);
+    res.status(400).json({ error: err.message });
+  }
+});
+
+// Delete transactions whose merchant matches a regex. Used to clean up
+// duplicates that snuck in before a parser fix (e.g. Amex→Revolut top-ups
+// loaded before AMEX_INTERNAL_TX_RX was added).
+// Body: { merchant_regex: "revolut", source?: "csv" }  (regex case-insensitive)
+app.post("/api/transactions/delete-by-merchant", express.json({ limit: "10kb" }), (req, res) => {
+  if (!requireKey(req, res, "DASH_KEY")) return;
+  try {
+    const { merchant_regex, source } = req.body || {};
+    if (!merchant_regex) return res.status(400).json({ error: "merchant_regex required" });
+    try { new RegExp(merchant_regex, "i"); }
+    catch (e) { return res.status(400).json({ error: "invalid regex: " + e.message }); }
+    // SQLite REGEXP needs an extension; use GLOB-ish LIKE on lowercased substring instead.
+    // For safety, only allow a simple literal substring delete here.
+    const literal = merchant_regex.replace(/[%_]/g, "");
+    const sourceFilter = source ? "AND source = ?" : "";
+    const args = source ? [`%${literal.toLowerCase()}%`, source] : [`%${literal.toLowerCase()}%`];
+    // Preview first
+    const matched = db.prepare(`SELECT id, date, merchant, amount, source FROM transactions WHERE LOWER(merchant) LIKE ? ${sourceFilter} LIMIT 500`).all(...args);
+    if (req.query.dryRun === "1") return res.json({ ok: true, dryRun: true, would_delete: matched.length, sample: matched.slice(0, 10) });
+    const r = db.prepare(`DELETE FROM transactions WHERE LOWER(merchant) LIKE ? ${sourceFilter}`).run(...args);
+    res.json({ ok: true, deleted: r.changes, sample: matched.slice(0, 5) });
+  } catch (err) {
+    console.error("[tx delete]", err);
     res.status(500).json({ error: err.message });
   }
 });

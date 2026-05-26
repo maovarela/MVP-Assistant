@@ -320,6 +320,17 @@ export function renderDashboard(period) {
     transfers: "swap_horiz", income: "trending_up", fees: "percent",
     other: "category", uncategorised: "help",
   };
+  const CATEGORIES = ["groceries","restaurants","transport","travel","subscriptions","shopping","health","housing","entertainment","transfers","income","fees","other"];
+
+  async function changeCategory(txId, newCat) {
+    const r = await fetch("/api/transactions/category?key=" + encodeURIComponent(key), {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ ids: [txId], category: newCat }),
+    });
+    return r.ok;
+  }
+  window.changeCategory = changeCategory;
 
   const fmt = (n) => n == null ? "—" : new Intl.NumberFormat("es-ES", { style: "currency", currency: "EUR", maximumFractionDigits: 0 }).format(n);
   const fmtPct = (n) => n == null ? "—" : (Math.round(n * 10) / 10) + "%";
@@ -405,16 +416,42 @@ export function renderDashboard(period) {
             <th class="px-4 py-2">Fecha</th>
             <th class="px-4 py-2">Comercio</th>
             <th class="px-4 py-2 text-right">Monto</th>
+            <th class="px-4 py-2 text-right">Categoría</th>
           </tr>
         </thead>
         <tbody>
-          \${d.rows.map((r) => \`<tr class="border-b border-outline-variant/15 last:border-0">
+          \${d.rows.map((r, i) => \`<tr class="border-b border-outline-variant/15 last:border-0">
             <td class="px-4 py-2 text-outline tabular-nums">\${r.date}</td>
             <td class="px-4 py-2 text-on-surface">\${r.merchant || "—"}</td>
             <td class="px-4 py-2 text-right tabular-nums \${r.amount < 0 ? "" : "text-primary"}">\${fmt(r.amount)}</td>
+            <td class="px-4 py-2 text-right">
+              <select data-tx-id="\${r.id ?? ""}" data-current-cat="\${category}" class="drillRecat text-xs bg-surface-container border-0 rounded px-2 py-1">
+                \${CATEGORIES.map((c) => \`<option value="\${c}" \${c === category ? "selected" : ""}>\${c}</option>\`).join("")}
+              </select>
+            </td>
           </tr>\`).join("")}
         </tbody>
       </table>\` : "<div class='p-8 text-center text-outline italic'>Sin transacciones</div>";
+
+    body.querySelectorAll(".drillRecat").forEach((sel) => {
+      sel.onchange = async () => {
+        const txId = parseInt(sel.dataset.txId, 10);
+        const newCat = sel.value;
+        const oldCat = sel.dataset.currentCat;
+        if (!txId || !newCat || newCat === oldCat) return;
+        sel.disabled = true;
+        const ok = await changeCategory(txId, newCat);
+        if (ok) {
+          sel.dataset.currentCat = newCat;
+          sel.classList.add("bg-primary-container", "text-on-primary-container");
+          setTimeout(() => sel.classList.remove("bg-primary-container", "text-on-primary-container"), 1200);
+        } else {
+          alert("Error cambiando categoría");
+          sel.value = oldCat;
+        }
+        sel.disabled = false;
+      };
+    });
   }
   // expose to inline onclicks
   window.openCategoryDrill = openCategoryDrill;
@@ -495,12 +532,16 @@ export function renderDashboard(period) {
           <span class="font-headline font-bold tabular-nums text-warn">\${fmt(catTotal)}</span>
         </div>
         \${rows.map((o) => \`
-          <div class="px-5 py-2 flex items-center gap-2 hover:bg-surface-container-low">
+          <div class="px-5 py-2 flex items-center gap-2 hover:bg-surface-container-low flex-wrap md:flex-nowrap" data-tx-row="\${o.id}">
             <div class="flex-1 min-w-0">
               <div class="text-sm truncate"><span class="text-outline tabular-nums mr-2">\${o.date.slice(5)}</span>\${o.merchant || "—"}</div>
             </div>
             <span class="font-mono tabular-nums text-sm">\${fmt(o.amount)}</span>
-            <select data-merchant="\${(o.merchant || "").replace(/"/g, "&quot;")}" class="auditAssign text-xs bg-surface-container border-0 rounded px-2 py-1 max-w-[150px]">
+            <select data-tx-id="\${o.id}" data-current-cat="\${o.category || ""}" class="auditRecat text-xs bg-surface-container border-0 rounded px-2 py-1 max-w-[120px]" title="Cambiar categoría">
+              <option value="">Categoría…</option>
+              \${CATEGORIES.map((c) => \`<option value="\${c}" \${c === o.category ? "selected" : ""}>\${c}</option>\`).join("")}
+            </select>
+            <select data-merchant="\${(o.merchant || "").replace(/"/g, "&quot;")}" class="auditAssign text-xs bg-surface-container border-0 rounded px-2 py-1 max-w-[150px]" title="Asignar a un fijo">
               <option value="">Asignar a…</option>
               \${fixedOpts}
             </select>
@@ -510,13 +551,12 @@ export function renderDashboard(period) {
 
     document.getElementById("auditBody").innerHTML = body || "<div class='p-8 text-center text-outline'>Sin huérfanos 🎉</div>";
 
-    // Hook up assign dropdowns
+    // Hook up "Asignar a fijo" dropdowns
     document.querySelectorAll(".auditAssign").forEach((sel) => {
       sel.onchange = async () => {
         const label = sel.value;
         const merchant = sel.dataset.merchant;
         if (!label || !merchant) return;
-        // Take first 2 distinctive words of merchant (skip generic prefixes)
         const skip = /^(prelevement|virement|vir\\b|paiement|payment|transfer|sepa|emi|recu|carte)/i;
         const snippet = merchant.split(/\\s+/).filter((w) => w && !skip.test(w)).slice(0, 2).join(" ").trim() || merchant.slice(0, 15);
         sel.disabled = true;
@@ -526,10 +566,34 @@ export function renderDashboard(period) {
           body: JSON.stringify({ label, mode: "append", merchant_snippet: snippet }),
         });
         if (r.ok) {
-          sel.parentElement.style.opacity = "0.4";
-          sel.parentElement.innerHTML = \`<div class="flex-1 text-xs text-primary">✓ Añadido "\${snippet}" → \${label}. Refresca para ver cambios.</div>\`;
+          const row = sel.closest("[data-tx-row]");
+          row.style.opacity = "0.4";
+          row.innerHTML = \`<div class="flex-1 text-xs text-primary">✓ Añadido "\${snippet}" → \${label}. Refresca para ver cambios.</div>\`;
         } else {
           alert("Error: " + r.status);
+          sel.disabled = false;
+        }
+      };
+    });
+
+    // Hook up "Recategorizar" dropdowns
+    document.querySelectorAll(".auditRecat").forEach((sel) => {
+      sel.onchange = async () => {
+        const newCat = sel.value;
+        const txId = parseInt(sel.dataset.txId, 10);
+        const oldCat = sel.dataset.currentCat;
+        if (!newCat || newCat === oldCat) return;
+        sel.disabled = true;
+        const ok = await changeCategory(txId, newCat);
+        if (ok) {
+          sel.dataset.currentCat = newCat;
+          sel.disabled = false;
+          // Visual confirm: tint cell briefly
+          sel.classList.add("bg-primary-container", "text-on-primary-container");
+          setTimeout(() => sel.classList.remove("bg-primary-container", "text-on-primary-container"), 1200);
+        } else {
+          alert("Error cambiando categoría");
+          sel.value = oldCat;
           sel.disabled = false;
         }
       };

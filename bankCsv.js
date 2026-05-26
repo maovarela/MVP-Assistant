@@ -44,6 +44,11 @@ function parseAmexDate(s) {
   return `${m[3]}-${m[1]}-${m[2]}`;
 }
 
+// Amex charges where the merchant is REVOLUT (top-ups via card) get also
+// imported when the user uploads the Revolut statement, so we skip them here
+// to avoid double-counting. Same dedup rationale as BNP→Amex/Revolut transfers.
+const AMEX_INTERNAL_TX_RX = /\brevolut\b/i;
+
 /**
  * Parse an Amex FR CSV. Returns an array of normalized transactions with the
  * sign already flipped (positive in CSV → negative in DB).
@@ -62,6 +67,7 @@ export function parseAmexCsv(content) {
     const desc   = (r.Description || "").trim().replace(/\s+/g, " ");
     const rawAmt = parseFrenchAmount(r.Montant);
     if (!date || !desc) continue;
+    if (AMEX_INTERNAL_TX_RX.test(desc)) continue;  // skip Amex→Revolut top-ups (already in Revolut statement)
     const refRaw = String(r.Référence || r["Reference"] || "").replace(/'/g, "");
     out.push({
       date,

@@ -681,6 +681,17 @@ export function setMatchKeyword({ label, match_keyword, period }) {
   return db.prepare(`SELECT period, label, match_keyword FROM fixed_expenses WHERE label = ?`).all(label);
 }
 
+/** Change the category of one or many transactions. Returns the count of rows
+ *  updated. Used by the audit / drilldown "Recategorizar a..." dropdowns. */
+export function updateTransactionCategory({ ids, category }) {
+  if (!Array.isArray(ids) || !ids.length) throw new Error("ids[] required");
+  if (!category || typeof category !== "string") throw new Error("category required");
+  const placeholders = ids.map(() => "?").join(",");
+  const r = db.prepare(`UPDATE transactions SET category = ? WHERE id IN (${placeholders})`)
+    .run(category, ...ids);
+  return r.changes;
+}
+
 /** Append a regex-escaped chunk of a merchant name to an existing match_keyword.
  *  Used by the audit UI: user clicks "asignar [merchant] a [Arriendo]" → we
  *  add a literal match for that merchant to Arriendo's keyword. */
@@ -1087,7 +1098,7 @@ export function listCategoryTransactions({ category, period }) {
       : "";
   const args  = period ? [category, period] : [category];
   const rows  = db.prepare(`
-    SELECT date, merchant, amount, currency, source, description
+    SELECT id, date, merchant, amount, currency, source, description
     FROM transactions WHERE category = ? ${where}
     ORDER BY ABS(amount) DESC LIMIT 500
   `).all(...args);
