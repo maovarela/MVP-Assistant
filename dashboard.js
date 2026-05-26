@@ -371,11 +371,13 @@ export function renderDashboard(period) {
       <div class="flex flex-wrap items-center gap-3">
         <div class="flex items-center gap-1.5">
           <label class="text-[11px] font-bold text-on-surface">Desde</label>
-          <select id="histPeriodFrom" class="bg-surface-container text-on-surface border border-outline-variant/30 rounded-md text-xs px-2 py-1 focus:ring-2 focus:ring-primary focus:outline-none"></select>
+          <select id="histYearFrom"  class="bg-surface-container text-on-surface border border-outline-variant/30 rounded-md text-xs px-2 py-1 focus:ring-2 focus:ring-primary focus:outline-none"></select>
+          <select id="histMonthFrom" class="bg-surface-container text-on-surface border border-outline-variant/30 rounded-md text-xs px-2 py-1 focus:ring-2 focus:ring-primary focus:outline-none"></select>
         </div>
         <div class="flex items-center gap-1.5">
           <label class="text-[11px] font-bold text-on-surface">Hasta</label>
-          <select id="histPeriodTo" class="bg-surface-container text-on-surface border border-outline-variant/30 rounded-md text-xs px-2 py-1 focus:ring-2 focus:ring-primary focus:outline-none"></select>
+          <select id="histYearTo"  class="bg-surface-container text-on-surface border border-outline-variant/30 rounded-md text-xs px-2 py-1 focus:ring-2 focus:ring-primary focus:outline-none"></select>
+          <select id="histMonthTo" class="bg-surface-container text-on-surface border border-outline-variant/30 rounded-md text-xs px-2 py-1 focus:ring-2 focus:ring-primary focus:outline-none"></select>
         </div>
         <span class="text-outline-variant">|</span>
         <div class="flex items-center gap-1.5 flex-wrap" id="histAccountFilter">
@@ -595,17 +597,20 @@ export function renderDashboard(period) {
 
   function ensureHistoricoInit() {
     if (histInitialized) return;
-    const fromSel = document.getElementById("histPeriodFrom");
-    const toSel   = document.getElementById("histPeriodTo");
     const periods = (currentData?.available_periods || [currentData?.period]).filter(Boolean);
-    if (periods.length) {
-      const opts = periods.map((p) => \`<option value="\${p}">\${p}</option>\`).join("");
-      fromSel.innerHTML = opts;
-      toSel.innerHTML   = opts;
-      // default range: current month only
-      const cur = currentData?.period || periods[0];
-      fromSel.value = cur;
-      toSel.value   = cur;
+    const years = [...new Set(periods.map((p) => p.slice(0, 4)))].sort().reverse();
+    const MONTH_LABELS = ["Ene","Feb","Mar","Abr","May","Jun","Jul","Ago","Sep","Oct","Nov","Dic"];
+    const months = Array.from({ length: 12 }, (_, i) => ({ v: String(i+1).padStart(2,"0"), l: MONTH_LABELS[i] }));
+    const yearOpts  = years.map((y)   => \`<option value="\${y}">\${y}</option>\`).join("");
+    const monthOpts = months.map((m)  => \`<option value="\${m.v}">\${m.l}</option>\`).join("");
+    ["histYearFrom","histYearTo"].forEach((id) => { const el = document.getElementById(id); if (el) el.innerHTML = yearOpts; });
+    ["histMonthFrom","histMonthTo"].forEach((id) => { const el = document.getElementById(id); if (el) el.innerHTML = monthOpts; });
+    // default range: current month only
+    const cur = currentData?.period || periods[0] || "";
+    if (cur) {
+      const [yy, mm] = cur.split("-");
+      ["histYearFrom","histYearTo"].forEach((id) => { const el = document.getElementById(id); if (el) el.value = yy; });
+      ["histMonthFrom","histMonthTo"].forEach((id) => { const el = document.getElementById(id); if (el) el.value = mm; });
     }
     // Account chips
     const filterEl = document.getElementById("histAccountFilter");
@@ -663,8 +668,14 @@ export function renderDashboard(period) {
 
   async function loadHistorico() {
     ensureHistoricoInit();
-    const from = document.getElementById("histPeriodFrom")?.value || "";
-    const to   = document.getElementById("histPeriodTo")?.value   || "";
+    const yFrom = document.getElementById("histYearFrom")?.value  || "";
+    const mFrom = document.getElementById("histMonthFrom")?.value || "";
+    const yTo   = document.getElementById("histYearTo")?.value    || "";
+    const mTo   = document.getElementById("histMonthTo")?.value   || "";
+    let from = yFrom && mFrom ? \`\${yFrom}-\${mFrom}\` : "";
+    let to   = yTo   && mTo   ? \`\${yTo}-\${mTo}\`     : "";
+    // Auto-swap if user picks from > to
+    if (from && to && from > to) { const t = from; from = to; to = t; }
     const search = document.getElementById("histSearch")?.value.trim() || "";
     const qs = new URLSearchParams({ key });
     if (from) qs.set("period_from", from);
@@ -774,11 +785,11 @@ export function renderDashboard(period) {
   }
 
   setTimeout(() => {
-    const fromSel  = document.getElementById("histPeriodFrom");
-    const toSel    = document.getElementById("histPeriodTo");
+    ["histYearFrom","histMonthFrom","histYearTo","histMonthTo"].forEach((id) => {
+      const el = document.getElementById(id);
+      if (el) el.onchange = loadHistorico;
+    });
     const searchEl = document.getElementById("histSearch");
-    if (fromSel) fromSel.onchange = loadHistorico;
-    if (toSel)   toSel.onchange   = loadHistorico;
     if (searchEl) {
       searchEl.oninput = () => {
         clearTimeout(histSearchTimer);
