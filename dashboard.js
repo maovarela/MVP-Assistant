@@ -504,8 +504,6 @@ export function renderDashboard(period) {
       \`<div class="bg-warn-container rounded-lg p-2.5"><div class="text-[10px] uppercase tracking-wider text-warn">Huérfano</div><div class="font-headline font-bold text-base tabular-nums mt-0.5 text-warn">\${fmt(a.totals.total_orphan)} · \${a.totals.orphan_pct}%</div></div>\`,
     ].join("");
 
-    const fixedOpts = a.fixed_labels.map((f) => \`<option value="\${f.label}">\${f.label} · \${f.category || "—"}</option>\`).join("");
-
     // Group orphans by category for visual clarity
     const byCat = {};
     for (const o of a.orphans) {
@@ -532,49 +530,19 @@ export function renderDashboard(period) {
           <span class="font-headline font-bold tabular-nums text-warn">\${fmt(catTotal)}</span>
         </div>
         \${rows.map((o) => \`
-          <div class="px-5 py-2 flex items-center gap-2 hover:bg-surface-container-low flex-wrap md:flex-nowrap" data-tx-row="\${o.id}">
+          <div class="px-5 py-2 flex items-center gap-2 hover:bg-surface-container-low" data-tx-row="\${o.id}">
             <div class="flex-1 min-w-0">
               <div class="text-sm truncate"><span class="text-outline tabular-nums mr-2">\${o.date.slice(5)}</span>\${o.merchant || "—"}</div>
             </div>
             <span class="font-mono tabular-nums text-sm">\${fmt(o.amount)}</span>
-            <select data-tx-id="\${o.id}" data-current-cat="\${o.category || ""}" class="auditRecat text-xs bg-surface-container border-0 rounded px-2 py-1 max-w-[120px]" title="Cambiar categoría">
-              <option value="">Categoría…</option>
+            <select data-tx-id="\${o.id}" data-current-cat="\${o.category || ""}" class="auditRecat text-xs bg-surface-container border-0 rounded px-2 py-1.5 min-w-[140px]" title="Cambiar categoría">
               \${CATEGORIES.map((c) => \`<option value="\${c}" \${c === o.category ? "selected" : ""}>\${c}</option>\`).join("")}
-            </select>
-            <select data-merchant="\${(o.merchant || "").replace(/"/g, "&quot;")}" class="auditAssign text-xs bg-surface-container border-0 rounded px-2 py-1 max-w-[150px]" title="Asignar a un fijo">
-              <option value="">Asignar a…</option>
-              \${fixedOpts}
             </select>
           </div>\`).join("")}
       </div>\`;
     }).join("");
 
     document.getElementById("auditBody").innerHTML = body || "<div class='p-8 text-center text-outline'>Sin huérfanos 🎉</div>";
-
-    // Hook up "Asignar a fijo" dropdowns
-    document.querySelectorAll(".auditAssign").forEach((sel) => {
-      sel.onchange = async () => {
-        const label = sel.value;
-        const merchant = sel.dataset.merchant;
-        if (!label || !merchant) return;
-        const skip = /^(prelevement|virement|vir\\b|paiement|payment|transfer|sepa|emi|recu|carte)/i;
-        const snippet = merchant.split(/\\s+/).filter((w) => w && !skip.test(w)).slice(0, 2).join(" ").trim() || merchant.slice(0, 15);
-        sel.disabled = true;
-        const r = await fetch("/api/match-keyword?key=" + encodeURIComponent(key), {
-          method: "POST",
-          headers: { "content-type": "application/json" },
-          body: JSON.stringify({ label, mode: "append", merchant_snippet: snippet }),
-        });
-        if (r.ok) {
-          const row = sel.closest("[data-tx-row]");
-          row.style.opacity = "0.4";
-          row.innerHTML = \`<div class="flex-1 text-xs text-primary">✓ Añadido "\${snippet}" → \${label}. Refresca para ver cambios.</div>\`;
-        } else {
-          alert("Error: " + r.status);
-          sel.disabled = false;
-        }
-      };
-    });
 
     // Hook up "Recategorizar" dropdowns
     document.querySelectorAll(".auditRecat").forEach((sel) => {
