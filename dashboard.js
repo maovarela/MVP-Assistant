@@ -970,9 +970,9 @@ export function renderDashboard(period) {
       </button>\`;
     }
     chipsEl.innerHTML = [
-      chip("fijos",     "Fijos",     fijos.length,     fijosTotal, activeFilter === "fijos"),
-      chip("variables", "Variables", variables.length, varTotal,   activeFilter === "variables"),
-      chip("todos",     "Todos",     fijos.length + variables.length, fijosTotal + varTotal, activeFilter === "todos"),
+      chip("fijos",     "Fijos",     d.fixed.length,                       fijosTotal,             activeFilter === "fijos"),
+      chip("variables", "Variables", d.variable.length,                    varTotal,               activeFilter === "variables"),
+      chip("todos",     "Todos",     d.fixed.length + d.variable.length,   fijosTotal + varTotal,  activeFilter === "todos"),
     ].join("");
     chipsEl.querySelectorAll("button").forEach((b) => {
       b.onclick = () => { activeFilter = b.dataset.filter; render(currentData); };
