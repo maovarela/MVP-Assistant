@@ -114,28 +114,24 @@ export function renderDashboard(period) {
   <!-- ABOVE THE FOLD: dial + KPIs side-by-side on desktop, stacked on mobile -->
   <section class="grid grid-cols-1 md:grid-cols-5 gap-4 items-center">
 
-    <!-- Dial: 2/5 cols on desktop, full on mobile -->
+    <!-- Spending progress dial: % of income spent this month -->
     <div class="md:col-span-2 flex justify-center">
       <div class="relative w-52 h-52 md:w-56 md:h-56 flex items-center justify-center">
         <div class="absolute inset-0 rounded-full bg-primary/5 blur-3xl"></div>
 
         <svg class="absolute w-full h-full -rotate-90 transform" viewBox="0 0 100 100">
-          <circle class="text-surface-container" cx="50" cy="50" fill="transparent" r="45" stroke="currentColor" stroke-width="6"/>
-          <circle id="ringOuter" class="text-primary" cx="50" cy="50" fill="transparent" r="45" stroke="currentColor"
-                  stroke-dasharray="282.7" stroke-dashoffset="282.7" stroke-linecap="round" stroke-width="6"/>
-        </svg>
-        <svg class="absolute w-3/4 h-3/4 -rotate-90 transform" viewBox="0 0 100 100">
-          <circle class="text-surface-container-high" cx="50" cy="50" fill="transparent" r="45" stroke="currentColor" stroke-width="8"/>
-          <circle id="ringInner" class="text-secondary" cx="50" cy="50" fill="transparent" r="45" stroke="currentColor"
+          <circle class="text-surface-container" cx="50" cy="50" fill="transparent" r="45" stroke="currentColor" stroke-width="8"/>
+          <circle id="ringOuter" class="text-primary transition-all duration-700" cx="50" cy="50" fill="transparent" r="45" stroke="currentColor"
                   stroke-dasharray="282.7" stroke-dashoffset="282.7" stroke-linecap="round" stroke-width="8"/>
         </svg>
 
-        <div class="z-10 text-center px-2" title="Leftover = income − total budget. What you would have left if you spend exactly the plan. NOT account balance.">
-          <div class="text-[10px] font-bold uppercase tracking-widest text-outline">Would have left</div>
-          <div class="font-headline text-4xl md:text-5xl font-bold text-on-surface tabular-nums leading-none mt-1" id="dialResidual">—</div>
-          <div class="mt-2 text-[11px] text-on-surface leading-tight">
-            if you spend <span id="dialPctSpent" class="font-semibold">—</span><br/>
-            <span class="text-outline text-[10px]">of income on budget</span>
+        <div class="z-10 text-center px-2" title="Real spending this month vs total income. Green < 60%, amber 60-90%, red > 90%.">
+          <div class="text-[10px] font-bold uppercase tracking-widest text-outline">Spent this month</div>
+          <div class="font-headline text-3xl md:text-4xl font-bold tabular-nums leading-none mt-1" id="dialResidual">—</div>
+          <div class="mt-1 font-headline text-xl font-bold tabular-nums" id="dialPctSpent">—</div>
+          <div class="mt-1.5 text-[10px] text-outline leading-tight">
+            of <span id="dialIncome">—</span> income<br/>
+            <span class="text-on-surface text-[11px] font-semibold" id="dialAvailable">—</span> still available
           </div>
         </div>
       </div>
@@ -529,9 +525,10 @@ export function renderDashboard(period) {
     </div>
     <div class="flex-1 overflow-y-auto" id="catAuditBody"></div>
     <div class="px-5 py-3 border-t border-outline-variant/20 flex items-center justify-between gap-2">
-      <span class="text-[11px] text-outline">Select rows or "Apply all" to bulk-fix</span>
+      <span class="text-[11px] text-outline">Tip: review each row before applying. The regex isn't always right.</span>
       <div class="flex gap-2">
-        <button id="catAuditApplyAll" class="px-4 py-2 rounded-lg text-sm font-semibold bg-primary text-on-primary hover:opacity-90">Apply all suggestions</button>
+        <button id="catAuditClose2" class="px-3 py-2 rounded-lg text-sm font-medium text-outline hover:bg-surface-container">Close (do nothing)</button>
+        <button id="catAuditApplyAll" class="px-4 py-2 rounded-lg text-sm font-semibold bg-primary text-on-primary hover:opacity-90">Apply selected</button>
       </div>
     </div>
   </div>
@@ -1209,8 +1206,9 @@ export function renderDashboard(period) {
     if (!catAuditData) return;
     document.getElementById("catAuditModal").classList.remove("hidden");
     const d = catAuditData;
-    document.getElementById("catAuditSub").textContent =
-      \`\${d.mismatches.length} transactions where regex suggests a different category than stored. Scanned \${d.scanned} rows.\`;
+    document.getElementById("catAuditSub").innerHTML =
+      \`<strong>\${d.mismatches.length}</strong> transactions where the parser regex suggests a different category. Scanned \${d.scanned} rows. <br/>
+       <span class="text-on-surface">👉 Check the rows you AGREE with, then click "Apply selected". Click <em>Dismiss</em> per row to ignore a wrong suggestion. Rows are unchecked by default.</span>\`;
     document.getElementById("catAuditSummary").innerHTML = Object.entries(d.by_change)
       .sort((a, b) => b[1] - a[1])
       .map(([k, n]) => \`<span class="px-2 py-0.5 rounded-full text-[10px] font-semibold bg-surface-container text-on-surface">\${k} · <b>\${n}</b></span>\`).join("");
@@ -1218,35 +1216,38 @@ export function renderDashboard(period) {
     body.innerHTML = \`<table class="w-full text-sm">
       <thead class="sticky top-0 bg-surface-container z-10">
         <tr class="text-left text-[10px] uppercase tracking-wider text-outline">
-          <th class="px-3 py-2.5 w-8"><input type="checkbox" id="catAuditSelectAll" checked /></th>
+          <th class="px-3 py-2.5 w-10" title="Select to include in 'Apply selected'"><input type="checkbox" id="catAuditSelectAll" title="Select all" /></th>
           <th class="px-3 py-2.5 w-20">Account</th>
           <th class="px-3 py-2.5 w-24">Date</th>
           <th class="px-3 py-2.5">Merchant</th>
           <th class="px-3 py-2.5 text-right w-20">€</th>
-          <th class="px-3 py-2.5 w-24">Current</th>
-          <th class="px-3 py-2.5 w-24">Suggested</th>
-          <th class="px-3 py-2.5 w-16">Action</th>
+          <th class="px-3 py-2.5 w-28">Current</th>
+          <th class="px-3 py-2.5 w-28">Suggested</th>
+          <th class="px-3 py-2.5 w-32 text-center">Actions</th>
         </tr>
       </thead>
       <tbody>
         \${d.mismatches.map((m) => {
           const curMeta = CAT_META[m.current]   || { emoji: "", label: m.current };
           const sugMeta = CAT_META[m.suggested] || { emoji: "", label: m.suggested };
-          return \`<tr class="border-b border-outline-variant/15">
-            <td class="px-3 py-2"><input type="checkbox" class="catAuditCheck" data-id="\${m.id}" data-suggested="\${m.suggested}" checked /></td>
+          return \`<tr class="border-b border-outline-variant/15" data-row-id="\${m.id}">
+            <td class="px-3 py-2"><input type="checkbox" class="catAuditCheck" data-id="\${m.id}" data-suggested="\${m.suggested}" /></td>
             <td class="px-3 py-2"><span class="px-1.5 py-0.5 rounded text-[10px] font-semibold bg-surface-container">\${m.account}</span></td>
             <td class="px-3 py-2 text-outline tabular-nums whitespace-nowrap">\${m.date || "—"}</td>
             <td class="px-3 py-2 text-on-surface truncate max-w-xs" title="\${escapeHtml(m.description || m.merchant || "")}">\${escapeHtml(m.merchant || "—")}</td>
             <td class="px-3 py-2 text-right tabular-nums \${m.amount < 0 ? "text-error" : "text-primary"}">\${m.amount < 0 ? "−" : "+"}\${fmt(Math.abs(m.amount)).replace("€","")}</td>
             <td class="px-3 py-2 text-[11px]"><span class="px-1.5 py-0.5 rounded bg-surface-container">\${curMeta.emoji} \${curMeta.label}</span></td>
             <td class="px-3 py-2 text-[11px]"><span class="px-1.5 py-0.5 rounded bg-primary-container text-on-primary-container">\${sugMeta.emoji} \${sugMeta.label}</span></td>
-            <td class="px-3 py-2"><button class="catAuditOne text-[10px] px-2 py-1 rounded bg-primary text-on-primary hover:opacity-90" data-id="\${m.id}" data-suggested="\${m.suggested}">Apply</button></td>
+            <td class="px-3 py-2 flex items-center justify-center gap-1">
+              <button class="catAuditOne text-[10px] px-2 py-1 rounded bg-primary text-on-primary hover:opacity-90" data-id="\${m.id}" data-suggested="\${m.suggested}" title="Apply this suggestion">✓ Apply</button>
+              <button class="catAuditDismiss text-[10px] px-2 py-1 rounded bg-surface-container text-outline hover:bg-surface-container-high" data-id="\${m.id}" title="Ignore this suggestion (hide from list)">✗ Dismiss</button>
+            </td>
           </tr>\`;
         }).join("")}
       </tbody>
     </table>\`;
     document.getElementById("catAuditSelectAll").onchange = (e) => {
-      body.querySelectorAll(".catAuditCheck").forEach((c) => c.checked = e.target.checked);
+      body.querySelectorAll(".catAuditCheck").forEach((c) => { if (!c.closest("tr").classList.contains("opacity-40")) c.checked = e.target.checked; });
     };
     body.querySelectorAll(".catAuditOne").forEach((b) => {
       b.onclick = async () => {
@@ -1258,20 +1259,31 @@ export function renderDashboard(period) {
           body: JSON.stringify({ items: [{ id, category: cat }] }),
         });
         if (r.ok) {
-          b.textContent = "✓";
-          b.closest("tr").classList.add("opacity-40");
+          b.textContent = "✓ Done";
+          const row = b.closest("tr");
+          row.classList.add("opacity-40");
+          row.querySelector(".catAuditCheck").checked = false;
+          row.querySelector(".catAuditCheck").disabled = true;
         } else b.disabled = false;
+      };
+    });
+    body.querySelectorAll(".catAuditDismiss").forEach((b) => {
+      b.onclick = () => {
+        const row = b.closest("tr");
+        row.style.display = "none"; // dismissed = just hide, no DB change
       };
     });
   }
   window.openCatAudit = openCatAudit;
-  document.getElementById("catAuditClose").onclick = () => document.getElementById("catAuditModal").classList.add("hidden");
+  const closeCatAudit = () => document.getElementById("catAuditModal").classList.add("hidden");
+  document.getElementById("catAuditClose").onclick  = closeCatAudit;
+  document.getElementById("catAuditClose2").onclick = closeCatAudit;
   document.getElementById("catAuditApplyAll").onclick = async () => {
     const items = [...document.querySelectorAll(".catAuditCheck")]
-      .filter((c) => c.checked)
+      .filter((c) => c.checked && !c.disabled)
       .map((c) => ({ id: parseInt(c.dataset.id, 10), category: c.dataset.suggested }));
-    if (!items.length) { alert("Select at least one"); return; }
-    if (!confirm(\`Apply \${items.length} category changes?\`)) return;
+    if (!items.length) { alert("No rows selected. Check the boxes next to the suggestions you agree with."); return; }
+    if (!confirm(\`Apply \${items.length} category change\${items.length === 1 ? "" : "s"}?\`)) return;
     const r = await fetch("/api/categorization-audit/apply?key=" + encodeURIComponent(key), {
       method: "POST", headers: { "content-type": "application/json" },
       body: JSON.stringify({ items }),
@@ -1279,7 +1291,7 @@ export function renderDashboard(period) {
     const j = await r.json().catch(() => ({}));
     if (!r.ok) { alert("Failed: " + (j.error || r.status)); return; }
     alert(\`Updated \${j.updated} transactions\`);
-    document.getElementById("catAuditModal").classList.add("hidden");
+    closeCatAudit();
     await load(currentData.period);
   };
 
@@ -1794,16 +1806,21 @@ export function renderDashboard(period) {
     // to legacy fixed+variable totals if category budgets aren't set yet.
     const planned = t.category_budget_eur > 0 ? t.category_budget_eur : (t.fixed_eur + t.variable_eur);
 
-    // Dial rings
+    // Spending progress dial: single ring, % of income actually spent.
+    // Green < 60%, amber 60-90%, red > 90%. Center shows €spent + % + available.
     const pctActual  = t.income_eur > 0 ? (t.actual_eur / t.income_eur) * 100 : 0;
-    const pctPlanned = t.income_eur > 0 ? (planned       / t.income_eur) * 100 : 0;
+    const ringClr    = pctActual > 90 ? "text-error" : pctActual > 60 ? "text-warn" : "text-primary";
+    const amtClr     = pctActual > 90 ? "text-error" : pctActual > 60 ? "text-warn" : "text-on-surface";
     document.getElementById("ringOuter").setAttribute("stroke-dashoffset", String(CIRCUM * (1 - Math.min(pctActual, 100) / 100)));
-    document.getElementById("ringInner").setAttribute("stroke-dashoffset", String(CIRCUM * (1 - Math.min(pctPlanned, 100) / 100)));
-    document.getElementById("ringOuter").className.baseVal = "transition-all duration-700 " + (pctActual > 100 ? "text-error" : pctActual > 80 ? "text-warn" : "text-primary");
+    document.getElementById("ringOuter").className.baseVal = "transition-all duration-700 " + ringClr;
 
-    document.getElementById("dialResidual").textContent = fmt(t.residual_eur);
-    document.getElementById("dialResidual").className   = "font-headline text-4xl md:text-5xl font-bold tabular-nums leading-tight " + (t.residual_eur < 0 ? "text-error" : "text-on-surface");
-    document.getElementById("dialPctSpent").textContent = fmtPct(t.pct_spent);
+    const available = Math.max(0, t.income_eur - t.actual_eur);
+    document.getElementById("dialResidual").textContent = fmt(t.actual_eur);
+    document.getElementById("dialResidual").className   = "font-headline text-3xl md:text-4xl font-bold tabular-nums leading-none mt-1 " + amtClr;
+    document.getElementById("dialPctSpent").textContent = fmtPct(pctActual);
+    document.getElementById("dialPctSpent").className   = "mt-1 font-headline text-xl font-bold tabular-nums " + amtClr;
+    document.getElementById("dialIncome").textContent    = fmt(t.income_eur);
+    document.getElementById("dialAvailable").textContent = fmt(available);
 
     // KPI cards
     document.getElementById("kpiIncome").textContent = fmt(t.income_eur);

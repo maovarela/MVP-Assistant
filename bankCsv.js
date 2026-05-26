@@ -402,6 +402,10 @@ const RULES = [
   [/cardif|swisslife|assurance|allianz|axa\b|matmut|maaf|seguro/i,            "fees"],
   [/navigo|comutitres|sncf|ratp|metro|velib|free now|\btmb\b|transmilenio|aerolinea/i, "transport"],
   [/amende\.gouv|amende|impots|tresor public/i,                               "fees"],
+  // Health insurance reimbursements arrive as POSITIVE credits via "VIR SEPA
+  // RECU /DE HENNER". Match these FIRST so they don't get caught by the
+  // generic income rule below.
+  [/henner|axa\s*sant|malakoff|alan\s*sant|\bcpam\b|\bameli\b|s[eé]curit[eé]\s*sociale/i, "health"],
   [/vir sepa recu|edenred|salaire|paie\b/i,                                   "income"],
   [/taptap send|wise|moneygram|western union/i,                               "transfers"],
   [/commissions cotisation|frais bnp|frais bancaire|esprit libre/i,           "fees"],
@@ -412,14 +416,14 @@ const RULES = [
   // Food / restaurants — be generous on European restaurants/bars/cafes
   [/uber\s*eats|deliveroo|just\s*eat|too good to go/i,                        "restaurants"],
   [/\bcafe\b|\bcafé\b|\bbar\b|bistro|bistrot|brasserie|restaurant|resto\b|trattoria|pizzeria|sushi|pizza|tacos|burger|kebab|asador|asado/i, "restaurants"],
-  [/breizh|bouillon|mazarine|relais\b|sea you|kaapeh|be issy|rosa bonheur|bodega|amorino|tko barna|macvol|pret a manger|seggali|teriyaki|crepes|pizzardi|du pain|two tails|bcs co|grupo cob|naturalia|casa de tapas|club sauvage|empanadas|chez\b|tapas/i, "restaurants"],
+  [/breizh|bouillon|mazarine|relais\b|sea you|kaapeh|be issy|rosa bonheur|bodega|amorino|tko barna|macvol|pret a manger|seggali|teriyaki|crepes|pizzardi|du pain|two tails|bcs co|grupo cob|casa de tapas|club sauvage|empanadas|chez\b|tapas/i, "restaurants"],
 
   // Travel & transport
   [/iberia|transavia|air europa|airbnb|hotel|booking|aeropuerto|trainline|ouigo|easyjet|ryanair|wizz/i, "travel"],
   [/uber(?!\s*eats)|bolt|cabify|smovengo|fpx |paris paris|relay|aeroport|cdg|orly|taxi/i,               "transport"],
 
   // Groceries — chains + supermarkets
-  [/monoprix|intermarche|lidl|carrefour|super dominique|suc bosquet|nicolas|fnac monop|inglesa|dollarcity|plaza de andres|bold co|olimpica|ol\W?mpica|aldi|jumbo|farmatodo|miniso|casaideas|mercadona|picard|supermercat|autoservice|bonpreu|consum|day\s*by\s*day/i, "groceries"],
+  [/monoprix|intermarche|lidl|carrefour|super dominique|suc bosquet|nicolas|fnac monop|inglesa|dollarcity|plaza de andres|bold co|olimpica|ol\W?mpica|aldi|jumbo|farmatodo|miniso|casaideas|mercadona|picard|supermercat|autoservice|bonpreu|consum|day\s*by\s*day|naturalia/i, "groceries"],
 
   // Health — pharmacies + drugstore chains + mutuelle reimbursements
   // (HENNER, AXA SANTE, ALAN, MALAKOFF) which arrive as positive credits.
