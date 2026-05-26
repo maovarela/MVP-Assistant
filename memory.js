@@ -172,6 +172,23 @@ if (!messageCols.includes("channel")) {
   db.exec(`ALTER TABLE messages ADD COLUMN channel TEXT NOT NULL DEFAULT 'telegram'`);
 }
 
+// Account balances — opening / closing per (account, period). Used by the
+// cashflow view so we can show real balances instead of just net changes.
+// account = 'bnp' | 'amex' | 'revolut' | future banks. Sourced manually for
+// now (user enters once); future work can auto-extract from BNP PDFs.
+db.exec(`
+  CREATE TABLE IF NOT EXISTS account_balances (
+    id            INTEGER PRIMARY KEY AUTOINCREMENT,
+    account       TEXT NOT NULL,
+    period        TEXT NOT NULL,
+    opening_eur   REAL,
+    closing_eur   REAL,
+    source        TEXT NOT NULL DEFAULT 'manual',
+    updated_at    TEXT NOT NULL DEFAULT (datetime('now')),
+    UNIQUE(account, period)
+  );
+`);
+
 // Migration: match_keyword on fixed_expenses. Without it, multiple budget
 // lines sharing a category split the actuals proportionally — which leads to
 // surprises like "Metro at 199% €119 of €60" when €119 was actually Uber +
@@ -679,6 +696,85 @@ export function setMatchKeyword({ label, match_keyword, period }) {
     db.prepare(`UPDATE fixed_expenses SET match_keyword = ? WHERE label = ?`).run(match_keyword || null, label);
   }
   return db.prepare(`SELECT period, label, match_keyword FROM fixed_expenses WHERE label = ?`).all(label);
+}
+
+// ─── Account cashflow ───────────────────────────────────────────────────────
+// Per-account view: opening + credits - debits = closing.
+// Account is identified by the external_id prefix on transactions:
+//   bnp:* → BNP, amex:* → Amex card, revolut:* → Revolut.
+
+const ACCOUNT_PREFIX = { bnp: "bnp:", amex: "amex:", revolut: "revolut:" };
+
+/** Set or update an account's opening/closing balance for a period. */
+export function setAccountBalance({ account, period, opening_eur, closing_eur, source = "manual" }) {
+  if (!account || !period) throw new Error("account + period required");
+  db.prepare(`
+    INSERT INTO account_balances (account, period, opening_eur, closing_eur, source, updated_at)
+    VALUES (?, ?, ?, ?, ?, datetime('now'))
+    ON CONFLICT(account, period) DO UPDATE SET
+      opening_eur = COALESCE(excluded.opening_eur, account_balances.opening_eur),
+      closing_eur = COALESCE(excluded.closing_eur, account_balances.closing_eur),
+      source      = excluded.source,
+      updated_at  = datetime('now')
+  `).run(account, period, opening_eur ?? null, closing_eur ?? null, source);
+  return db.prepare(`SELECT * FROM account_balances WHERE account = ? AND period = ?`).get(account, period);
+}
+
+/** Cashflow for an account in a period:
+ *    opening + ingresos (credits) - egresos (debits) = closing
+ *  Opening is taken from account_balances, OR inferred as previous period's
+ *  closing if available. Closing is stored OR computed (opening + net).
+ *  Returns null fields when balance can't be inferred. */
+export function getAccountCashflow({ account = "bnp", period }) {
+  const p = period || currentPeriod();
+  const prefix = ACCOUNT_PREFIX[account];
+  if (!prefix) throw new Error(`unknown account: ${account}`);
+
+  const flows = db.prepare(`
+    SELECT
+      ROUND(SUM(CASE WHEN amount>0 THEN amount       ELSE 0 END), 2) AS credits,
+      ROUND(SUM(CASE WHEN amount<0 THEN ABS(amount)  ELSE 0 END), 2) AS debits,
+      COUNT(*)                                                       AS tx_count
+    FROM transactions
+    WHERE external_id LIKE ? AND strftime('%Y-%m', date) = ?
+  `).get(prefix + "%", p);
+
+  const credits = flows.credits || 0;
+  const debits  = flows.debits  || 0;
+  const netChange = Math.round((credits - debits) * 100) / 100;
+
+  const stored = db.prepare(`SELECT * FROM account_balances WHERE account = ? AND period = ?`).get(account, p);
+
+  // Infer opening from previous period's closing if not stored
+  let opening = stored?.opening_eur;
+  let openingSource = stored?.opening_eur != null ? stored.source : null;
+  if (opening == null) {
+    const [yr, mm] = p.split("-").map(Number);
+    const prev = new Date(yr, mm - 2, 1);
+    const prevPeriod = `${prev.getFullYear()}-${String(prev.getMonth() + 1).padStart(2, "0")}`;
+    const prevStored = db.prepare(`SELECT closing_eur FROM account_balances WHERE account = ? AND period = ?`).get(account, prevPeriod);
+    if (prevStored?.closing_eur != null) {
+      opening = prevStored.closing_eur;
+      openingSource = `inferred from ${prevPeriod} closing`;
+    }
+  }
+
+  const closing = stored?.closing_eur != null
+    ? stored.closing_eur
+    : (opening != null ? Math.round((opening + netChange) * 100) / 100 : null);
+
+  return {
+    account,
+    period: p,
+    opening_eur:     opening,
+    credits_eur:     credits,
+    debits_eur:      debits,
+    net_change_eur:  netChange,
+    closing_eur:     closing,
+    tx_count:        flows.tx_count || 0,
+    opening_source:  openingSource || "unset",
+    closing_source:  stored?.closing_eur != null ? stored.source : (closing != null ? "computed" : "unset"),
+  };
 }
 
 /** Change the category of one or many transactions. Returns the count of rows

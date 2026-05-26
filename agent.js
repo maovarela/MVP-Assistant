@@ -21,6 +21,7 @@ import {
   getLlmStats,
   setFxRate, upsertIncome, upsertFixedExpense, insertVariableExpense, upsertDebt,
   getDashboardSummary,
+  setAccountBalance, getAccountCashflow,
 } from "./memory.js";
 import { fetchAndParseRecent, searchEmails, readEmailByUid } from "./email.js";
 import { CATEGORIES } from "./transactions.js";
@@ -246,6 +247,23 @@ const TOOLS = [
       lookback_months:  { type: "number", description: "Cuántos meses pasados para detectar tendencias. Default 6." },
     },
   }),
+  fn("set_account_balance", "Setea balance inicial o final de una cuenta (BNP/Amex/Revolut) para un periodo. Útil cuando el usuario dice 'al 1 de mayo tenía 4205 en BNP'. Si no pasas closing, se calcula automáticamente como opening + ingresos - egresos.", {
+    type: "object",
+    properties: {
+      account:     { type: "string", enum: ["bnp", "amex", "revolut"], description: "Cuenta a setear" },
+      period:      { type: "string", description: "YYYY-MM" },
+      opening_eur: { type: "number", description: "Balance inicial en EUR (opcional)" },
+      closing_eur: { type: "number", description: "Balance final en EUR (opcional, se calcula si no se pasa)" },
+    },
+    required: ["account", "period"],
+  }),
+  fn("get_account_cashflow", "Cashflow de una cuenta en un periodo: balance inicial + ingresos - egresos = balance final. Úsalo cuando el usuario pregunte 'cómo va mi cuenta BNP este mes', 'cuánto entró y salió'.", {
+    type: "object",
+    properties: {
+      account: { type: "string", enum: ["bnp", "amex", "revolut"], description: "Default bnp" },
+      period:  { type: "string", description: "YYYY-MM. Default: mes actual." },
+    },
+  }),
   fn("scan_inbox_now", "Fuerza un scan inmediato del inbox para parsear transacciones nuevas", {
     type: "object",
     properties: {
@@ -365,6 +383,8 @@ async function executeTool(name, input) {
     case "get_budget_summary":  return getDashboardSummary(input.period);
     case "financial_advisor_review":
       return await runAdvisorReview({ period: input.period, lookbackMonths: input.lookback_months });
+    case "set_account_balance":      return setAccountBalance(input);
+    case "get_account_cashflow":     return getAccountCashflow({ account: input.account || "bnp", period: input.period });
     case "scan_inbox_now":      return await fetchAndParseRecent({ daysBack: input.days_back || 1 });
     case "search_emails":       return await searchEmails({ query: input.query, daysBack: input.days_back, limit: input.limit });
     case "read_email":          return await readEmailByUid(input.uid);

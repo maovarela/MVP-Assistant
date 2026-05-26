@@ -33,6 +33,7 @@ import db, {
   getYearSummary, listYears, listCategoryTransactions,
   setMatchKeyword, appendToMatchKeyword,
   getAuditReport, updateTransactionCategory,
+  getAccountCashflow, setAccountBalance,
 } from "./memory.js";
 import { categorize as keywordCategorize } from "./bankCsv.js";
 import { refreshCurrentMonthFx } from "./fx.js";
@@ -368,6 +369,32 @@ app.post("/api/match-keyword", express.json({ limit: "10kb" }), (req, res) => {
   } catch (err) {
     console.error("[match-keyword]", err);
     res.status(500).json({ error: err.message });
+  }
+});
+
+// Cash-flow for an account in a period (opening + credits - debits = closing)
+app.get("/api/cashflow.json", (req, res) => {
+  if (!requireKey(req, res, "DASH_KEY")) return;
+  try {
+    const account = (req.query.account || "bnp").toString();
+    const period  = (req.query.period  || "").toString().match(/^\d{4}-\d{2}$/) ? req.query.period : undefined;
+    res.json(getAccountCashflow({ account, period }));
+  } catch (err) {
+    console.error("[cashflow]", err);
+    res.status(400).json({ error: err.message });
+  }
+});
+
+// Set/update an account's opening or closing balance for a period.
+// Body: { account: "bnp", period: "2026-04", opening_eur?: 1234.56, closing_eur?: 2345.67 }
+app.post("/api/account-balance", express.json({ limit: "10kb" }), (req, res) => {
+  if (!requireKey(req, res, "DASH_KEY")) return;
+  try {
+    const row = setAccountBalance(req.body || {});
+    res.json({ ok: true, row });
+  } catch (err) {
+    console.error("[account-balance]", err);
+    res.status(400).json({ error: err.message });
   }
 });
 

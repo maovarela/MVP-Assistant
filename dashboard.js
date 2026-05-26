@@ -63,7 +63,7 @@ export function renderDashboard(period) {
     body { min-height: 100dvh; }
     select { background-image: none; padding-right: 1.5rem; }
   </style>
-</head><body class="bg-background text-on-background font-body antialiased min-h-screen pb-24">
+</head><body class="bg-background text-on-background font-body antialiased min-h-screen pb-8">
 
 <!-- HEADER (compact, sticky) -->
 <header class="sticky top-0 z-50 flex items-center justify-between px-4 py-3 bg-surface/85 backdrop-blur-md border-b border-outline-variant/20">
@@ -156,6 +156,20 @@ export function renderDashboard(period) {
     <!-- populated by JS -->
   </section>
 
+  <!-- Cuenta BNP cashflow -->
+  <section class="rounded-2xl bg-surface-container-lowest border border-outline-variant/15 overflow-hidden">
+    <div class="flex items-center justify-between px-4 py-3 border-b border-outline-variant/15">
+      <div class="flex items-center gap-2">
+        <span class="material-symbols-outlined text-secondary" style="font-size: 18px;">account_balance</span>
+        <h3 class="font-headline font-bold text-sm tracking-tight">Cuenta BNP <span id="bnpPeriodLabel" class="text-outline">—</span></h3>
+      </div>
+      <button id="bnpEditBtn" class="text-xs text-primary font-semibold hover:underline">Editar balances</button>
+    </div>
+    <div class="grid grid-cols-4 gap-px bg-outline-variant/20" id="bnpCards">
+      <!-- populated by JS -->
+    </div>
+  </section>
+
   <!-- YTD strip — consolidado del año hasta ahora -->
   <section class="rounded-2xl bg-surface-container-lowest border border-outline-variant/15 overflow-hidden">
     <div class="flex items-center justify-between px-4 py-3 border-b border-outline-variant/15">
@@ -239,6 +253,31 @@ export function renderDashboard(period) {
   </div>
 </div>
 
+<!-- BNP balance edit modal -->
+<div id="bnpModal" class="hidden fixed inset-0 z-[100] bg-black/40 flex items-center justify-center p-4">
+  <div class="bg-surface-container-lowest w-full max-w-md rounded-2xl overflow-hidden">
+    <div class="px-5 py-4 border-b border-outline-variant/20">
+      <div class="font-headline font-bold text-lg">Balances BNP</div>
+      <div class="text-xs text-outline" id="bnpModalPeriod">—</div>
+    </div>
+    <div class="p-5 space-y-4">
+      <div>
+        <label class="text-xs font-bold uppercase tracking-wider text-outline">Balance inicial (€)</label>
+        <input id="bnpOpening" type="number" step="0.01" placeholder="ej. 4205.36" class="mt-1 w-full px-3 py-2 bg-surface-container rounded-lg border border-outline-variant/30 focus:ring-2 focus:ring-primary focus:outline-none text-sm tabular-nums" />
+      </div>
+      <div>
+        <label class="text-xs font-bold uppercase tracking-wider text-outline">Balance final (€) — opcional</label>
+        <input id="bnpClosing" type="number" step="0.01" placeholder="se calcula automáticamente" class="mt-1 w-full px-3 py-2 bg-surface-container rounded-lg border border-outline-variant/30 focus:ring-2 focus:ring-primary focus:outline-none text-sm tabular-nums" />
+      </div>
+      <p class="text-[11px] text-outline">Si dejas el balance final vacío, se calcula como opening + ingresos - egresos. Los meses siguientes heredan automáticamente.</p>
+    </div>
+    <div class="px-5 py-3 border-t border-outline-variant/20 flex justify-end gap-2">
+      <button id="bnpCancel" class="px-4 py-2 rounded-lg text-sm font-medium text-on-surface hover:bg-surface-container">Cancelar</button>
+      <button id="bnpSave"   class="px-4 py-2 rounded-lg text-sm font-semibold bg-primary text-on-primary hover:opacity-90">Guardar</button>
+    </div>
+  </div>
+</div>
+
 <!-- Audit modal -->
 <div id="auditModal" class="hidden fixed inset-0 z-[100] bg-black/40 flex items-end md:items-center justify-center p-0 md:p-4">
   <div class="bg-surface-container-lowest w-full md:max-w-3xl md:rounded-2xl rounded-t-2xl max-h-[90vh] overflow-hidden flex flex-col">
@@ -278,27 +317,6 @@ export function renderDashboard(period) {
   </div>
 </div>
 
-<!-- BOTTOM NAV -->
-<nav class="fixed bottom-0 left-0 right-0 z-50 bg-surface/90 backdrop-blur-xl px-6 py-2.5 border-t border-outline-variant/20">
-  <div class="max-w-md mx-auto flex items-center justify-between">
-    <a class="flex flex-col items-center gap-0.5 text-primary" href="#">
-      <span class="material-symbols-outlined" style="font-variation-settings: 'FILL' 1; font-size: 22px;">dashboard</span>
-      <span class="text-[10px] font-bold uppercase tracking-widest">Resumen</span>
-    </a>
-    <a class="flex flex-col items-center gap-0.5 text-outline hover:text-on-surface transition-colors" href="#gastosTbl">
-      <span class="material-symbols-outlined" style="font-size: 22px;">view_list</span>
-      <span class="text-[10px] font-medium uppercase tracking-widest">Detalle</span>
-    </a>
-    <a class="flex flex-col items-center gap-0.5 text-outline hover:text-on-surface transition-colors" href="#donut">
-      <span class="material-symbols-outlined" style="font-size: 22px;">pie_chart</span>
-      <span class="text-[10px] font-medium uppercase tracking-widest">Charts</span>
-    </a>
-    <a class="flex flex-col items-center gap-0.5 text-outline hover:text-on-surface transition-colors" href="#" onclick="window.location.reload();return false;">
-      <span class="material-symbols-outlined" style="font-size: 22px;">refresh</span>
-      <span class="text-[10px] font-medium uppercase tracking-widest">Refrescar</span>
-    </a>
-  </div>
-</nav>
 
 <script>
   const key = new URLSearchParams(location.search).get("key");
@@ -346,6 +364,42 @@ export function renderDashboard(period) {
     loadYear(year);
     // Fire-and-forget audit summary for the button badge
     loadAuditBadge(currentData.period);
+    // BNP cashflow panel
+    loadBnpCashflow(currentData.period);
+  }
+
+  async function loadBnpCashflow(period) {
+    const r = await fetch("/api/cashflow.json?key=" + encodeURIComponent(key) + "&account=bnp&period=" + period);
+    if (!r.ok) return;
+    const d = await r.json();
+    document.getElementById("bnpPeriodLabel").textContent = d.period;
+    const opening = d.opening_eur;
+    const closing = d.closing_eur;
+    const credits = d.credits_eur;
+    const debits  = d.debits_eur;
+    const netClr  = d.net_change_eur >= 0 ? "text-primary" : "text-error";
+    const unset   = '<span class="text-outline italic text-xs">click "Editar"</span>';
+    document.getElementById("bnpCards").innerHTML = [
+      \`<div class="bg-surface-container-lowest p-3">
+        <div class="text-[10px] uppercase tracking-wider text-outline">Balance inicial</div>
+        <div class="font-headline text-lg font-bold tabular-nums mt-0.5 text-on-surface">\${opening != null ? fmt(opening) : unset}</div>
+       </div>\`,
+      \`<div class="bg-surface-container-lowest p-3">
+        <div class="text-[10px] uppercase tracking-wider text-outline">+ Ingresos</div>
+        <div class="font-headline text-lg font-bold tabular-nums mt-0.5 text-primary">\${fmt(credits)}</div>
+        <div class="text-[10px] text-outline mt-0.5">\${d.tx_count} tx</div>
+       </div>\`,
+      \`<div class="bg-surface-container-lowest p-3">
+        <div class="text-[10px] uppercase tracking-wider text-outline">− Egresos</div>
+        <div class="font-headline text-lg font-bold tabular-nums mt-0.5 text-error">\${fmt(debits)}</div>
+        <div class="text-[10px] \${netClr} mt-0.5">net \${d.net_change_eur >= 0 ? "+" : ""}\${fmt(d.net_change_eur)}</div>
+       </div>\`,
+      \`<div class="bg-surface-container-lowest p-3">
+        <div class="text-[10px] uppercase tracking-wider text-outline">Balance final</div>
+        <div class="font-headline text-lg font-bold tabular-nums mt-0.5 text-on-surface">\${closing != null ? fmt(closing) : unset}</div>
+        <div class="text-[10px] text-outline mt-0.5">\${d.closing_source}</div>
+       </div>\`,
+    ].join("");
   }
 
   let auditData = null;
@@ -482,6 +536,40 @@ export function renderDashboard(period) {
       load(currentData.period);  // refresh dashboard
     } else {
       alert("Error guardando: " + r.status);
+    }
+  };
+
+  // ─── BNP balance edit modal ──────────────────────────────────────────────
+  document.getElementById("bnpEditBtn").onclick = async () => {
+    const period = currentData?.period;
+    if (!period) return;
+    document.getElementById("bnpModalPeriod").textContent = "Periodo " + period;
+    // Pre-fill with current values
+    const r = await fetch("/api/cashflow.json?key=" + encodeURIComponent(key) + "&account=bnp&period=" + period);
+    const d = await r.json();
+    document.getElementById("bnpOpening").value = d.opening_source === "manual" || d.opening_source === "unset" ? (d.opening_eur ?? "") : "";
+    document.getElementById("bnpClosing").value = d.closing_source === "manual" ? (d.closing_eur ?? "") : "";
+    document.getElementById("bnpModal").classList.remove("hidden");
+    setTimeout(() => document.getElementById("bnpOpening").focus(), 50);
+  };
+  document.getElementById("bnpCancel").onclick = () => document.getElementById("bnpModal").classList.add("hidden");
+  document.getElementById("bnpSave").onclick = async () => {
+    const opening = document.getElementById("bnpOpening").value.trim();
+    const closing = document.getElementById("bnpClosing").value.trim();
+    const r = await fetch("/api/account-balance?key=" + encodeURIComponent(key), {
+      method: "POST", headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        account: "bnp",
+        period: currentData.period,
+        opening_eur: opening === "" ? null : parseFloat(opening),
+        closing_eur: closing === "" ? null : parseFloat(closing),
+      }),
+    });
+    if (r.ok) {
+      document.getElementById("bnpModal").classList.add("hidden");
+      loadBnpCashflow(currentData.period);
+    } else {
+      alert("Error: " + r.status);
     }
   };
 
