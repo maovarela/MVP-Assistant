@@ -188,6 +188,12 @@ const BNP_SECTION_SIGN = {
 
 const BNP_INTERNAL_TX_RX = /\b(american\s*express|\bamex\b|revolut|mastercard|carte\s*master|visa\s*carte)\b/i;
 
+// Refund/reimbursement lines inside a debit section (PAIEMENTS PAR CARTE).
+// BNP doesn't put refunds in their own section — they appear in the card
+// payments section but with a "REMBOURST CB" / "REMBOURSEMENT" / "AVOIR" prefix.
+// Force these to positive sign regardless of section.
+const BNP_REFUND_RX = /^(REMBOURST|REMBOURSEMENT|AVOIR)\b/i;
+
 const FR_MONTHS = {
   "janvier":"01", "février":"02", "fevrier":"02", "mars":"03", "avril":"04",
   "mai":"05", "juin":"06", "juillet":"07", "août":"08", "aout":"08",
@@ -339,11 +345,15 @@ export function parseBnpPdfText(text) {
 
     const desc = descRaw.trim().replace(/\s+/g, " ");
     const isInternal = BNP_INTERNAL_TX_RX.test(desc);
+    // Refunds appear inside debit sections (PAIEMENTS PAR CARTE) but should
+    // be credited. Override the section sign per-row when the description
+    // matches a refund prefix.
+    const rowSign = BNP_REFUND_RX.test(desc) ? +1 : currentSign;
 
     out.push({
       date,
       merchant:    desc,
-      amount:      currentSign * amount,
+      amount:      rowSign * amount,
       currency:    "EUR",
       description: desc,
       external_id: null,    // caller hashes
