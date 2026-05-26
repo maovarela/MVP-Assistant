@@ -1077,6 +1077,8 @@ export function getDashboardSummary(period) {
     },
     by_category_actual: byCategoryActual,
     by_category_budget: byCategoryBudget,
+    monthly_category_spend: getMonthlyCategorySpend({ months: 6 }),
+    bnp_balance_history:   getAccountClosingHistory({ account: "bnp", months: 12 }),
     spend_pace: getSpendPace(),
   };
 }
@@ -1160,6 +1162,43 @@ export function getAuditReport(period) {
     claimed_by_line: [...claimedByLine.values()].filter((l) => l.count > 0).sort((a, b) => b.total - a.total),
     fixed_labels: fixed.map((f) => ({ label: f.label, category: f.category, match_keyword: f.match_keyword || null })),
   };
+}
+
+/** Spending broken down by month × category for the last N months.
+ *  Used by the stacked-area trend chart. Returns:
+ *    [{ month: '2026-04', categories: { restaurants: 421, groceries: 312, ... } }, ...]
+ *  ordered chronologically (oldest first). */
+export function getMonthlyCategorySpend({ months = 6 } = {}) {
+  const rows = db.prepare(`
+    SELECT strftime('%Y-%m', date)         AS month,
+           COALESCE(category, 'uncategorised') AS category,
+           ROUND(SUM(ABS(amount)), 2)      AS total
+    FROM transactions
+    WHERE amount < 0 AND is_internal_transfer = 0
+    GROUP BY month, category
+    ORDER BY month DESC
+  `).all();
+  // Group by month
+  const byMonth = {};
+  for (const r of rows) {
+    byMonth[r.month] = byMonth[r.month] || {};
+    byMonth[r.month][r.category] = r.total;
+  }
+  const sortedMonths = Object.keys(byMonth).sort().reverse().slice(0, months).reverse();
+  return sortedMonths.map((m) => ({ month: m, categories: byMonth[m] }));
+}
+
+/** History of an account's closing balance per month. Used by the
+ *  cash-position line chart. */
+export function getAccountClosingHistory({ account = "bnp", months = 12 } = {}) {
+  const rows = db.prepare(`
+    SELECT period, opening_eur, closing_eur, source
+    FROM account_balances
+    WHERE account = ?
+    ORDER BY period DESC
+    LIMIT ?
+  `).all(account, months);
+  return rows.reverse();  // oldest first
 }
 
 /** Year-to-date (or any year) consolidated summary across all months of the

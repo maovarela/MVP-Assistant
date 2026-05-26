@@ -216,19 +216,58 @@ export function renderDashboard(period) {
     </div>
   </section>
 
-  <!-- CHARTS -->
-  <section class="grid grid-cols-1 md:grid-cols-2 gap-4">
-    <div class="rounded-2xl bg-surface-container-lowest p-5 border border-outline-variant/15">
-      <div class="flex items-center justify-between mb-2">
-        <div class="text-sm font-semibold text-on-surface">Gasto real por categoría</div>
-        <div class="text-[10px] text-outline">Click para detalle</div>
+  <!-- CHARTS — CFO-grade layout -->
+
+  <!-- ROW 1: Variance (left, wide) + Donut (right, compact) -->
+  <section class="grid grid-cols-1 lg:grid-cols-3 gap-4">
+    <div class="lg:col-span-2 rounded-2xl bg-surface-container-lowest p-5 border border-outline-variant/15">
+      <div class="flex items-center justify-between mb-3">
+        <div>
+          <div class="text-sm font-semibold text-on-surface">Adherencia presupuestal</div>
+          <div class="text-[11px] text-outline">Real vs planeado por categoría, sorted por monto</div>
+        </div>
+        <div class="flex items-center gap-2 text-[10px]">
+          <span class="flex items-center gap-1"><span class="w-2 h-2 bg-primary rounded-full"></span>Bajo</span>
+          <span class="flex items-center gap-1"><span class="w-2 h-2 bg-warn rounded-full"></span>Cerca</span>
+          <span class="flex items-center gap-1"><span class="w-2 h-2 bg-error rounded-full"></span>Sobre</span>
+        </div>
       </div>
-      <canvas id="donut" style="max-height:260px"></canvas>
+      <canvas id="varianceBar" style="max-height: 360px"></canvas>
     </div>
-    <div class="rounded-2xl bg-surface-container-lowest p-5 border border-outline-variant/15">
-      <div class="text-sm font-semibold text-on-surface mb-2">Budget vs real</div>
-      <canvas id="bar" style="max-height:260px"></canvas>
+    <div class="rounded-2xl bg-surface-container-lowest p-5 border border-outline-variant/15 flex flex-col">
+      <div class="text-sm font-semibold text-on-surface mb-2">Mix de gasto</div>
+      <div class="relative flex-1 min-h-[260px]">
+        <canvas id="donut"></canvas>
+        <div class="absolute inset-0 flex flex-col items-center justify-center pointer-events-none">
+          <div class="text-[10px] uppercase tracking-wider text-outline">Total real</div>
+          <div class="font-headline text-2xl font-bold tabular-nums" id="donutCenter">—</div>
+          <div class="text-[11px] text-outline mt-1" id="donutSubtitle">—</div>
+        </div>
+      </div>
     </div>
+  </section>
+
+  <!-- ROW 2: 6-month stacked trend (full width) -->
+  <section class="rounded-2xl bg-surface-container-lowest p-5 border border-outline-variant/15">
+    <div class="flex items-center justify-between mb-3">
+      <div>
+        <div class="text-sm font-semibold text-on-surface">Evolución del gasto (últimos 6 meses)</div>
+        <div class="text-[11px] text-outline">Composición por categoría — detectá shifts y growth</div>
+      </div>
+    </div>
+    <canvas id="trendStack" style="max-height: 320px"></canvas>
+  </section>
+
+  <!-- ROW 3: Cash position (full width or split) -->
+  <section class="rounded-2xl bg-surface-container-lowest p-5 border border-outline-variant/15">
+    <div class="flex items-center justify-between mb-3">
+      <div>
+        <div class="text-sm font-semibold text-on-surface">Posición cash BNP</div>
+        <div class="text-[11px] text-outline">Balance de cierre por mes — accumulando o quemando</div>
+      </div>
+      <div id="cashTrend" class="text-xs font-semibold"></div>
+    </div>
+    <canvas id="cashLine" style="max-height: 240px"></canvas>
   </section>
 
 </main>
@@ -892,7 +931,24 @@ export function renderDashboard(period) {
         </tr>\`).join("");
     }
 
-    // Donut
+    renderCharts(d);
+  }
+
+  // ─── CFO-grade charts ───────────────────────────────────────────────────
+  let trendChart, cashChart;
+  const PALETTE = ["#006d32","#0059bb","#a76900","#ba1a1a","#565e74","#bc8cff","#0070ea","#d29922","#ec775c","#3fb950","#7d56f3","#db61a2","#8b949e"];
+  const FONT = { size: 11, family: "Inter" };
+
+  function renderCharts(d) {
+    // ── DONUT: dual ring + center total ────────────────────────────────
+    const total = d.by_category_actual.reduce((s, r) => s + r.total, 0);
+    document.getElementById("donutCenter").textContent = fmt(total);
+    const plannedTotal = d.totals.fixed_eur + d.totals.variable_eur;
+    const pctOfPlan = plannedTotal > 0 ? Math.round((total / plannedTotal) * 1000) / 10 : null;
+    const subClr = pctOfPlan == null ? "text-outline" : pctOfPlan > 100 ? "text-error" : pctOfPlan > 80 ? "text-warn" : "text-primary";
+    document.getElementById("donutSubtitle").textContent = pctOfPlan != null ? \`\${pctOfPlan}% del plan\` : "Sin plan";
+    document.getElementById("donutSubtitle").className = "text-[11px] mt-1 " + subClr;
+
     if (donutChart) donutChart.destroy();
     donutChart = new Chart(document.getElementById("donut").getContext("2d"), {
       type: "doughnut",
@@ -900,43 +956,156 @@ export function renderDashboard(period) {
         labels: d.by_category_actual.map((r) => r.category),
         datasets: [{
           data: d.by_category_actual.map((r) => r.total),
-          backgroundColor: ["#006d32","#0059bb","#a76900","#ba1a1a","#565e74","#30e375","#0070ea","#d29922","#bc8cff","#ec775c","#3fb950"],
-          borderColor: "#ffffff", borderWidth: 2,
+          backgroundColor: d.by_category_actual.map((_, i) => PALETTE[i % PALETTE.length]),
+          borderColor: "#ffffff", borderWidth: 2, hoverOffset: 6,
         }],
       },
       options: {
-        plugins: { legend: { position: "right", labels: { boxWidth: 10, font: { size: 11, family: "Inter" } }, onClick: (e, item) => openCategoryDrill(item.text, d.period) } },
-        cutout: "60%", responsive: true, maintainAspectRatio: false,
+        responsive: true, maintainAspectRatio: false, cutout: "72%",
+        plugins: {
+          legend: {
+            position: "bottom",
+            labels: { boxWidth: 10, padding: 6, font: FONT, generateLabels: (chart) => {
+              const data = chart.data;
+              return data.labels.map((label, i) => {
+                const val = data.datasets[0].data[i];
+                const pct = total > 0 ? Math.round(val / total * 100) : 0;
+                return {
+                  text: \`\${label} · \${fmt(val)} (\${pct}%)\`,
+                  fillStyle: data.datasets[0].backgroundColor[i],
+                  strokeStyle: data.datasets[0].backgroundColor[i],
+                  hidden: false, index: i,
+                };
+              });
+            }},
+            onClick: (e, item) => openCategoryDrill(item.text.split(" · ")[0], d.period),
+          },
+          tooltip: { callbacks: { label: (ctx) => \`\${ctx.label}: \${fmt(ctx.parsed)} (\${(ctx.parsed / total * 100).toFixed(1)}%)\` } },
+        },
         onClick: (evt, elements) => {
           if (!elements.length) return;
-          const idx = elements[0].index;
-          const cat = d.by_category_actual[idx].category;
-          openCategoryDrill(cat, d.period);
+          openCategoryDrill(d.by_category_actual[elements[0].index].category, d.period);
         },
       },
     });
 
-    // Bar
+    // ── VARIANCE BARS: horizontal, sorted, color-coded ─────────────────
+    const planMap = {};
+    for (const f of d.fixed)    if (f.category) planMap[f.category] = (planMap[f.category] || 0) + f.budget_eur;
+    for (const v of d.variable) if (v.category) planMap[v.category] = (planMap[v.category] || 0) + v.amount_eur;
+    const actualMap = Object.fromEntries(d.by_category_actual.map((r) => [r.category, r.total]));
+    const allCats = Array.from(new Set([...Object.keys(planMap), ...Object.keys(actualMap)]));
+    const variance = allCats.map((c) => ({
+      category: c, planned: planMap[c] || 0, actual: actualMap[c] || 0,
+      pct: planMap[c] > 0 ? (actualMap[c] || 0) / planMap[c] * 100 : null,
+    })).filter((x) => x.planned > 0 || x.actual > 0)
+       .sort((a, b) => Math.max(b.planned, b.actual) - Math.max(a.planned, a.actual));
+
+    const barColor = variance.map((v) => v.pct == null ? "#565e74" : v.pct > 100 ? "#ba1a1a" : v.pct > 80 ? "#a76900" : "#006d32");
+
     if (barChart) barChart.destroy();
-    const cats = Array.from(new Set([...d.by_category_actual.map((r) => r.category), ...d.by_category_budget.map((r) => r.category)]));
-    const actualByCat = Object.fromEntries(d.by_category_actual.map((r) => [r.category, r.total]));
-    const budgetByCat = Object.fromEntries(d.by_category_budget.map((r) => [r.category, r.total]));
-    barChart = new Chart(document.getElementById("bar").getContext("2d"), {
+    barChart = new Chart(document.getElementById("varianceBar").getContext("2d"), {
       type: "bar",
       data: {
-        labels: cats,
+        labels: variance.map((v) => v.category),
         datasets: [
-          { label: "Budget", data: cats.map((c) => budgetByCat[c] || 0), backgroundColor: "#0059bb", borderRadius: 4 },
-          { label: "Real",   data: cats.map((c) => actualByCat[c] || 0), backgroundColor: "#006d32", borderRadius: 4 },
+          { label: "Real",     data: variance.map((v) => v.actual),  backgroundColor: barColor, borderRadius: 4, barPercentage: 0.85, categoryPercentage: 0.85 },
+          { label: "Planeado", data: variance.map((v) => v.planned), backgroundColor: "rgba(0,89,187,0.20)", borderColor: "#0059bb", borderWidth: 1, borderDash: [3,3], borderRadius: 4, barPercentage: 0.85, categoryPercentage: 0.85 },
         ],
       },
       options: {
-        plugins: { legend: { labels: { font: { size: 11, family: "Inter" } } } },
-        scales: {
-          x: { ticks: { font: { size: 10, family: "Inter" } }, grid: { display: false } },
-          y: { ticks: { font: { size: 10, family: "Inter" } }, grid: { color: "#e5eeff" }, beginAtZero: true },
+        indexAxis: "y", responsive: true, maintainAspectRatio: false,
+        plugins: {
+          legend: { position: "top", labels: { font: FONT, boxWidth: 10 } },
+          tooltip: { callbacks: { label: (ctx) => \`\${ctx.dataset.label}: \${fmt(ctx.parsed.x)}\${ctx.datasetIndex === 0 && variance[ctx.dataIndex].pct != null ? " (" + variance[ctx.dataIndex].pct.toFixed(0) + "%)" : ""}\` } },
         },
+        scales: {
+          x: { ticks: { font: FONT, callback: (v) => "€" + v }, grid: { color: "#e5eeff" }, beginAtZero: true },
+          y: { ticks: { font: FONT }, grid: { display: false } },
+        },
+        onClick: (evt, elements) => {
+          if (!elements.length) return;
+          openCategoryDrill(variance[elements[0].index].category, d.period);
+        },
+      },
+    });
+
+    // ── STACKED AREA: 6-month trend by category ────────────────────────
+    const trendData = d.monthly_category_spend || [];
+    const catTotals = {};
+    for (const m of trendData) for (const [c, v] of Object.entries(m.categories)) catTotals[c] = (catTotals[c] || 0) + v;
+    const topCats = Object.entries(catTotals).sort((a, b) => b[1] - a[1]).slice(0, 8).map((x) => x[0]);
+    const labels  = trendData.map((m) => m.month);
+    const datasets = topCats.map((cat, i) => ({
+      label: cat,
+      data: trendData.map((m) => m.categories[cat] || 0),
+      backgroundColor: PALETTE[i % PALETTE.length] + "cc",
+      borderColor:     PALETTE[i % PALETTE.length],
+      borderWidth: 1, fill: true, tension: 0.3, pointRadius: 2,
+    }));
+    const otherCats = Object.keys(catTotals).filter((c) => !topCats.includes(c));
+    if (otherCats.length) {
+      datasets.push({
+        label: "Otros",
+        data: trendData.map((m) => otherCats.reduce((s, c) => s + (m.categories[c] || 0), 0)),
+        backgroundColor: "#8b949ecc", borderColor: "#8b949e",
+        borderWidth: 1, fill: true, tension: 0.3, pointRadius: 2,
+      });
+    }
+
+    if (trendChart) trendChart.destroy();
+    trendChart = new Chart(document.getElementById("trendStack").getContext("2d"), {
+      type: "line",
+      data: { labels, datasets },
+      options: {
         responsive: true, maintainAspectRatio: false,
+        interaction: { mode: "index", intersect: false },
+        plugins: {
+          legend: { position: "bottom", labels: { boxWidth: 10, padding: 8, font: FONT } },
+          tooltip: { callbacks: { label: (ctx) => \`\${ctx.dataset.label}: \${fmt(ctx.parsed.y)}\` } },
+        },
+        scales: {
+          x: { ticks: { font: FONT }, grid: { display: false } },
+          y: { ticks: { font: FONT, callback: (v) => "€" + (v >= 1000 ? (v/1000).toFixed(1) + "k" : v) }, grid: { color: "#e5eeff" }, stacked: true, beginAtZero: true },
+        },
+      },
+    });
+
+    // ── CASH POSITION LINE ─────────────────────────────────────────────
+    const cashData = d.bnp_balance_history || [];
+    const cashLabels = cashData.map((r) => r.period);
+    const closings = cashData.map((r) => r.closing_eur);
+    let trend = "";
+    if (cashData.length >= 2) {
+      const first = closings[0], last = closings[closings.length - 1];
+      const delta = last - first;
+      const trendClr = delta >= 0 ? "text-primary" : "text-error";
+      trend = \`<span class="\${trendClr}">\${delta >= 0 ? "↑" : "↓"} \${fmt(Math.abs(delta))} desde \${cashLabels[0]}</span>\`;
+    }
+    document.getElementById("cashTrend").innerHTML = trend;
+
+    if (cashChart) cashChart.destroy();
+    cashChart = new Chart(document.getElementById("cashLine").getContext("2d"), {
+      type: "line",
+      data: {
+        labels: cashLabels,
+        datasets: [{
+          label: "Closing BNP",
+          data: closings,
+          borderColor: "#0059bb", backgroundColor: "rgba(0,89,187,0.1)",
+          borderWidth: 2, fill: true, tension: 0.3, pointRadius: 4, pointBackgroundColor: "#0059bb",
+        }],
+      },
+      options: {
+        responsive: true, maintainAspectRatio: false,
+        plugins: {
+          legend: { display: false },
+          tooltip: { callbacks: { label: (ctx) => "Cierre " + fmt(ctx.parsed.y) } },
+        },
+        scales: {
+          x: { ticks: { font: FONT }, grid: { display: false } },
+          y: { ticks: { font: FONT, callback: (v) => "€" + (v >= 1000 ? (v/1000).toFixed(1) + "k" : v) }, grid: { color: "#e5eeff" }, beginAtZero: false },
+        },
       },
     });
   }
