@@ -1102,6 +1102,7 @@ export function getDashboardSummary(period) {
     by_category_budget: byCategoryBudget,
     monthly_category_spend: getMonthlyCategorySpend({ months: 6 }),
     bnp_balance_history:   getAccountClosingHistory({ account: "bnp", months: 12 }),
+    recent_months_comparison: getRecentMonthsComparison({ months: 3 }),
     spend_pace: getSpendPace(),
   };
 }
@@ -1211,6 +1212,44 @@ export function getMonthlyCategorySpend({ months = 6 } = {}) {
   return sortedMonths.map((m) => ({ month: m, categories: byMonth[m] }));
 }
 
+/** Compare last N months of spending per category. Returns:
+ *    {
+ *      months: ['2026-02','2026-03','2026-04'],
+ *      categories: [{
+ *        category, totals: [m1, m2, m3], delta_abs: m3-m1, delta_pct: ...,
+ *      }, ...],
+ *      summary: { total_per_month: [a,b,c], total_delta_pct: x }
+ *    }
+ *  Sorted by absolute delta DESC so the biggest movers come first. */
+export function getRecentMonthsComparison({ months = 3 } = {}) {
+  const monthSpend = getMonthlyCategorySpend({ months });
+  if (monthSpend.length < 2) return { months: monthSpend.map((m) => m.month), categories: [], summary: {} };
+  const monthList = monthSpend.map((m) => m.month);
+
+  // Union of all categories
+  const cats = new Set();
+  for (const m of monthSpend) for (const c of Object.keys(m.categories)) cats.add(c);
+
+  const categoryRows = [...cats].map((cat) => {
+    const totals = monthSpend.map((m) => Math.round((m.categories[cat] || 0) * 100) / 100);
+    const first = totals[0], last = totals[totals.length - 1];
+    const delta = Math.round((last - first) * 100) / 100;
+    const pct = first > 0 ? Math.round((delta / first) * 1000) / 10 : null;
+    return { category: cat, totals, delta_abs: delta, delta_pct: pct };
+  }).sort((a, b) => Math.abs(b.delta_abs) - Math.abs(a.delta_abs));
+
+  const totalsPerMonth = monthSpend.map((m) => Math.round(Object.values(m.categories).reduce((s, v) => s + v, 0) * 100) / 100);
+  const totalDeltaPct = totalsPerMonth[0] > 0
+    ? Math.round(((totalsPerMonth[totalsPerMonth.length - 1] - totalsPerMonth[0]) / totalsPerMonth[0]) * 1000) / 10
+    : null;
+
+  return {
+    months: monthList,
+    categories: categoryRows,
+    summary: { total_per_month: totalsPerMonth, total_delta_pct: totalDeltaPct },
+  };
+}
+
 /** History of an account's closing balance per month. Used by the
  *  cash-position line chart. */
 export function getAccountClosingHistory({ account = "bnp", months = 12 } = {}) {
@@ -1318,10 +1357,15 @@ export function listCategoryTransactions({ category, period }) {
       : "";
   const args  = period ? [category, period] : [category];
   const rows  = db.prepare(`
-    SELECT id, date, merchant, amount, currency, source, description
+    SELECT id, date, merchant, amount, currency, source, description, external_id
     FROM transactions WHERE category = ? ${where}
     ORDER BY ABS(amount) DESC LIMIT 500
   `).all(...args);
+  // Derive a human-readable account from the external_id prefix
+  for (const r of rows) {
+    const prefix = (r.external_id || "").split(":")[0];
+    r.account = ({ bnp: "BNP", amex: "Amex", revolut: "Revolut", csv: "CSV", pdf: "BNP", email: "Email" })[prefix] || prefix || "—";
+  }
   return {
     category, period: period || "all-time",
     count: rows.length,

@@ -68,10 +68,16 @@ export function renderDashboard(period) {
 <!-- HEADER (compact, sticky) -->
 <header class="sticky top-0 z-50 flex items-center justify-between px-4 py-3 bg-surface/85 backdrop-blur-md border-b border-outline-variant/20">
   <div class="flex items-center gap-2.5">
-    <div class="w-9 h-9 rounded-full bg-primary-container flex items-center justify-center">
-      <span class="material-symbols-outlined text-on-primary-container" style="font-size:20px">savings</span>
+    <!-- Logo: minimalist geometric mark + wordmark in Space Grotesk -->
+    <div class="w-9 h-9 rounded-lg bg-on-surface flex items-center justify-center">
+      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+        <path d="M3 17V21H21V17M3 17L8 8L13 14L17 6L21 11" stroke="white" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+      </svg>
     </div>
-    <div class="font-headline font-bold text-base tracking-tight text-on-surface">Cuentas MVP</div>
+    <div class="flex flex-col leading-tight">
+      <div class="font-headline font-bold text-base tracking-tight text-on-surface">Cuentas</div>
+      <div class="font-headline font-medium text-[10px] tracking-[0.2em] text-outline uppercase">MVP</div>
+    </div>
   </div>
 
   <!-- Period picker: single button that opens a popover with year tabs + month grid -->
@@ -154,6 +160,20 @@ export function renderDashboard(period) {
   <!-- Insight strip (1-line, auto-picks the highest-signal message) -->
   <section id="insight" class="rounded-2xl p-4 flex items-center gap-3 border border-outline-variant/15">
     <!-- populated by JS -->
+  </section>
+
+  <!-- 3-month comparison: top movers -->
+  <section class="rounded-2xl bg-surface-container-lowest border border-outline-variant/15 overflow-hidden">
+    <div class="flex items-center justify-between px-4 py-3 border-b border-outline-variant/15">
+      <div class="flex items-center gap-2">
+        <span class="material-symbols-outlined text-tertiary" style="font-size: 18px;">trending_up</span>
+        <h3 class="font-headline font-bold text-sm tracking-tight">Comparativo últimos 3 meses</h3>
+      </div>
+      <div class="text-[11px]" id="comparisonTotalDelta">—</div>
+    </div>
+    <div id="comparisonBody" class="p-2">
+      <div class="text-xs text-outline italic p-3">Cargando…</div>
+    </div>
   </section>
 
   <!-- Account cashflow (BNP, Amex, Revolut) -->
@@ -491,10 +511,10 @@ export function renderDashboard(period) {
     const net = t.net_actual_eur;
     const netCls = net >= 0 ? "text-primary" : "text-error";
     document.getElementById("ytdCards").innerHTML = [
-      \`<div class="bg-surface-container-lowest p-3 cursor-pointer" onclick="openYearDrill('all')"><div class="text-[10px] font-bold uppercase tracking-wider text-outline">Ingresos YTD</div><div class="font-headline text-lg font-bold tabular-nums mt-0.5 text-on-surface">\${fmt(t.income_actual_eur)}</div></div>\`,
-      \`<div class="bg-surface-container-lowest p-3"><div class="text-[10px] font-bold uppercase tracking-wider text-outline">Gasto YTD</div><div class="font-headline text-lg font-bold tabular-nums mt-0.5 text-on-surface">\${fmt(t.expenses_actual_eur)}</div></div>\`,
-      \`<div class="bg-surface-container-lowest p-3"><div class="text-[10px] font-bold uppercase tracking-wider text-outline">Neto YTD</div><div class="font-headline text-lg font-bold tabular-nums mt-0.5 \${netCls}">\${fmt(net)}</div></div>\`,
-      \`<div class="bg-surface-container-lowest p-3"><div class="text-[10px] font-bold uppercase tracking-wider text-outline">Media/mes</div><div class="font-headline text-lg font-bold tabular-nums mt-0.5 text-on-surface">\${fmt(t.avg_monthly_expense)}</div></div>\`,
+      \`<div class="bg-surface-container-lowest p-3 cursor-pointer hover:bg-surface-container transition-colors" onclick="openCategoryDrill('income', '\${y.year}')"><div class="text-[10px] font-bold uppercase tracking-wider text-outline">Ingresos YTD</div><div class="font-headline text-lg font-bold tabular-nums mt-0.5 text-on-surface">\${fmt(t.income_actual_eur)}</div><div class="text-[9px] text-primary mt-0.5">click → detalle</div></div>\`,
+      \`<div class="bg-surface-container-lowest p-3 cursor-pointer hover:bg-surface-container transition-colors" onclick="openYTDBreakdown(\${JSON.stringify(y).replace(/"/g, '&quot;')})"><div class="text-[10px] font-bold uppercase tracking-wider text-outline">Gasto YTD</div><div class="font-headline text-lg font-bold tabular-nums mt-0.5 text-on-surface">\${fmt(t.expenses_actual_eur)}</div><div class="text-[9px] text-primary mt-0.5">click → desglose</div></div>\`,
+      \`<div class="bg-surface-container-lowest p-3 cursor-pointer hover:bg-surface-container transition-colors" onclick="openYTDBreakdown(\${JSON.stringify(y).replace(/"/g, '&quot;')})"><div class="text-[10px] font-bold uppercase tracking-wider text-outline">Neto YTD</div><div class="font-headline text-lg font-bold tabular-nums mt-0.5 \${netCls}">\${fmt(net)}</div><div class="text-[9px] text-primary mt-0.5">click → mensual</div></div>\`,
+      \`<div class="bg-surface-container-lowest p-3 cursor-pointer hover:bg-surface-container transition-colors" onclick="openYTDBreakdown(\${JSON.stringify(y).replace(/"/g, '&quot;')})"><div class="text-[10px] font-bold uppercase tracking-wider text-outline">Media/mes</div><div class="font-headline text-lg font-bold tabular-nums mt-0.5 text-on-surface">\${fmt(t.avg_monthly_expense)}</div><div class="text-[9px] text-primary mt-0.5">click → trend</div></div>\`,
     ].join("");
 
     // Top categories as clickable chips
@@ -524,27 +544,37 @@ export function renderDashboard(period) {
     if (!r.ok) { body.innerHTML = "<div class='p-8 text-error'>Error " + r.status + "</div>"; return; }
     const d = await r.json();
     document.getElementById("drillSub").textContent = d.count + " transacciones · " + fmt(d.total) + " · " + d.period;
+    const ACCOUNT_BADGE = {
+      "BNP":     "bg-secondary-container text-secondary",
+      "Amex":    "bg-primary-container text-on-primary-container",
+      "Revolut": "bg-tertiary-container/60 text-tertiary",
+    };
     body.innerHTML = d.rows.length ? \`
       <table class="w-full text-sm">
         <thead class="bg-surface-container sticky top-0">
           <tr class="text-left text-[10px] uppercase tracking-wider text-outline">
-            <th class="px-4 py-2">Fecha</th>
-            <th class="px-4 py-2">Comercio</th>
-            <th class="px-4 py-2 text-right">Monto</th>
-            <th class="px-4 py-2 text-right">Categoría</th>
+            <th class="px-3 py-2">Fecha</th>
+            <th class="px-3 py-2 w-20">Cuenta</th>
+            <th class="px-3 py-2">Comercio</th>
+            <th class="px-3 py-2 text-right">Monto</th>
+            <th class="px-3 py-2 text-right">Categoría</th>
           </tr>
         </thead>
         <tbody>
-          \${d.rows.map((r, i) => \`<tr class="border-b border-outline-variant/15 last:border-0">
-            <td class="px-4 py-2 text-outline tabular-nums">\${r.date}</td>
-            <td class="px-4 py-2 text-on-surface">\${r.merchant || "—"}</td>
-            <td class="px-4 py-2 text-right tabular-nums \${r.amount < 0 ? "" : "text-primary"}">\${fmt(r.amount)}</td>
-            <td class="px-4 py-2 text-right">
-              <select data-tx-id="\${r.id ?? ""}" data-current-cat="\${category}" class="drillRecat text-xs bg-surface-container border-0 rounded px-2 py-1">
-                \${CATEGORIES.map((c) => \`<option value="\${c}" \${c === category ? "selected" : ""}>\${c}</option>\`).join("")}
-              </select>
-            </td>
-          </tr>\`).join("")}
+          \${d.rows.map((r) => {
+            const badgeClr = ACCOUNT_BADGE[r.account] || "bg-surface-container text-outline";
+            return \`<tr class="border-b border-outline-variant/15 last:border-0">
+              <td class="px-3 py-2 text-outline tabular-nums text-xs">\${r.date}</td>
+              <td class="px-3 py-2"><span class="px-1.5 py-0.5 rounded text-[10px] font-bold \${badgeClr}">\${r.account || "—"}</span></td>
+              <td class="px-3 py-2 text-on-surface">\${r.merchant || "—"}</td>
+              <td class="px-3 py-2 text-right tabular-nums \${r.amount < 0 ? "" : "text-primary"}">\${fmt(r.amount)}</td>
+              <td class="px-3 py-2 text-right">
+                <select data-tx-id="\${r.id ?? ""}" data-current-cat="\${category}" class="drillRecat text-xs bg-surface-container border-0 rounded px-2 py-1">
+                  \${CATEGORIES.map((c) => \`<option value="\${c}" \${c === category ? "selected" : ""}>\${c}</option>\`).join("")}
+                </select>
+              </td>
+            </tr>\`;
+          }).join("")}
         </tbody>
       </table>\` : "<div class='p-8 text-center text-outline italic'>Sin transacciones</div>";
 
@@ -571,6 +601,63 @@ export function renderDashboard(period) {
   // expose to inline onclicks
   window.openCategoryDrill = openCategoryDrill;
   window.openYearDrill = (cat) => openCategoryDrill(cat === "all" ? "income" : cat, document.getElementById("ytdYearLabel").textContent);
+
+  // YTD breakdown — uses the drilldown modal with a custom-rendered body
+  // showing categories, monthly trend, and top merchants for the year.
+  function openYTDBreakdown(y) {
+    const modal = document.getElementById("drillModal");
+    document.getElementById("drillTitle").textContent = "Gasto YTD · " + y.year;
+    document.getElementById("drillSub").textContent =
+      "Total " + fmt(y.totals.expenses_actual_eur) + " · " + y.months_with_data + " meses · " +
+      "neto " + fmt(y.totals.net_actual_eur);
+    const body = document.getElementById("drillBody");
+
+    const catsHtml = (y.by_category || []).slice(0, 15).map((c) => {
+      const pct = y.totals.expenses_actual_eur > 0 ? Math.round(c.total / y.totals.expenses_actual_eur * 100) : 0;
+      return \`<tr class="border-b border-outline-variant/15 hover:bg-surface-container-low cursor-pointer" onclick="openCategoryDrill('\${c.category}', '\${y.year}')">
+        <td class="px-3 py-2"><span class="material-symbols-outlined text-outline mr-1" style="font-size:14px">\${ICON[c.category] || ICON.other}</span><span class="capitalize">\${c.category}</span></td>
+        <td class="px-3 py-2 text-right tabular-nums">\${fmt(c.total)}</td>
+        <td class="px-3 py-2 text-right text-outline">\${pct}%</td>
+        <td class="px-3 py-2 text-right text-outline tabular-nums text-xs">\${c.count} tx</td>
+      </tr>\`;
+    }).join("");
+    const monthsHtml = (y.by_month || []).map((m) => \`
+      <tr class="border-b border-outline-variant/15">
+        <td class="px-3 py-2 tabular-nums">\${m.month}</td>
+        <td class="px-3 py-2 text-right tabular-nums text-error">\${fmt(m.expenses)}</td>
+        <td class="px-3 py-2 text-right tabular-nums text-primary">\${fmt(m.income)}</td>
+        <td class="px-3 py-2 text-right tabular-nums font-semibold \${(m.income - m.expenses) >= 0 ? "text-primary" : "text-error"}">\${fmt(m.income - m.expenses)}</td>
+      </tr>\`).join("");
+    const merchHtml = (y.top_merchants || []).slice(0, 15).map((m) => \`
+      <tr class="border-b border-outline-variant/15">
+        <td class="px-3 py-2">\${m.merchant.slice(0, 50)}</td>
+        <td class="px-3 py-2 text-right tabular-nums">\${fmt(m.total)}</td>
+        <td class="px-3 py-2 text-right text-outline tabular-nums text-xs">\${m.count} tx</td>
+      </tr>\`).join("");
+
+    body.innerHTML = \`
+      <div class="px-5 py-4 space-y-6">
+        <section>
+          <h4 class="text-xs font-bold uppercase tracking-wider text-outline mb-2">Por categoría</h4>
+          <table class="w-full text-sm"><tbody>\${catsHtml}</tbody></table>
+        </section>
+        <section>
+          <h4 class="text-xs font-bold uppercase tracking-wider text-outline mb-2">Por mes</h4>
+          <table class="w-full text-sm">
+            <thead><tr class="text-left text-[10px] uppercase tracking-wider text-outline border-b border-outline-variant/15">
+              <th class="px-3 py-2">Mes</th><th class="px-3 py-2 text-right">Gasto</th><th class="px-3 py-2 text-right">Ingreso</th><th class="px-3 py-2 text-right">Neto</th>
+            </tr></thead>
+            <tbody>\${monthsHtml}</tbody>
+          </table>
+        </section>
+        <section>
+          <h4 class="text-xs font-bold uppercase tracking-wider text-outline mb-2">Top comercios</h4>
+          <table class="w-full text-sm"><tbody>\${merchHtml}</tbody></table>
+        </section>
+      </div>\`;
+    modal.classList.remove("hidden");
+  }
+  window.openYTDBreakdown = openYTDBreakdown;
   document.getElementById("drillClose").onclick = () => document.getElementById("drillModal").classList.add("hidden");
   document.getElementById("drillModal").onclick = (e) => { if (e.target.id === "drillModal") e.currentTarget.classList.add("hidden"); };
 
@@ -944,6 +1031,54 @@ export function renderDashboard(period) {
     }
 
     renderCharts(d);
+    renderComparison(d.recent_months_comparison);
+  }
+
+  function renderComparison(c) {
+    if (!c || !c.months || c.months.length < 2) {
+      document.getElementById("comparisonBody").innerHTML = \`<div class="text-xs text-outline italic p-3">Necesitas al menos 2 meses de data</div>\`;
+      return;
+    }
+    const totalsRow = c.summary.total_per_month;
+    const lastTotal = totalsRow[totalsRow.length - 1];
+    const firstTotal = totalsRow[0];
+    const totalDelta = lastTotal - firstTotal;
+    const totalPct = c.summary.total_delta_pct;
+    const trendClr = totalDelta >= 0 ? "text-error" : "text-primary";
+    document.getElementById("comparisonTotalDelta").innerHTML =
+      \`Total: <span class="\${trendClr} font-semibold">\${totalDelta >= 0 ? "↑" : "↓"} \${fmt(Math.abs(totalDelta))}\${totalPct != null ? " (" + (totalPct >= 0 ? "+" : "") + totalPct + "%)" : ""}</span> vs \${c.months[0]}\`;
+
+    // Take top 8 movers by absolute delta
+    const movers = c.categories.filter((r) => Math.abs(r.delta_abs) >= 5).slice(0, 8);
+    const monthHeader = c.months.map((m) => \`<th class="px-3 py-2 text-right text-[10px] uppercase tracking-wider text-outline">\${m}</th>\`).join("");
+
+    document.getElementById("comparisonBody").innerHTML = movers.length ? \`
+      <table class="w-full text-sm">
+        <thead>
+          <tr class="border-b border-outline-variant/15">
+            <th class="px-3 py-2 text-left text-[10px] uppercase tracking-wider text-outline">Categoría</th>
+            \${monthHeader}
+            <th class="px-3 py-2 text-right text-[10px] uppercase tracking-wider text-outline">Δ</th>
+            <th class="px-3 py-2 text-right text-[10px] uppercase tracking-wider text-outline">%</th>
+          </tr>
+        </thead>
+        <tbody>
+          \${movers.map((r) => {
+            const arrow = r.delta_abs > 0 ? "↑" : "↓";
+            const clr = r.delta_abs > 0 ? "text-error" : "text-primary";
+            const monthCells = r.totals.map((v, i) => {
+              const isLast = i === r.totals.length - 1;
+              return \`<td class="px-3 py-2 text-right tabular-nums \${isLast ? "font-semibold text-on-surface" : "text-outline"}">\${fmt(v)}</td>\`;
+            }).join("");
+            return \`<tr class="border-b border-outline-variant/15 last:border-0 hover:bg-surface-container-low cursor-pointer" onclick="openCategoryDrill('\${r.category}', '\${c.months[c.months.length-1]}')">
+              <td class="px-3 py-2"><span class="material-symbols-outlined text-outline mr-1.5" style="font-size:14px">\${ICON[r.category] || ICON.other}</span><span class="capitalize">\${r.category}</span></td>
+              \${monthCells}
+              <td class="px-3 py-2 text-right tabular-nums \${clr} font-semibold">\${arrow} \${fmt(Math.abs(r.delta_abs))}</td>
+              <td class="px-3 py-2 text-right tabular-nums \${clr} text-xs">\${r.delta_pct != null ? (r.delta_pct >= 0 ? "+" : "") + r.delta_pct + "%" : "—"}</td>
+            </tr>\`;
+          }).join("")}
+        </tbody>
+      </table>\` : \`<div class="text-xs text-outline italic p-3">Sin movimientos significativos entre los meses</div>\`;
   }
 
   // ─── CFO-grade charts ───────────────────────────────────────────────────
