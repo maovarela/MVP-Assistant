@@ -463,6 +463,71 @@ app.post("/api/pending", express.json({ limit: "50kb" }), (req, res) => {
   }
 });
 
+// Categorization audit: runs the deterministic regex categorizer over every
+// transaction's description and reports rows where the regex suggests a
+// different category than what's stored. Lets the user bulk-apply fixes when
+// new regex rules are added (e.g. SWISSLIFE→savings) without re-importing.
+// GET ?key=… → list of mismatches. POST {ids:[]} → apply the suggestion.
+app.get("/api/categorization-audit.json", (req, res) => {
+  if (!requireKey(req, res, "DASH_KEY")) return;
+  try {
+    const period = (req.query.period || "").toString().match(/^\d{4}(-\d{2})?$/) ? req.query.period : undefined;
+    const where = period
+      ? (period.length === 4 ? `AND strftime('%Y', date) = ?` : `AND strftime('%Y-%m', date) = ?`)
+      : "";
+    const args = period ? [period] : [];
+    const rows = db.prepare(`
+      SELECT id, date, merchant, description, amount, category, is_internal_transfer, external_id
+      FROM transactions
+      WHERE is_internal_transfer = 0 AND merchant IS NOT NULL ${where}
+      ORDER BY date DESC LIMIT 5000
+    `).all(...args);
+    const mismatches = [];
+    const byChange = {};
+    for (const r of rows) {
+      const suggested = keywordCategorize(r.merchant || "") || keywordCategorize(r.description || "");
+      if (!suggested || suggested === "other") continue;
+      const current = r.category || "uncategorised";
+      if (current === suggested) continue;
+      // Never downgrade specific → other / uncategorised
+      if (current !== "uncategorised" && current !== "other" && suggested === "other") continue;
+      // Skip if user has explicitly chosen a specific category that the regex
+      // doesn't know about (regex returns generic). Only flag if both are
+      // specific OR current is uncategorised/other.
+      if (current !== "uncategorised" && current !== "other" && current !== suggested) {
+        // Both specific but different — still flag, user decides
+      }
+      const prefix = (r.external_id || "").split(":")[0];
+      const account = ({ bnp: "BNP", amex: "Amex", revolut: "Revolut" })[prefix] || prefix || "—";
+      mismatches.push({
+        id: r.id, date: r.date, merchant: r.merchant, description: r.description,
+        amount: r.amount, current, suggested, account,
+      });
+      const key = current + "→" + suggested;
+      byChange[key] = (byChange[key] || 0) + 1;
+    }
+    res.json({ ok: true, scanned: rows.length, mismatches, by_change: byChange });
+  } catch (err) {
+    console.error("[cat audit]", err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.post("/api/categorization-audit/apply", express.json({ limit: "100kb" }), (req, res) => {
+  if (!requireKey(req, res, "DASH_KEY")) return;
+  try {
+    const { items } = req.body || {};
+    if (!Array.isArray(items) || !items.length) return res.status(400).json({ error: "items[] required" });
+    const stmt = db.prepare(`UPDATE transactions SET category = ? WHERE id = ?`);
+    const tx = db.transaction((arr) => { for (const it of arr) stmt.run(it.category, it.id); });
+    tx(items);
+    res.json({ ok: true, updated: items.length });
+  } catch (err) {
+    console.error("[cat audit apply]", err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // Two-pass reconciliation:
 //   1. All is_internal_transfer=1 rows → category='internal_transfer'
 //   2. For each fixed_expense with category + match_keyword, find tx matches

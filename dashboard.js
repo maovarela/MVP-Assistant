@@ -232,9 +232,9 @@ export function renderDashboard(period) {
         <button onclick="openBudgetEditor()" class="text-xs font-semibold px-3 py-1 rounded-full bg-primary text-on-primary hover:opacity-90">
           ✏️ Editar budget
         </button>
-        <!-- Audit removed — legacy concept (huérfano = sin match_keyword de
-             fixed_expense). Con MECE por categoría no aporta acción concreta:
-             toda tx vive en su bucket y se contabiliza ahí. -->
+        <button id="catAuditBtn" onclick="openCatAudit()" class="hidden text-xs font-semibold px-3 py-1 rounded-full bg-warn-container text-warn hover:opacity-90" title="Compares regex rules vs stored category. Lets you bulk-fix old txs after adding a new rule.">
+          🩺 Categorization audit (<span id="catAuditCount">0</span>)
+        </button>
         <button id="auditBtn" class="hidden"></button>
       </div>
       <div class="flex items-center gap-2" id="filterChips">
@@ -507,6 +507,31 @@ export function renderDashboard(period) {
       <div class="grid grid-cols-3 gap-2 mt-3" id="auditTotals"></div>
     </div>
     <div class="flex-1 overflow-y-auto" id="auditBody"></div>
+  </div>
+</div>
+
+<!-- Categorization audit modal — regex vs stored category drift -->
+<div id="catAuditModal" class="hidden fixed inset-0 z-[100] bg-black/40 flex items-end md:items-center justify-center p-0 md:p-4">
+  <div class="bg-surface-container-lowest w-full md:max-w-4xl md:rounded-2xl rounded-t-2xl max-h-[90vh] overflow-hidden flex flex-col">
+    <div class="px-5 py-4 border-b border-outline-variant/20">
+      <div class="flex items-center justify-between">
+        <div>
+          <div class="font-headline font-bold text-lg">🩺 Categorization audit</div>
+          <div class="text-xs text-outline" id="catAuditSub">Compares parser regex rules vs stored category. Old txs imported before a rule existed show up here.</div>
+        </div>
+        <button id="catAuditClose" class="w-9 h-9 rounded-full hover:bg-surface-container flex items-center justify-center">
+          <span class="material-symbols-outlined">close</span>
+        </button>
+      </div>
+      <div id="catAuditSummary" class="mt-3 flex flex-wrap gap-1.5"></div>
+    </div>
+    <div class="flex-1 overflow-y-auto" id="catAuditBody"></div>
+    <div class="px-5 py-3 border-t border-outline-variant/20 flex items-center justify-between gap-2">
+      <span class="text-[11px] text-outline">Select rows or "Apply all" to bulk-fix</span>
+      <div class="flex gap-2">
+        <button id="catAuditApplyAll" class="px-4 py-2 rounded-lg text-sm font-semibold bg-primary text-on-primary hover:opacity-90">Apply all suggestions</button>
+      </div>
+    </div>
   </div>
 </div>
 
@@ -859,8 +884,8 @@ export function renderDashboard(period) {
     const year = (period || currentData.period).slice(0, 4);
     loadYear(year);
     // Fire-and-forget audit summary for the button badge
-    // loadAuditBadge — deprecated, button hidden
-    // loadAuditBadge(currentData.period);
+    // New categorization audit (regex vs stored category drift detector)
+    loadCatAuditBadge();
     // BNP cashflow panel
     loadBnpCashflow(currentData.period);
     // Pending items panel
@@ -1153,6 +1178,99 @@ export function renderDashboard(period) {
     if (settled) settled.onchange = loadPending;
   }, 100);
   window.loadPending = loadPending;
+
+  // ─── Categorization audit ───────────────────────────────────────────────
+  let catAuditData = null;
+  async function loadCatAuditBadge() {
+    const r = await fetch("/api/categorization-audit.json?key=" + encodeURIComponent(key));
+    if (!r.ok) return;
+    catAuditData = await r.json();
+    const btn = document.getElementById("catAuditBtn");
+    const cnt = document.getElementById("catAuditCount");
+    if (catAuditData.mismatches.length > 0) {
+      btn.classList.remove("hidden");
+      cnt.textContent = catAuditData.mismatches.length;
+    } else {
+      btn.classList.add("hidden");
+    }
+  }
+  function openCatAudit() {
+    if (!catAuditData) return;
+    document.getElementById("catAuditModal").classList.remove("hidden");
+    const d = catAuditData;
+    document.getElementById("catAuditSub").textContent =
+      \`\${d.mismatches.length} transactions where regex suggests a different category than stored. Scanned \${d.scanned} rows.\`;
+    document.getElementById("catAuditSummary").innerHTML = Object.entries(d.by_change)
+      .sort((a, b) => b[1] - a[1])
+      .map(([k, n]) => \`<span class="px-2 py-0.5 rounded-full text-[10px] font-semibold bg-surface-container text-on-surface">\${k} · <b>\${n}</b></span>\`).join("");
+    const body = document.getElementById("catAuditBody");
+    body.innerHTML = \`<table class="w-full text-sm">
+      <thead class="sticky top-0 bg-surface-container z-10">
+        <tr class="text-left text-[10px] uppercase tracking-wider text-outline">
+          <th class="px-3 py-2.5 w-8"><input type="checkbox" id="catAuditSelectAll" checked /></th>
+          <th class="px-3 py-2.5 w-20">Account</th>
+          <th class="px-3 py-2.5 w-24">Date</th>
+          <th class="px-3 py-2.5">Merchant</th>
+          <th class="px-3 py-2.5 text-right w-20">€</th>
+          <th class="px-3 py-2.5 w-24">Current</th>
+          <th class="px-3 py-2.5 w-24">Suggested</th>
+          <th class="px-3 py-2.5 w-16">Action</th>
+        </tr>
+      </thead>
+      <tbody>
+        \${d.mismatches.map((m) => {
+          const curMeta = CAT_META[m.current]   || { emoji: "", label: m.current };
+          const sugMeta = CAT_META[m.suggested] || { emoji: "", label: m.suggested };
+          return \`<tr class="border-b border-outline-variant/15">
+            <td class="px-3 py-2"><input type="checkbox" class="catAuditCheck" data-id="\${m.id}" data-suggested="\${m.suggested}" checked /></td>
+            <td class="px-3 py-2"><span class="px-1.5 py-0.5 rounded text-[10px] font-semibold bg-surface-container">\${m.account}</span></td>
+            <td class="px-3 py-2 text-outline tabular-nums whitespace-nowrap">\${m.date || "—"}</td>
+            <td class="px-3 py-2 text-on-surface truncate max-w-xs" title="\${escapeHtml(m.description || m.merchant || "")}">\${escapeHtml(m.merchant || "—")}</td>
+            <td class="px-3 py-2 text-right tabular-nums \${m.amount < 0 ? "text-error" : "text-primary"}">\${m.amount < 0 ? "−" : "+"}\${fmt(Math.abs(m.amount)).replace("€","")}</td>
+            <td class="px-3 py-2 text-[11px]"><span class="px-1.5 py-0.5 rounded bg-surface-container">\${curMeta.emoji} \${curMeta.label}</span></td>
+            <td class="px-3 py-2 text-[11px]"><span class="px-1.5 py-0.5 rounded bg-primary-container text-on-primary-container">\${sugMeta.emoji} \${sugMeta.label}</span></td>
+            <td class="px-3 py-2"><button class="catAuditOne text-[10px] px-2 py-1 rounded bg-primary text-on-primary hover:opacity-90" data-id="\${m.id}" data-suggested="\${m.suggested}">Apply</button></td>
+          </tr>\`;
+        }).join("")}
+      </tbody>
+    </table>\`;
+    document.getElementById("catAuditSelectAll").onchange = (e) => {
+      body.querySelectorAll(".catAuditCheck").forEach((c) => c.checked = e.target.checked);
+    };
+    body.querySelectorAll(".catAuditOne").forEach((b) => {
+      b.onclick = async () => {
+        const id = parseInt(b.dataset.id, 10);
+        const cat = b.dataset.suggested;
+        b.disabled = true;
+        const r = await fetch("/api/categorization-audit/apply?key=" + encodeURIComponent(key), {
+          method: "POST", headers: { "content-type": "application/json" },
+          body: JSON.stringify({ items: [{ id, category: cat }] }),
+        });
+        if (r.ok) {
+          b.textContent = "✓";
+          b.closest("tr").classList.add("opacity-40");
+        } else b.disabled = false;
+      };
+    });
+  }
+  window.openCatAudit = openCatAudit;
+  document.getElementById("catAuditClose").onclick = () => document.getElementById("catAuditModal").classList.add("hidden");
+  document.getElementById("catAuditApplyAll").onclick = async () => {
+    const items = [...document.querySelectorAll(".catAuditCheck")]
+      .filter((c) => c.checked)
+      .map((c) => ({ id: parseInt(c.dataset.id, 10), category: c.dataset.suggested }));
+    if (!items.length) { alert("Select at least one"); return; }
+    if (!confirm(\`Apply \${items.length} category changes?\`)) return;
+    const r = await fetch("/api/categorization-audit/apply?key=" + encodeURIComponent(key), {
+      method: "POST", headers: { "content-type": "application/json" },
+      body: JSON.stringify({ items }),
+    });
+    const j = await r.json().catch(() => ({}));
+    if (!r.ok) { alert("Failed: " + (j.error || r.status)); return; }
+    alert(\`Updated \${j.updated} transactions\`);
+    document.getElementById("catAuditModal").classList.add("hidden");
+    await load(currentData.period);
+  };
 
   let auditData = null;
   async function loadAuditBadge(period) {
