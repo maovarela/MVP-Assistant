@@ -918,10 +918,12 @@ export function getActualSpendVsBudget(period) {
   for (const v of variable) { v._kind = "variable"; v.budget_eur = v.amount_eur; }  // alias so logic below is uniform
 
   // Compile keyword regexes once; build cross-category list AND per-category unkeyed groups.
-  // Variables AND fixed both contribute to keyedAll (cross-account match).
+  // PRIORITY ORDER: variables FIRST, then fixed. Variables are usually more
+  // specific (e.g. "Inversion PERCO" with keyword swisslife.*retraite should
+  // win over fixed "Seguro" with broader swisslife pattern). First match wins.
   const keyedAll  = [];
   const byCatUnkeyed = {};
-  for (const f of [...fixed, ...variable]) {
+  for (const f of [...variable, ...fixed]) {
     if (f.match_keyword) {
       try { f._rx = new RegExp(f.match_keyword, "i"); keyedAll.push(f); }
       catch { /* malformed regex → fall through to unkeyed bucket */ if (f._kind === "fixed") byCatUnkeyed[f.category || "__nocat__"] = (byCatUnkeyed[f.category || "__nocat__"] || []).concat(f); }

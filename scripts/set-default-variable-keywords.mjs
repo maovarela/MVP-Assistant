@@ -10,7 +10,7 @@ const DASH_KEY = process.env.DASH_KEY;
 if (!DASH_KEY) { console.error("ERROR: set DASH_KEY"); process.exit(1); }
 
 const DEFAULTS = [
-  { label: "Inversion PERCO",       match_keyword: "perco|cofidis|inversion" },
+  { label: "Inversion PERCO",       match_keyword: "perco|cofidis|inversion|swisslife.*retraite|swisslife ar|swisslife assurance et" },
   { label: "Pago Deuda",            match_keyword: "davivienda|bancolombia|prestamo|cuota|amortiz|corredores" },
   { label: "Pago tarjeta Colombia", match_keyword: "tarjeta colombia|mastercard col|visa col|cuota tarjeta" },
   { label: "Cleopatra",             match_keyword: "cleopatra" },
