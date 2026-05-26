@@ -432,6 +432,67 @@ app.post("/api/transactions/category", express.json({ limit: "100kb" }), (req, r
   }
 });
 
+// Two-pass reconciliation:
+//   1. All is_internal_transfer=1 rows → category='internal_transfer'
+//   2. For each fixed_expense with category + match_keyword, find tx matches
+//      and rewrite their raw category to match the fixed's category. Fixes the
+//      drilldown bug where rent is tagged 'transfers' but credited to housing
+//      via attribution — the drilldown query expects category='housing'.
+// Idempotent: run any time the data drifts.
+app.post("/api/reconcile-categories", express.json({ limit: "10kb" }), (req, res) => {
+  if (!requireKey(req, res, "DASH_KEY")) return;
+  try {
+    const dry = !!(req.body && req.body.dry_run);
+    const out = { internal: 0, fixed_claims: 0, by_label: {} };
+    // Pass 1: internal transfers
+    if (dry) {
+      out.internal = db.prepare(`
+        SELECT COUNT(*) AS n FROM transactions
+        WHERE is_internal_transfer = 1 AND (category IS NULL OR category != 'internal_transfer')
+      `).get().n;
+    } else {
+      out.internal = db.prepare(`
+        UPDATE transactions SET category = 'internal_transfer'
+        WHERE is_internal_transfer = 1 AND (category IS NULL OR category != 'internal_transfer')
+      `).run().changes;
+    }
+    // Pass 2: claim-based reassignment per fixed_expense
+    const fixedLines = db.prepare(`
+      SELECT label, category, match_keyword FROM fixed_expenses
+      WHERE category IS NOT NULL AND match_keyword IS NOT NULL AND match_keyword != ''
+    `).all();
+    const seen = new Set();
+    for (const f of fixedLines) {
+      const key = f.label + "|" + f.category + "|" + f.match_keyword;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      let rx;
+      try { rx = new RegExp(f.match_keyword, "i"); } catch { continue; }
+      // Find candidates (negative amount, not internal, not already in target cat)
+      const cands = db.prepare(`
+        SELECT id, merchant, description, category FROM transactions
+        WHERE amount < 0 AND is_internal_transfer = 0 AND (category IS NULL OR category != ?)
+      `).all(f.category);
+      const ids = [];
+      for (const tx of cands) {
+        if (rx.test(tx.merchant || "") || rx.test(tx.description || "")) ids.push(tx.id);
+      }
+      if (!ids.length) continue;
+      out.by_label[f.label] = { category: f.category, count: ids.length };
+      out.fixed_claims += ids.length;
+      if (!dry) {
+        const stmt = db.prepare(`UPDATE transactions SET category = ? WHERE id = ?`);
+        const tx   = db.transaction((arr) => { for (const id of arr) stmt.run(f.category, id); });
+        tx(ids);
+      }
+    }
+    res.json({ ok: true, dry_run: dry, ...out });
+  } catch (err) {
+    console.error("[reconcile]", err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // Update category and/or is_internal_transfer on transactions whose merchant
 // or description contains a literal substring (case-insensitive). Used for
 // one-shot fixes: re-classify Carlos as health, flag PRELEVEMENT AUTOMATIQUE
@@ -515,7 +576,7 @@ app.post("/api/bulk-recategorize", express.json({ limit: "10kb" }), async (req, 
 
     // Import here to avoid circular import problems on boot
     const { callLLMText } = await import("./llm.js");
-    const CATS = ["groceries","restaurants","transport","travel","subscriptions","shopping","health","housing","entertainment","transfers","deuda","income","fees","other"];
+    const CATS = ["groceries","restaurants","transport","travel","subscriptions","shopping","health","housing","entertainment","transfers","internal_transfer","savings","debt","income","fees","other"];
 
     const merchantToCat = {};
     const BATCH = 25;

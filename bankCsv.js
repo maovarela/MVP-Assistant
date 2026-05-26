@@ -78,7 +78,7 @@ export function parseAmexCsv(content) {
       description: desc,
       external_id: refRaw || null, // caller can prefix with "amex:"
       is_internal_transfer: isInternal,
-      category:    isInternal ? "transfers" : null,
+      category:    isInternal ? "internal_transfer" : null,
     });
   }
   return out;
@@ -158,7 +158,7 @@ export function parseRevolutCsv(content) {
             description: desc,
             external_id: id,
             is_internal_transfer: isInternal,
-            category:    isInternal ? "transfers" : undefined,
+            category:    isInternal ? "internal_transfer" : undefined,
           });
         }
       } catch (err) {
@@ -374,7 +374,7 @@ export function parseBnpPdfText(text) {
       // mis-categorised by the broad keyword rules (american express → no rule
       // → 'other'). 'transfers' is good enough as a label since they're
       // already flagged is_internal_transfer for query filtering.
-      category:    isInternal ? "transfers" : null,
+      category:    isInternal ? "internal_transfer" : null,
     });
   }
 

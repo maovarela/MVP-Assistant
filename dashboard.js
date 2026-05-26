@@ -240,14 +240,17 @@ export function renderDashboard(period) {
       </div>
     </div>
     <div class="rounded-2xl bg-surface-container-lowest overflow-hidden border border-outline-variant/15">
+      <div class="px-3 py-2 border-b border-outline-variant/15 bg-surface-container-low">
+        <input id="gastosFilter" type="search" placeholder="🔎 Filtrar categoría…" class="w-full md:w-64 bg-surface-container text-on-surface border border-outline-variant/30 rounded-md text-xs px-2 py-1 focus:ring-2 focus:ring-primary focus:outline-none" />
+      </div>
       <table class="w-full text-sm">
         <thead class="bg-surface-container">
           <tr class="text-left text-[10px] uppercase tracking-wider text-outline">
-            <th class="px-3 py-2.5">Categoría</th>
-            <th class="px-3 py-2.5 text-right">Budget</th>
-            <th class="px-3 py-2.5 text-right">Real</th>
-            <th class="px-3 py-2.5 text-right">Δ</th>
-            <th class="px-3 py-2.5 text-right w-16">%</th>
+            <th class="px-3 py-2.5 cursor-pointer select-none hover:text-on-surface" data-sort="name">Categoría <span class="gastosSortArrow text-outline" data-col="name"></span></th>
+            <th class="px-3 py-2.5 text-right cursor-pointer select-none hover:text-on-surface" data-sort="budget">Budget <span class="gastosSortArrow text-outline" data-col="budget"></span></th>
+            <th class="px-3 py-2.5 text-right cursor-pointer select-none hover:text-on-surface" data-sort="actual">Real <span class="gastosSortArrow text-outline" data-col="actual"></span></th>
+            <th class="px-3 py-2.5 text-right cursor-pointer select-none hover:text-on-surface" data-sort="delta">Δ <span class="gastosSortArrow text-outline" data-col="delta"></span></th>
+            <th class="px-3 py-2.5 text-right w-16 cursor-pointer select-none hover:text-on-surface" data-sort="pct">% <span class="gastosSortArrow text-outline" data-col="pct"></span></th>
           </tr>
         </thead>
         <tbody id="gastosTbl"></tbody>
@@ -474,6 +477,7 @@ export function renderDashboard(period) {
   let currentData = null;
   let activeFilter = "fijos"; // 'fijos' | 'variables' | 'todos'
   let activeTab = (new URLSearchParams(location.search).get("tab")) || "resumen";
+  let gastosSort = { key: "budget", dir: "desc" }; // header click cycles asc/desc
 
   // ─── Tab nav ────────────────────────────────────────────────────────────
   function switchTab(tab) {
@@ -652,36 +656,39 @@ export function renderDashboard(period) {
     housing: "home", groceries: "shopping_cart", restaurants: "restaurant",
     transport: "commute", travel: "flight", subscriptions: "autorenew",
     shopping: "shopping_bag", health: "medical_services", entertainment: "theaters",
-    transfers: "swap_horiz", savings: "savings", debt: "account_balance_wallet", income: "trending_up", fees: "percent",
+    transfers: "send", internal_transfer: "sync_alt",
+    savings: "savings", debt: "account_balance_wallet", income: "trending_up", fees: "percent",
     other: "category", uncategorised: "help",
   };
-  const CATEGORIES = ["groceries","restaurants","transport","travel","subscriptions","shopping","health","housing","entertainment","transfers","savings","debt","income","fees","other"];
+  const CATEGORIES = ["groceries","restaurants","transport","travel","subscriptions","shopping","health","housing","entertainment","transfers","internal_transfer","savings","debt","income","fees","other"];
 
   // Emoji prefix + Spanish label for each category, so the dropdown is
   // scannable by glance instead of a bare list of English nouns.
   const CAT_META = {
-    groceries:     { emoji: "🛒", label: "Groceries" },
-    restaurants:   { emoji: "🍽️", label: "Restaurants" },
-    transport:     { emoji: "🚇", label: "Transport" },
-    travel:        { emoji: "✈️", label: "Travel" },
-    subscriptions: { emoji: "🔁", label: "Subscriptions" },
-    shopping:      { emoji: "🛍️", label: "Shopping" },
-    health:        { emoji: "💊", label: "Health" },
-    housing:       { emoji: "🏠", label: "Housing" },
-    entertainment: { emoji: "🎬", label: "Entertainment" },
-    transfers:     { emoji: "↔️", label: "Transfers" },
-    savings:       { emoji: "💰", label: "Savings" },
-    debt:          { emoji: "💳", label: "Debt" },
-    income:        { emoji: "📈", label: "Income" },
-    fees:          { emoji: "💸", label: "Fees" },
-    other:         { emoji: "❓", label: "Other" },
-    uncategorised: { emoji: "❓", label: "Uncategorised" },
+    groceries:         { emoji: "🛒", label: "Groceries" },
+    restaurants:       { emoji: "🍽️", label: "Restaurants" },
+    transport:         { emoji: "🚇", label: "Transport" },
+    travel:            { emoji: "✈️", label: "Travel" },
+    subscriptions:     { emoji: "🔁", label: "Subscriptions" },
+    shopping:          { emoji: "🛍️", label: "Shopping" },
+    health:            { emoji: "💊", label: "Health" },
+    housing:           { emoji: "🏠", label: "Housing" },
+    entertainment:     { emoji: "🎬", label: "Entertainment" },
+    transfers:         { emoji: "📤", label: "Transfers (terceros)" },
+    internal_transfer: { emoji: "🔄", label: "Internal (BNP↔hijas)" },
+    savings:           { emoji: "💰", label: "Savings" },
+    debt:              { emoji: "💳", label: "Debt" },
+    income:            { emoji: "📈", label: "Income" },
+    fees:              { emoji: "💸", label: "Fees" },
+    other:             { emoji: "❓", label: "Other" },
+    uncategorised:     { emoji: "❓", label: "Uncategorised" },
   };
 
   // Logical groups for the dropdown. Within each group: alphabetical.
   const CAT_GROUPS = [
     { name: "Gastos cotidianos", cats: ["entertainment", "groceries", "health", "housing", "restaurants", "shopping", "subscriptions", "transport", "travel"] },
-    { name: "Movimientos",       cats: ["debt", "fees", "income", "savings", "transfers"] },
+    { name: "Movimientos reales", cats: ["debt", "fees", "income", "savings", "transfers"] },
+    { name: "Internos (no son gasto)", cats: ["internal_transfer"] },
     { name: "Misc",              cats: ["other"] },
   ];
 
@@ -1492,9 +1499,50 @@ export function renderDashboard(period) {
       render(currentData);
     };
 
+    // Wire sortable headers + filter input (idempotent — overwrites onclick)
+    document.querySelectorAll("[data-sort]").forEach((th) => {
+      th.onclick = () => {
+        const k = th.dataset.sort;
+        if (gastosSort.key === k) gastosSort.dir = gastosSort.dir === "asc" ? "desc" : "asc";
+        else { gastosSort.key = k; gastosSort.dir = k === "name" ? "asc" : "desc"; }
+        render(currentData);
+      };
+    });
+    const filterEl = document.getElementById("gastosFilter");
+    if (filterEl && !filterEl._wired) {
+      filterEl._wired = true;
+      let t;
+      filterEl.oninput = () => { clearTimeout(t); t = setTimeout(() => render(currentData), 150); };
+    }
+
+    const filterQ = (document.getElementById("gastosFilter")?.value || "").trim().toLowerCase();
+    const sortKey = gastosSort.key;
+    const sortDir = gastosSort.dir;
+    const sortFns = {
+      name:   (r) => (CAT_META[r.category]?.label || r.category).toLowerCase(),
+      budget: (r) => r.budget_eur,
+      actual: (r) => r.actual_eur,
+      delta:  (r) => r.budget_eur === 0 ? -Infinity : r.delta_eur,
+      pct:    (r) => r.pct_used == null ? -1 : r.pct_used,
+    };
     const filteredCats = allRows
       .filter((r) => showAll ? true : (r.budget_eur > 0 || r.actual_eur > 0))
-      .sort((a, b) => (b.budget_eur + b.actual_eur) - (a.budget_eur + a.actual_eur));
+      .filter((r) => !filterQ ? true : (
+        (CAT_META[r.category]?.label || r.category).toLowerCase().includes(filterQ) ||
+        r.category.toLowerCase().includes(filterQ)
+      ))
+      .sort((a, b) => {
+        const fn = sortFns[sortKey] || sortFns.budget;
+        const av = fn(a), bv = fn(b);
+        if (av < bv) return sortDir === "asc" ? -1 : 1;
+        if (av > bv) return sortDir === "asc" ?  1 : -1;
+        return 0;
+      });
+
+    // Sort indicators in headers
+    document.querySelectorAll(".gastosSortArrow").forEach((el) => {
+      el.textContent = el.dataset.col === sortKey ? (sortDir === "asc" ? "↑" : "↓") : "";
+    });
 
     const tbl = document.getElementById("gastosTbl");
     if (!filteredCats.length) {
