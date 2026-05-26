@@ -232,9 +232,10 @@ export function renderDashboard(period) {
         <button onclick="openBudgetEditor()" class="text-xs font-semibold px-3 py-1 rounded-full bg-primary text-on-primary hover:opacity-90">
           ✏️ Editar budget
         </button>
-        <button id="auditBtn" onclick="openAudit()" class="hidden text-xs font-semibold px-3 py-1 rounded-full bg-warn-container text-warn hover:opacity-90">
-          🔍 Auditar (<span id="auditCount">0</span>)
-        </button>
+        <!-- Audit removed — legacy concept (huérfano = sin match_keyword de
+             fixed_expense). Con MECE por categoría no aporta acción concreta:
+             toda tx vive en su bucket y se contabiliza ahí. -->
+        <button id="auditBtn" class="hidden"></button>
       </div>
       <div class="flex items-center gap-2" id="filterChips">
         <!-- populated by JS -->
@@ -312,6 +313,42 @@ export function renderDashboard(period) {
       <div id="cashTrend" class="text-xs font-semibold"></div>
     </div>
     <canvas id="cashLine" style="max-height: 240px"></canvas>
+  </section>
+
+  <!-- ROW 4: Pending items (receivables / payables / reimbursements) -->
+  <section class="rounded-2xl bg-surface-container-lowest p-5 border border-outline-variant/15">
+    <div class="flex items-center justify-between mb-3 flex-wrap gap-2">
+      <div>
+        <div class="text-sm font-semibold text-on-surface">📝 Pending (debts & reimbursements)</div>
+        <div class="text-[11px] text-outline">Off-account notes — people who owe you, who you owe, and refunds in flight</div>
+      </div>
+      <button id="pendingAddBtn" class="text-xs font-semibold px-3 py-1.5 rounded-full bg-primary text-on-primary hover:opacity-90">+ Add item</button>
+    </div>
+    <!-- Totals strip -->
+    <div id="pendingTotals" class="grid grid-cols-2 md:grid-cols-4 gap-2 mb-3"></div>
+    <!-- Inline add form (hidden until + clicked) -->
+    <div id="pendingAddForm" class="hidden mb-3 p-3 rounded-xl bg-surface-container border border-outline-variant/30">
+      <div class="grid grid-cols-1 md:grid-cols-5 gap-2">
+        <select id="pfKind" class="bg-surface-container-lowest text-on-surface border border-outline-variant/30 rounded-md text-xs px-2 py-1.5 focus:ring-2 focus:ring-primary focus:outline-none">
+          <option value="receivable">💰 Owed to me</option>
+          <option value="payable">📤 I owe</option>
+          <option value="reimbursement">🔁 Reimbursement</option>
+        </select>
+        <input id="pfWho" type="text" placeholder="Who (Sebas, Iván, SNCF, Henner…)" class="bg-surface-container-lowest text-on-surface border border-outline-variant/30 rounded-md text-xs px-2 py-1.5 focus:ring-2 focus:ring-primary focus:outline-none md:col-span-2" />
+        <input id="pfAmount" type="number" step="0.01" min="0" placeholder="€" class="bg-surface-container-lowest text-on-surface border border-outline-variant/30 rounded-md text-xs px-2 py-1.5 focus:ring-2 focus:ring-primary focus:outline-none" />
+        <input id="pfExpected" type="text" placeholder="When (e.g. 2026-07, October)" class="bg-surface-container-lowest text-on-surface border border-outline-variant/30 rounded-md text-xs px-2 py-1.5 focus:ring-2 focus:ring-primary focus:outline-none" />
+      </div>
+      <input id="pfDesc" type="text" placeholder="Notes (e.g. train Málaga, podólogo)" class="mt-2 w-full bg-surface-container-lowest text-on-surface border border-outline-variant/30 rounded-md text-xs px-2 py-1.5 focus:ring-2 focus:ring-primary focus:outline-none" />
+      <div class="flex justify-end gap-2 mt-2">
+        <button id="pfCancel" class="text-xs px-3 py-1 rounded-md text-outline hover:bg-surface-container-low">Cancel</button>
+        <button id="pfSave" class="text-xs font-semibold px-3 py-1 rounded-md bg-primary text-on-primary hover:opacity-90">Save</button>
+      </div>
+    </div>
+    <div id="pendingList" class="space-y-1.5"></div>
+    <div class="mt-3 flex items-center justify-between text-[11px] text-outline">
+      <label class="flex items-center gap-1.5 cursor-pointer"><input id="pendingShowSettled" type="checkbox" class="rounded"/> Show settled</label>
+      <span>Edit inline · click ✓ to mark settled · 🗑 to delete</span>
+    </div>
   </section>
 
 </main>
@@ -822,9 +859,12 @@ export function renderDashboard(period) {
     const year = (period || currentData.period).slice(0, 4);
     loadYear(year);
     // Fire-and-forget audit summary for the button badge
-    loadAuditBadge(currentData.period);
+    // loadAuditBadge — deprecated, button hidden
+    // loadAuditBadge(currentData.period);
     // BNP cashflow panel
     loadBnpCashflow(currentData.period);
+    // Pending items panel
+    loadPending();
   }
 
   // Brand-style account marks: small SVG/text-logo wordmark in the brand color
@@ -853,7 +893,7 @@ export function renderDashboard(period) {
        </div>\`
     ).join("");
 
-    const totals = { credits: 0, debits: 0, net: 0, tx: 0 };
+    const totals = { credits: 0, debits: 0, internalCredits: 0, internalDebits: 0, net: 0, tx: 0 };
     for (const acct of ["bnp", "amex", "revolut"]) {
       const r = await fetch("/api/cashflow.json?key=" + encodeURIComponent(key) + "&account=" + acct + "&period=" + period);
       if (!r.ok) continue;
@@ -862,10 +902,12 @@ export function renderDashboard(period) {
       const opening = d.opening_eur, closing = d.closing_eur;
       const netClr  = d.net_change_eur >= 0 ? "text-primary" : "text-error";
       const editBtn = acct === "bnp" ? \`<button id="bnpEditBtn" class="text-[10px] text-primary font-semibold hover:underline">Editar</button>\` : "";
-      totals.credits += d.credits_eur;
-      totals.debits  += d.debits_eur;
-      totals.net     += d.net_change_eur;
-      totals.tx      += d.tx_count;
+      totals.credits         += d.credits_eur;
+      totals.debits          += d.debits_eur;
+      totals.internalCredits += d.internal_credits_eur || 0;
+      totals.internalDebits  += d.internal_debits_eur  || 0;
+      totals.net             += d.net_change_eur;
+      totals.tx              += d.tx_count;
       // Internal-transfer breakdown — shows BNP↔hijas flows so the
       // mother/child hierarchy is visible. BNP shows "Movido a hijas",
       // Amex/Revolut show "Recibido de BNP".
@@ -914,37 +956,41 @@ export function renderDashboard(period) {
         \${intLine}\`;
     }
 
-    // Total card — consolidated of all 3 accounts
-    const totalNet     = Math.round(totals.net * 100) / 100;
-    const totalCredits = Math.round(totals.credits * 100) / 100;
-    const totalDebits  = Math.round(totals.debits  * 100) / 100;
-    // Replace card outer so the dark background fills the cell properly
-    // (the previous -m-4 p-4 hack created a visual overflow at the bottom).
+    // "Real cashflow" card — excludes internal transfers (BNP↔hijas).
+    // Sumar credits/debits crudos a través de cuentas infla ambos lados con
+    // los flows internos (prélèvement Amex, top-up Revolut). Lo útil es el
+    // cashflow real: salary entrante + gasto real saliente.
+    const realIn  = Math.round((totals.credits - totals.internalCredits) * 100) / 100;
+    const realOut = Math.round((totals.debits  - totals.internalDebits)  * 100) / 100;
+    const realNet = Math.round((realIn - realOut) * 100) / 100;
+    const internalMoved = Math.round(totals.internalDebits * 100) / 100;
     const totalEl = document.getElementById("acct-total");
     totalEl.className = "rounded-2xl bg-on-surface text-white p-4 border border-on-surface";
     totalEl.innerHTML = \`
       <div class="flex items-center justify-between mb-3">
         <div class="flex items-center gap-2">
           <div class="w-7 h-7 rounded-md bg-white/15 flex items-center justify-center">
-            <span class="material-symbols-outlined" style="font-size:16px">summarize</span>
+            <span class="material-symbols-outlined" style="font-size:16px">payments</span>
           </div>
-          <h4 class="font-headline font-bold text-sm">Total 3 cuentas</h4>
+          <h4 class="font-headline font-bold text-sm" title="Real cashflow = excluye transferencias internas BNP↔hijas">Real cashflow</h4>
         </div>
       </div>
       <div class="grid grid-cols-2 gap-2 text-center">
-        <div class="bg-white/10 rounded-lg p-2">
-          <div class="text-[9px] uppercase tracking-wider opacity-60">+ In</div>
-          <div class="font-headline text-base font-bold tabular-nums">\${fmt(totalCredits)}</div>
-          <div class="text-[9px] opacity-60">\${totals.tx} tx</div>
+        <div class="bg-white/10 rounded-lg p-2" title="Ingresos reales — salary + reembolsos + ingresos terceros (excluye top-ups y pagos de Amex desde BNP)">
+          <div class="text-[9px] uppercase tracking-wider opacity-60">Real In</div>
+          <div class="font-headline text-base font-bold tabular-nums">\${fmt(realIn)}</div>
         </div>
-        <div class="bg-white/10 rounded-lg p-2">
-          <div class="text-[9px] uppercase tracking-wider opacity-60">− Out</div>
-          <div class="font-headline text-base font-bold tabular-nums">\${fmt(totalDebits)}</div>
+        <div class="bg-white/10 rounded-lg p-2" title="Gasto real — todas las compras (excluye prélèvements y top-ups)">
+          <div class="text-[9px] uppercase tracking-wider opacity-60">Real Out</div>
+          <div class="font-headline text-base font-bold tabular-nums">\${fmt(realOut)}</div>
         </div>
       </div>
       <div class="mt-2 bg-white/15 rounded-lg p-2.5 text-center">
-        <div class="text-[9px] uppercase tracking-wider opacity-60">Neto</div>
-        <div class="font-headline text-xl font-bold tabular-nums \${totalNet >= 0 ? "" : "text-red-300"}">\${fmt(totalNet)}</div>
+        <div class="text-[9px] uppercase tracking-wider opacity-60">Net real</div>
+        <div class="font-headline text-xl font-bold tabular-nums \${realNet >= 0 ? "" : "text-red-300"}">\${fmt(realNet)}</div>
+      </div>
+      <div class="mt-2 text-[10px] text-center opacity-50">
+        \${internalMoved > 0 ? "↺ " + fmt(internalMoved) + " moved internally" : "no internal moves"}
       </div>\`;
 
     // Re-bind the edit button for BNP since it was just rendered
@@ -992,6 +1038,121 @@ export function renderDashboard(period) {
   }
 
   let openBnpBalanceEditor = () => {};   // populated below
+
+  // ─── Pending items (receivables, payables, reimbursements) ──────────────
+  let pendingData = null;
+  async function loadPending() {
+    const includeSettled = document.getElementById("pendingShowSettled")?.checked ? "1" : "0";
+    const r = await fetch("/api/pending.json?key=" + encodeURIComponent(key) + "&include_settled=" + includeSettled);
+    if (!r.ok) return;
+    pendingData = await r.json();
+    renderPending(pendingData);
+  }
+  const KIND_META = {
+    receivable:    { emoji: "💰", label: "Owed to me",    chipClr: "bg-emerald-100 text-emerald-800" },
+    payable:       { emoji: "📤", label: "I owe",         chipClr: "bg-red-100 text-red-800" },
+    reimbursement: { emoji: "🔁", label: "Reimbursement", chipClr: "bg-blue-100 text-blue-800" },
+  };
+  function renderPending(d) {
+    const t = d.totals;
+    document.getElementById("pendingTotals").innerHTML = [
+      \`<div class="rounded-lg bg-emerald-50 border border-emerald-200 px-3 py-2">
+        <div class="text-[10px] uppercase tracking-wider text-emerald-700 font-bold">💰 Owed to me</div>
+        <div class="font-headline text-lg font-bold text-emerald-900 tabular-nums">€\${fmt(t.receivable).replace("€","")}</div>
+      </div>\`,
+      \`<div class="rounded-lg bg-red-50 border border-red-200 px-3 py-2">
+        <div class="text-[10px] uppercase tracking-wider text-red-700 font-bold">📤 I owe</div>
+        <div class="font-headline text-lg font-bold text-red-900 tabular-nums">€\${fmt(t.payable).replace("€","")}</div>
+      </div>\`,
+      \`<div class="rounded-lg bg-blue-50 border border-blue-200 px-3 py-2">
+        <div class="text-[10px] uppercase tracking-wider text-blue-700 font-bold">🔁 Reimbursements</div>
+        <div class="font-headline text-lg font-bold text-blue-900 tabular-nums">€\${fmt(t.reimbursement).replace("€","")}</div>
+      </div>\`,
+      \`<div class="rounded-lg bg-on-surface text-white px-3 py-2">
+        <div class="text-[10px] uppercase tracking-wider opacity-60 font-bold">Net pending</div>
+        <div class="font-headline text-lg font-bold tabular-nums \${t.net >= 0 ? "" : "text-red-300"}">\${fmt(t.net)}</div>
+      </div>\`,
+    ].join("");
+
+    const list = document.getElementById("pendingList");
+    if (!d.rows.length) {
+      list.innerHTML = \`<div class="text-xs text-outline italic p-4 text-center">No pending items. Click "+ Add item" to log a receivable, payable, or reimbursement.</div>\`;
+      return;
+    }
+    list.innerHTML = d.rows.map((r) => {
+      const meta = KIND_META[r.kind] || { emoji: "?", label: r.kind, chipClr: "bg-surface-container text-outline" };
+      const settled = r.status === "settled";
+      const settledMark = settled ? \`<span class="text-[9px] uppercase tracking-wider text-primary font-bold">SETTLED</span>\` : "";
+      return \`<div class="flex items-center gap-2 px-3 py-2 rounded-lg \${settled ? "bg-surface-container-low opacity-60" : "bg-surface-container-low hover:bg-surface-container"}">
+        <span class="px-1.5 py-0.5 rounded text-[10px] font-bold \${meta.chipClr} flex-shrink-0">\${meta.emoji} \${meta.label}</span>
+        <div class="flex-1 min-w-0">
+          <div class="text-sm font-medium text-on-surface truncate">\${escapeHtml(r.who)} \${settledMark}</div>
+          \${r.description ? \`<div class="text-[11px] text-outline truncate">\${escapeHtml(r.description)}\${r.expected_date ? " · expects " + escapeHtml(r.expected_date) : ""}</div>\` : (r.expected_date ? \`<div class="text-[11px] text-outline">expects \${escapeHtml(r.expected_date)}</div>\` : "")}
+        </div>
+        <div class="font-headline font-bold tabular-nums text-on-surface \${r.kind === "payable" ? "text-error" : ""}">€\${fmt(r.amount_eur).replace("€","")}</div>
+        \${settled ? "" : \`<button class="pendingSettle text-[10px] px-2 py-1 rounded bg-primary-container text-on-primary-container hover:opacity-90" data-id="\${r.id}" title="Mark settled">✓</button>\`}
+        <button class="pendingDelete text-[10px] px-1.5 py-1 rounded text-outline hover:text-error hover:bg-error-container" data-id="\${r.id}" title="Delete">🗑</button>
+      </div>\`;
+    }).join("");
+
+    list.querySelectorAll(".pendingSettle").forEach((b) => {
+      b.onclick = async () => {
+        const id = parseInt(b.dataset.id, 10);
+        await fetch("/api/pending?key=" + encodeURIComponent(key), {
+          method: "POST", headers: { "content-type": "application/json" },
+          body: JSON.stringify({ op: "settle", payload: { id } }),
+        });
+        await loadPending();
+      };
+    });
+    list.querySelectorAll(".pendingDelete").forEach((b) => {
+      b.onclick = async () => {
+        if (!confirm("Delete this pending item?")) return;
+        const id = parseInt(b.dataset.id, 10);
+        await fetch("/api/pending?key=" + encodeURIComponent(key), {
+          method: "POST", headers: { "content-type": "application/json" },
+          body: JSON.stringify({ op: "delete", payload: { id } }),
+        });
+        await loadPending();
+      };
+    });
+  }
+  // Wire add form (idempotent)
+  setTimeout(() => {
+    const addBtn  = document.getElementById("pendingAddBtn");
+    const form    = document.getElementById("pendingAddForm");
+    const saveBtn = document.getElementById("pfSave");
+    const cancel  = document.getElementById("pfCancel");
+    const settled = document.getElementById("pendingShowSettled");
+    if (addBtn) addBtn.onclick = () => {
+      form.classList.toggle("hidden");
+      if (!form.classList.contains("hidden")) document.getElementById("pfWho").focus();
+    };
+    if (cancel) cancel.onclick = () => { form.classList.add("hidden"); };
+    if (saveBtn) saveBtn.onclick = async () => {
+      const kind     = document.getElementById("pfKind").value;
+      const who      = document.getElementById("pfWho").value.trim();
+      const amount   = parseFloat(document.getElementById("pfAmount").value);
+      const desc     = document.getElementById("pfDesc").value.trim();
+      const expected = document.getElementById("pfExpected").value.trim();
+      if (!who || !Number.isFinite(amount) || amount <= 0) {
+        alert("Need who + a positive amount"); return;
+      }
+      const r = await fetch("/api/pending?key=" + encodeURIComponent(key), {
+        method: "POST", headers: { "content-type": "application/json" },
+        body: JSON.stringify({ payload: {
+          kind, who, amount_eur: amount,
+          description: desc || null, expected_date: expected || null,
+        }}),
+      });
+      if (!r.ok) { alert("Save failed: " + r.status); return; }
+      ["pfWho","pfAmount","pfDesc","pfExpected"].forEach((id) => document.getElementById(id).value = "");
+      form.classList.add("hidden");
+      await loadPending();
+    };
+    if (settled) settled.onchange = loadPending;
+  }, 100);
+  window.loadPending = loadPending;
 
   let auditData = null;
   async function loadAuditBadge(period) {
@@ -1577,8 +1738,7 @@ export function renderDashboard(period) {
     const withBudget  = allRows.filter((r) => r.budget_eur > 0).length;
     const pctOverall  = budgetTotal > 0 ? Math.round((actualTotal / budgetTotal) * 1000) / 10 : null;
 
-    // Single stats line + one toggle: "Mostrar sin presupuesto".
-    const showAll = activeFilter === "all";
+    // Stats line — single source of truth, no toggle (filter input below does the work)
     const statsClr = pctOverall == null ? "text-outline" : pctOverall > 100 ? "text-error" : pctOverall > 85 ? "text-warn" : "text-primary";
     const chipsEl = document.getElementById("filterChips");
     chipsEl.innerHTML = \`
@@ -1587,14 +1747,7 @@ export function renderDashboard(period) {
         plan <strong class="text-on-surface">€\${fmt(budgetTotal).replace("€","")}</strong> ·
         real <strong class="text-on-surface">€\${fmt(actualTotal).replace("€","")}</strong>
         \${pctOverall != null ? \`(<span class="\${statsClr} font-semibold">\${pctOverall}%</span>)\` : ""}
-      </div>
-      <button id="toggleNoBudget" class="px-3 py-1 rounded-full text-[11px] font-semibold transition-colors \${showAll ? "bg-primary text-on-primary" : "bg-surface-container text-outline hover:bg-surface-container-high"}">
-        \${showAll ? "✓ " : ""}Mostrar sin presupuesto
-      </button>\`;
-    document.getElementById("toggleNoBudget").onclick = () => {
-      activeFilter = showAll ? "budgeted" : "all";
-      render(currentData);
-    };
+      </div>\`;
 
     // Wire sortable headers + filter input (idempotent — overwrites onclick)
     document.querySelectorAll("[data-sort]").forEach((th) => {
@@ -1623,7 +1776,7 @@ export function renderDashboard(period) {
       pct:    (r) => r.pct_used == null ? -1 : r.pct_used,
     };
     const filteredCats = allRows
-      .filter((r) => showAll ? true : (r.budget_eur > 0 || r.actual_eur > 0))
+      .filter((r) => r.budget_eur > 0 || r.actual_eur > 0)
       .filter((r) => !filterQ ? true : (
         (CAT_META[r.category]?.label || r.category).toLowerCase().includes(filterQ) ||
         r.category.toLowerCase().includes(filterQ)

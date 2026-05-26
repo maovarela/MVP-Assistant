@@ -167,6 +167,18 @@ db.exec(`
     PRIMARY KEY (period, category)
   );
 
+  CREATE TABLE IF NOT EXISTS pending_items (
+    id            INTEGER PRIMARY KEY AUTOINCREMENT,
+    kind          TEXT NOT NULL CHECK(kind IN ('receivable','payable','reimbursement')),
+    who           TEXT NOT NULL,
+    amount_eur    REAL NOT NULL,
+    description   TEXT,
+    expected_date TEXT,
+    status        TEXT NOT NULL DEFAULT 'open' CHECK(status IN ('open','settled','cancelled')),
+    created_at    TEXT NOT NULL DEFAULT (datetime('now')),
+    settled_at    TEXT
+  );
+
   CREATE INDEX IF NOT EXISTS idx_incomes_period           ON incomes(period);
   CREATE INDEX IF NOT EXISTS idx_fixed_expenses_period    ON fixed_expenses(period);
   CREATE INDEX IF NOT EXISTS idx_variable_expenses_period ON variable_expenses(period);
@@ -910,6 +922,55 @@ export function deleteBudgetRow({ kind, label, period }) {
   let sql = `DELETE FROM ${tbl} WHERE label = ?`;
   if (period) { sql += ` AND period = ?`; args.push(period); }
   const r = db.prepare(sql).run(...args);
+  return { ok: true, deleted: r.changes };
+}
+
+/** Pending items — receivables (people owe me), payables (I owe people),
+ *  reimbursements waiting (insurance, transport refunds). Not tied to any
+ *  account or period — pure note-keeping. */
+export function listPendingItems({ include_settled = false } = {}) {
+  const where = include_settled ? "" : "WHERE status = 'open'";
+  const rows = db.prepare(`
+    SELECT * FROM pending_items ${where}
+    ORDER BY status ASC, expected_date IS NULL, expected_date ASC, created_at DESC
+  `).all();
+  const totals = { receivable: 0, payable: 0, reimbursement: 0 };
+  for (const r of rows) {
+    if (r.status === "open") totals[r.kind] += r.amount_eur;
+  }
+  totals.net = Math.round((totals.receivable + totals.reimbursement - totals.payable) * 100) / 100;
+  for (const k of Object.keys(totals)) totals[k] = Math.round(totals[k] * 100) / 100;
+  return { rows, totals };
+}
+
+export function upsertPendingItem({ id, kind, who, amount_eur, description, expected_date, status }) {
+  if (id) {
+    const sets = [];
+    const args = [];
+    if (kind !== undefined)          { sets.push("kind = ?");          args.push(kind); }
+    if (who !== undefined)           { sets.push("who = ?");           args.push(who); }
+    if (amount_eur !== undefined)    { sets.push("amount_eur = ?");    args.push(amount_eur); }
+    if (description !== undefined)   { sets.push("description = ?");   args.push(description ?? null); }
+    if (expected_date !== undefined) { sets.push("expected_date = ?"); args.push(expected_date ?? null); }
+    if (status !== undefined) {
+      sets.push("status = ?"); args.push(status);
+      if (status === "settled") { sets.push("settled_at = datetime('now')"); }
+    }
+    if (!sets.length) throw new Error("nothing to update");
+    args.push(id);
+    db.prepare(`UPDATE pending_items SET ${sets.join(", ")} WHERE id = ?`).run(...args);
+    return db.prepare(`SELECT * FROM pending_items WHERE id = ?`).get(id);
+  }
+  if (!kind || !who || amount_eur == null) throw new Error("kind, who, amount_eur required");
+  const r = db.prepare(`
+    INSERT INTO pending_items (kind, who, amount_eur, description, expected_date)
+    VALUES (?, ?, ?, ?, ?)
+  `).run(kind, who, amount_eur, description ?? null, expected_date ?? null);
+  return db.prepare(`SELECT * FROM pending_items WHERE id = ?`).get(r.lastInsertRowid);
+}
+
+export function deletePendingItem(id) {
+  const r = db.prepare(`DELETE FROM pending_items WHERE id = ?`).run(id);
   return { ok: true, deleted: r.changes };
 }
 

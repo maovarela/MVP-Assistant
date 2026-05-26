@@ -37,6 +37,7 @@ import db, {
   getConsolidatedHistory,
   deleteBudgetRow,
   upsertCategoryBudget, copyCategoryBudgets,
+  listPendingItems, upsertPendingItem, deletePendingItem,
 } from "./memory.js";
 import { categorize as keywordCategorize } from "./bankCsv.js";
 import { refreshCurrentMonthFx } from "./fx.js";
@@ -428,6 +429,36 @@ app.post("/api/transactions/category", express.json({ limit: "100kb" }), (req, r
     res.json({ ok: true, changed });
   } catch (err) {
     console.error("[tx category]", err);
+    res.status(400).json({ error: err.message });
+  }
+});
+
+// Pending items — receivables, payables, reimbursements (no account binding).
+app.get("/api/pending.json", (req, res) => {
+  if (!requireKey(req, res, "DASH_KEY")) return;
+  try {
+    const include_settled = req.query.include_settled === "1";
+    res.json(listPendingItems({ include_settled }));
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+app.post("/api/pending", express.json({ limit: "50kb" }), (req, res) => {
+  if (!requireKey(req, res, "DASH_KEY")) return;
+  try {
+    const { op, payload } = req.body || {};
+    if (op === "delete") {
+      if (!payload || !payload.id) return res.status(400).json({ error: "id required" });
+      return res.json(deletePendingItem(payload.id));
+    }
+    if (op === "settle") {
+      if (!payload || !payload.id) return res.status(400).json({ error: "id required" });
+      return res.json({ ok: true, row: upsertPendingItem({ id: payload.id, status: "settled" }) });
+    }
+    // create or update (id present → update)
+    const row = upsertPendingItem(payload || {});
+    res.json({ ok: true, row });
+  } catch (err) {
+    console.error("[pending mutate]", err);
     res.status(400).json({ error: err.message });
   }
 });
