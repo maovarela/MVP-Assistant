@@ -2009,7 +2009,7 @@ export function renderDashboard(period) {
     if (!filteredCats.length) {
       tbl.innerHTML = \`<tr><td colspan="5" class="px-3 py-8 text-outline italic text-center">No categories for \${d.period}</td></tr>\`;
     } else {
-      tbl.innerHTML = filteredCats.map((c) => {
+      const rowsHtml = filteredCats.map((c) => {
         const pct = c.pct_used;
         const meta = CAT_META[c.category] || { emoji: "", label: c.category };
         const pctClr = pct == null ? "bg-surface-container text-on-surface-variant" :
@@ -2023,7 +2023,7 @@ export function renderDashboard(period) {
         const subItems = (c.fixed_items || []).length
           ? \`<div class="text-[10px] text-outline pl-6 mt-0.5">\${c.fixed_items.map((it) => it.label + " " + fmt(it.budget_eur)).join(" · ")}</div>\`
           : "";
-        return \`<tr class="border-b border-outline-variant/15 last:border-0 hover:bg-surface-container-low cursor-pointer" onclick="openCategoryDrill('\${c.category}', '\${d.period}')">
+        return \`<tr class="border-b border-outline-variant/15 hover:bg-surface-container-low cursor-pointer" onclick="openCategoryDrill('\${c.category}', '\${d.period}')">
           <td class="px-3 py-2.5">
             <div class="flex items-center gap-2">
               <span class="material-symbols-outlined text-outline" style="font-size: 16px">\${ICON[c.category] || ICON.other}</span>
@@ -2037,6 +2037,28 @@ export function renderDashboard(period) {
           <td class="px-3 py-2.5 text-right"><span class="px-2 py-0.5 rounded-full text-[10px] font-semibold \${pctClr}">\${fmtPct(pct)}</span></td>
         </tr>\`;
       }).join("");
+
+      // Totals row — big, bold, color-coded, at the bottom of the table.
+      const totBudget = filteredCats.reduce((s, r) => s + (r.budget_eur || 0), 0);
+      const totActual = filteredCats.reduce((s, r) => s + (r.actual_eur || 0), 0);
+      const totDelta  = totBudget - totActual;
+      const totPct    = totBudget > 0 ? Math.round((totActual / totBudget) * 1000) / 10 : null;
+      const totDeltaClr = totBudget === 0 ? "text-outline" : totDelta >= 0 ? "text-primary" : "text-error";
+      const totPctClr   = totPct == null ? "bg-surface-container text-on-surface-variant" :
+                          totPct > 100 ? "bg-error-container text-error" :
+                          totPct > 80  ? "bg-warn-container text-warn"   : "bg-primary-container text-on-primary-container";
+      const totalsRow = \`<tr class="bg-surface-container border-t-2 border-on-surface/30">
+        <td class="px-3 py-4">
+          <div class="font-headline font-bold text-base text-on-surface">TOTAL</div>
+          <div class="text-[11px] text-outline">\${filteredCats.length} \${filteredCats.length === 1 ? "category" : "categories"}</div>
+        </td>
+        <td class="px-3 py-4 text-right tabular-nums font-headline font-bold text-lg text-on-surface">\${fmt(totBudget)}</td>
+        <td class="px-3 py-4 text-right tabular-nums font-headline font-bold text-lg text-on-surface">\${fmt(totActual)}</td>
+        <td class="px-3 py-4 text-right tabular-nums font-headline font-bold text-lg \${totDeltaClr}">\${totBudget === 0 ? "—" : (totDelta >= 0 ? "+" : "") + fmt(totDelta)}</td>
+        <td class="px-3 py-4 text-right"><span class="px-2.5 py-1 rounded-full text-sm font-bold \${totPctClr}">\${fmtPct(totPct)}</span></td>
+      </tr>\`;
+
+      tbl.innerHTML = rowsHtml + totalsRow;
     }
 
     renderCharts(d);
