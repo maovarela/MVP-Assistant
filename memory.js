@@ -1691,16 +1691,26 @@ export function listCategoryTransactions({ category, period }) {
  *  Includes months that only have actuals (no planned budget) so the user can
  *  still navigate to them in the picker and see what was spent. */
 export function listBudgetPeriods() {
-  return db.prepare(`
+  const rows = db.prepare(`
     SELECT period FROM (
       SELECT period FROM incomes
       UNION SELECT period FROM fixed_expenses
       UNION SELECT period FROM variable_expenses
       UNION SELECT period FROM debts
       UNION SELECT period FROM fx_rates
+      UNION SELECT period FROM category_budgets
       UNION SELECT strftime('%Y-%m', date) AS period FROM transactions WHERE date IS NOT NULL
-    ) GROUP BY period ORDER BY period DESC
+    ) GROUP BY period
   `).all().map((r) => r.period);
+  // Also include the next 6 months from today so the user can plan ahead
+  // (June, July…) even before any data exists for them.
+  const now = new Date();
+  const set = new Set(rows);
+  for (let i = 0; i <= 6; i++) {
+    const d = new Date(now.getFullYear(), now.getMonth() + i, 1);
+    set.add(`${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`);
+  }
+  return [...set].sort().reverse();
 }
 
 export default db;

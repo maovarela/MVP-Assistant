@@ -449,7 +449,7 @@ export function renderDashboard(period) {
         <div class="text-xs text-outline" id="budgetModalSub">—</div>
       </div>
       <div class="flex items-center gap-2">
-        <button id="budgetCloneBtn" class="text-xs font-semibold text-primary hover:underline" title="Copy budget from another month">Copy from…</button>
+        <button id="budgetCloneBtn" class="text-xs font-semibold text-primary hover:underline" title="Pre-fill empty categories with another month's values">📋 Use another month as template</button>
         <button id="budgetClose" class="w-9 h-9 rounded-full hover:bg-surface-container flex items-center justify-center">
           <span class="material-symbols-outlined">close</span>
         </button>
@@ -593,20 +593,44 @@ export function renderDashboard(period) {
   let histLastData = null;
 
   function ensureHistoricoInit() {
-    if (histInitialized) return;
-    const periods = (currentData?.available_periods || [currentData?.period]).filter(Boolean);
-    const years = [...new Set(periods.map((p) => p.slice(0, 4)))].sort().reverse();
-    const MONTH_LABELS = ["Ene","Feb","Mar","Abr","May","Jun","Jul","Ago","Sep","Oct","Nov","Dic"];
+    // Always rebuild the year/month options. histInitialized only blocks the
+    // account-chip + category-filter init below (one-shot). The selectors
+    // themselves are idempotent — we rebuild every time so they never end up
+    // empty (the "checkmark glitch" bug) when currentData wasn't ready.
+    const now = new Date();
+    const fallback = \`\${now.getFullYear()}-\${String(now.getMonth() + 1).padStart(2,"0")}\`;
+    const periods = (currentData?.available_periods?.length
+      ? currentData.available_periods
+      : [currentData?.period, fallback].filter(Boolean));
+    let years = [...new Set(periods.map((p) => p.slice(0, 4)))].sort().reverse();
+    if (!years.length) {
+      // Last-resort: 3 years around today
+      const y = now.getFullYear();
+      years = [String(y + 1), String(y), String(y - 1), String(y - 2)];
+    }
+    const MONTH_LABELS = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
     const months = Array.from({ length: 12 }, (_, i) => ({ v: String(i+1).padStart(2,"0"), l: MONTH_LABELS[i] }));
     const yearOpts  = years.map((y)   => \`<option value="\${y}">\${y}</option>\`).join("");
     const monthOpts = months.map((m)  => \`<option value="\${m.v}">\${m.l}</option>\`).join("");
-    ["histYearFrom","histYearTo"].forEach((id) => { const el = document.getElementById(id); if (el) el.innerHTML = yearOpts; });
-    ["histMonthFrom","histMonthTo"].forEach((id) => { const el = document.getElementById(id); if (el) el.innerHTML = monthOpts; });
-    // default range: current month only
-    const cur = currentData?.period || periods[0] || "";
-    if (cur) {
+    ["histYearFrom","histYearTo"].forEach((id) => {
+      const el = document.getElementById(id);
+      if (!el) return;
+      const prev = el.value;
+      el.innerHTML = yearOpts;
+      if (prev && years.includes(prev)) el.value = prev;
+    });
+    ["histMonthFrom","histMonthTo"].forEach((id) => {
+      const el = document.getElementById(id);
+      if (!el) return;
+      const prev = el.value;
+      el.innerHTML = monthOpts;
+      if (prev) el.value = prev;
+    });
+    // First-time default: current month range
+    if (!histInitialized) {
+      const cur = currentData?.period || fallback;
       const [yy, mm] = cur.split("-");
-      ["histYearFrom","histYearTo"].forEach((id) => { const el = document.getElementById(id); if (el) el.value = yy; });
+      ["histYearFrom","histYearTo"].forEach((id) => { const el = document.getElementById(id); if (el && years.includes(yy)) el.value = yy; });
       ["histMonthFrom","histMonthTo"].forEach((id) => { const el = document.getElementById(id); if (el) el.value = mm; });
     }
     // Account chips
@@ -898,6 +922,10 @@ export function renderDashboard(period) {
     loadBnpCashflow(currentData.period);
     // Pending items panel
     loadPending();
+    // If the user is already on the Histórico tab, refresh its selectors with
+    // the now-loaded available_periods (fixes the "empty dropdown checkmark" bug
+    // when the page is opened directly with ?tab=historico).
+    if (activeTab === "historico") loadHistorico();
   }
 
   // Brand-style account marks: small SVG/text-logo wordmark in the brand color
@@ -1188,11 +1216,38 @@ export function renderDashboard(period) {
   window.loadPending = loadPending;
 
   // ─── Categorization audit ───────────────────────────────────────────────
+  // Dismissed tx ids are stored in localStorage so they don't keep showing up
+  // every time the dashboard reloads. Persistent within this browser.
+  const DISMISS_KEY = "catAuditDismissed";
+  function getDismissedIds() {
+    try { return new Set(JSON.parse(localStorage.getItem(DISMISS_KEY) || "[]")); }
+    catch { return new Set(); }
+  }
+  function addDismissedId(id) {
+    const s = getDismissedIds(); s.add(id);
+    localStorage.setItem(DISMISS_KEY, JSON.stringify([...s]));
+  }
+  function clearDismissed() { localStorage.removeItem(DISMISS_KEY); }
+  window.clearAuditDismissed = clearDismissed;  // exposed for debugging
+
   let catAuditData = null;
   async function loadCatAuditBadge() {
     const r = await fetch("/api/categorization-audit.json?key=" + encodeURIComponent(key));
     if (!r.ok) return;
-    catAuditData = await r.json();
+    const raw = await r.json();
+    const dismissed = getDismissedIds();
+    // Filter out previously-dismissed mismatches
+    catAuditData = {
+      ...raw,
+      mismatches: raw.mismatches.filter((m) => !dismissed.has(m.id)),
+      dismissed_count: raw.mismatches.filter((m) => dismissed.has(m.id)).length,
+    };
+    // Rebuild by_change to reflect filtered list
+    catAuditData.by_change = {};
+    for (const m of catAuditData.mismatches) {
+      const k = m.current + "→" + m.suggested;
+      catAuditData.by_change[k] = (catAuditData.by_change[k] || 0) + 1;
+    }
     const btn = document.getElementById("catAuditBtn");
     const cnt = document.getElementById("catAuditCount");
     if (catAuditData.mismatches.length > 0) {
@@ -1269,8 +1324,18 @@ export function renderDashboard(period) {
     });
     body.querySelectorAll(".catAuditDismiss").forEach((b) => {
       b.onclick = () => {
+        const id = parseInt(b.dataset.id, 10);
+        addDismissedId(id);  // persist so it doesn't come back on reload
         const row = b.closest("tr");
-        row.style.display = "none"; // dismissed = just hide, no DB change
+        row.remove();
+        // Update remaining count in header + badge
+        const remaining = body.querySelectorAll("tbody tr").length;
+        document.getElementById("catAuditSub").innerHTML =
+          \`<strong>\${remaining}</strong> remaining (1 dismissed this session). Dismissed rows won't reappear on reload.\`;
+        document.getElementById("catAuditCount").textContent = remaining;
+        if (remaining === 0) {
+          body.innerHTML = \`<div class="p-8 text-center text-outline italic">All clear — no more suggestions.</div>\`;
+        }
       };
     });
   }
@@ -1602,9 +1667,9 @@ export function renderDashboard(period) {
   document.getElementById("budgetClose").onclick = () => document.getElementById("budgetModal").classList.add("hidden");
   document.getElementById("budgetDoneBtn").onclick = () => document.getElementById("budgetModal").classList.add("hidden");
   document.getElementById("budgetCloneBtn").onclick = async () => {
-    const fromPeriod = prompt("Copiar presupuesto por categoría de qué periodo? (YYYY-MM)\\nEjemplo: 2026-04");
+    const fromPeriod = prompt("Which month do you want to copy budgets from?\\nType in YYYY-MM format. Example: 2026-05 to use May 2026 as template for " + currentData.period + ".");
     if (!fromPeriod || !/^\d{4}-\d{2}$/.test(fromPeriod)) return;
-    if (!confirm("Only copies categories that don't have a budget in " + currentData.period + ". Continue?")) return;
+    if (!confirm("Only fills in empty categories (won't overwrite values you already set in " + currentData.period + "). Continue?")) return;
     const r = await fetch("/api/budget?key=" + encodeURIComponent(key), {
       method: "POST", headers: { "content-type": "application/json" },
       body: JSON.stringify({ period: currentData.period, kind: "copy_categories", payload: { srcPeriod: fromPeriod } }),
