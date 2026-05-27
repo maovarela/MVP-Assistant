@@ -750,8 +750,8 @@ export function renderDashboard(period) {
     if (statsEl) {
       const all = d.count || 0;
       const shown = rows.length;
-      const filtered = shown !== all ? \` (de <strong>\${all}</strong> sin filtros)\` : "";
-      statsEl.innerHTML = \`<strong class="text-on-surface">\${shown}</strong> transacciones\${filtered} · <span class="text-error">€\${fmt(fOut)} salidas</span> · <span class="text-primary">€\${fmt(fIn)} entradas</span> · neto <strong class="\${fIn - fOut >= 0 ? "text-primary" : "text-error"}">€\${fmt(fIn - fOut)}</strong>\`;
+      const filtered = shown !== all ? \` (of <strong>\${all}</strong> unfiltered)\` : "";
+      statsEl.innerHTML = \`<strong class="text-on-surface">\${shown}</strong> transactions\${filtered} · <span class="text-error">€\${fmt(fOut)} out</span> · <span class="text-primary">€\${fmt(fIn)} in</span> · net <strong class="\${fIn - fOut >= 0 ? "text-primary" : "text-error"}">€\${fmt(fIn - fOut)}</strong>\`;
     }
     if (!rows.length) { tbody.innerHTML = \`<tr><td colspan="5" class="px-3 py-8 text-center text-outline italic">No transactions for filters</td></tr>\`; return; }
 
@@ -790,10 +790,22 @@ export function renderDashboard(period) {
         const ok = await changeCategory(txId, newCat);
         if (ok) {
           sel.dataset.orig = newCat;
-          sel.classList.add("ring-2", "ring-primary");
-          setTimeout(() => sel.classList.remove("ring-2", "ring-primary"), 900);
+          // Flash the row to confirm save
+          const row = sel.closest("tr");
+          if (row) {
+            row.classList.add("ring-2", "ring-primary", "ring-inset", "bg-primary-container/20");
+            setTimeout(() => row.classList.remove("ring-2", "ring-primary", "ring-inset", "bg-primary-container/20"), 600);
+          }
+          // Update cached row so filter logic (incl. category dropdown) re-applies
+          if (histLastData?.rows) {
+            const cached = histLastData.rows.find((r) => r.id === txId);
+            if (cached) cached.category = newCat;
+            // Re-render after the flash so the row disappears smoothly if it
+            // no longer matches the active category filter.
+            setTimeout(() => renderHistorico(histLastData), 650);
+          }
         } else {
-          alert("Error guardando categoría");
+          alert("Save failed for category change");
           sel.value = sel.dataset.orig;
         }
         sel.disabled = false;
