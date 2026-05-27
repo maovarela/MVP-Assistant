@@ -1653,23 +1653,28 @@ export function renderDashboard(period) {
     // (typing). Native <input type=number> only fires 'change' on blur, so users
     // who type a value and immediately close the modal would lose their edit.
     async function saveBudgetInput(input) {
-      if (input.dataset.saving === "1") return;
       const category = input.dataset.category;
       const orig = parseFloat(input.dataset.orig);
       const val  = parseFloat(input.value);
-      if (!Number.isFinite(val) || val === orig) return;
+      console.log("[budget save] try:", { category, orig, val, raw: input.value });
+      if (input.dataset.saving === "1") { console.log("[budget save] skipped — already saving"); return; }
+      if (!Number.isFinite(val))       { console.log("[budget save] skipped — NaN value"); return; }
+      if (val === orig)                { console.log("[budget save] skipped — same as original"); return; }
       input.dataset.saving = "1";
       try {
         const r = await fetch("/api/budget?key=" + encodeURIComponent(key), {
           method: "POST", headers: { "content-type": "application/json" },
           body: JSON.stringify({ period: d.period, kind: "category", payload: { category, budget_eur: val } }),
         });
+        console.log("[budget save] response:", r.status);
         if (r.ok) {
           input.dataset.orig = val;
           input.classList.add("ring-2", "ring-primary");
           setTimeout(() => input.classList.remove("ring-2", "ring-primary"), 1000);
+          console.log("[budget save] ✓ persisted, reloading dashboard");
           // Reload background dashboard data (refreshes the table behind the modal)
           await load(d.period);
+          console.log("[budget save] ✓ dashboard reloaded");
           // Surgical update of THIS row's actual/% cells with fresh data
           const row = input.closest("tr");
           const fresh = (currentData?.category_rows || []).find((x) => x.category === category)
