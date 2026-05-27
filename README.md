@@ -11,13 +11,13 @@ Personal PM + finance agent. Telegram bot backed by an OpenAI-compatible LLM (Ge
 - 🛎️ **Proactive watchman** — scans every 2h between 08:00 and 22:00 Paris; stays silent by default, only interrupts for anomalous charges, deadlines today, calendar conflicts, etc.
 - ⚡ **Webhook-based** — instant Telegram replies, no polling lag
 
-## Architecture (3-agent split)
+## Architecture (4-agent split)
 
 ```
                     ┌──────────────────────────────────────┐
                     │   SOURCES                            │
                     │   Gmail · CSV/PDF · Notion           │
-                    │   Calendar (ICS) · Telegram          │
+                    │   Calendar (ICS) · Telegram · Web    │
                     └──────┬─────────────────┬─────────────┘
                            │                 │
               ┌────────────▼──────┐    ┌─────▼────────────────┐
@@ -34,17 +34,31 @@ Personal PM + finance agent. Telegram bot backed by an OpenAI-compatible LLM (Ge
               └────────┬────────────────────────┬──────────────┘
                        │                        │
               ┌────────▼──────────┐             │
-              │ ② ANALYST         │             │
+              │ ② MAIN AGENT      │             │
               │ smart LLM         │             │
               │ user msg + cron   │             │
-              │ tool-loop         │             │
-              └────────┬──────────┘             │
-                       │                        │
-                       ▼                        ▼
+              │ tool-loop, ~30    │             │
+              │ tools cross-domain│             │
+              └────┬───┬──────────┘             │
+                   │   │  delegates             │
+                   │   ▼  finance queries       │
+                   │  ┌──────────────────────┐  │
+                   │  │ ④ FINANCIAL ANALYST  │  │
+                   │  │ smart LLM, read-only │  │
+                   │  │ 12 finance tools     │  │
+                   │  │ ≤5 tool-loop rounds  │  │
+                   │  │ returns markdown     │  │
+                   │  └──────────────────────┘  │
+                   ▼                            ▼
               ┌────────────────────────────────────────────────┐
               │ OUTBOUND (broadcast → Telegram + WhatsApp*)    │
+              │ + Web dashboard (/dashboard)                    │
               └────────────────────────────────────────────────┘
 ```
+
+**Agent boundaries:**
+- **Main agent** handles cross-domain queries (tasks, calendar, email, Notion, simple finance) via ~30 tools. Owns conversation state, output to user.
+- **Financial Analyst** is invoked by the main agent via `analyst_query(question)` for multi-step finance analysis ("compare April vs March", "why did entertainment spike", "am I on track for savings"). Read-only — can't mutate data. Has a longer, finance-specific system prompt encoding all MECE/category/internal-transfer logic so it doesn't have to share context with non-finance flows. Returns markdown the main agent passes through verbatim.
 
 See `Notion → MVP-Assistant repo` page for full Mermaid diagrams.
 
@@ -52,14 +66,16 @@ See `Notion → MVP-Assistant repo` page for full Mermaid diagrams.
 
 ```
 MVP-Assistant/
-├── server.js                # Express + webhooks + scheduler + /debug/stats + /import/normalized
-├── agent.js                 # ② Analyst — conversational tool-use loop
+├── server.js                # Express + webhooks + scheduler + /debug/stats + /import/normalized + dashboard APIs
+├── agent.js                 # ② Main Agent — conversational tool-use loop (PM + finance + email + Notion)
+├── analyst.js               # ④ Financial Analyst subagent — read-only, 12 finance tools, tool-loop (called via analyst_query)
+├── advisor.js               # CFO-style monthly review (markdown), one-shot via financial_advisor_review tool
 ├── proactive.js             # ③ Proactive watchman — 2h scans, strict-JSON output
 ├── transactions.js          # ① Ingestor entrypoint — email/CSV/PDF
-├── bankCsv.js               # Deterministic Amex/Revolut CSV parsers (sign-correct, multi-section)
-├── dashboard.js             # HTML shell for /dashboard (Chart.js via CDN, mobile-first)
+├── bankCsv.js               # Deterministic Amex/Revolut/BNP parsers (sign-correct, multi-section, internal-transfer auto-flag)
+├── dashboard.js             # HTML shell for /dashboard (Overview + Transactions tabs, Chart.js via CDN, mobile-first)
 ├── fx.js                    # Free FX rate fetch (exchangerate.host + open.er-api fallback)
-├── memory.js                # SQLite layer: messages, projects, tasks, transactions, llm_calls
+├── memory.js                # SQLite layer: messages, projects, tasks, transactions, budgets, pending_items, llm_calls
 ├── email.js                 # IMAP reader (Gmail app password)
 ├── calendar.js              # Read-only Google Calendar via ICS
 ├── notion.js                # Notion read access
@@ -69,6 +85,7 @@ MVP-Assistant/
 ├── scripts/
 │   ├── import-local.mjs     # One-shot local importer for historic Amex/Revolut CSVs
 │   ├── seed-budget.mjs      # One-shot seed for the budget dashboard (uses budget-seed.json)
+│   ├── remove-uniqlo-cleopatra.mjs # One-shot variable_expenses cleanup example
 │   └── budget-seed.example.json # Template — copy to budget-seed.json (gitignored) and edit
 ├── railway.json
 ├── Procfile                 # web: node server.js
@@ -277,7 +294,9 @@ Detects drift between the parser regex (`bankCsv.js:categorize()`) and stored ca
 
 **Finance — budget planning:** `set_fx_rate`, `set_income`, `set_fixed_expense`, `add_variable_expense`, `set_debt`, `get_budget_summary`
 
-**Finance — analysis:** `financial_advisor_review` — CFO-style monthly review (markdown), runs a second LLM call with trend/anomaly context. Use for "dame consejos / analiza mis finanzas".
+**Finance — analysis:**
+- `financial_advisor_review` — CFO-style monthly review (markdown), one-shot LLM call with trend/anomaly context. Use for "dame consejos / analiza mis finanzas / qué opinas de mi mes".
+- `analyst_query(question)` — delegate to the Financial Analyst subagent ([analyst.js](analyst.js)). Use for multi-step or comparative finance questions ("compare April vs March", "why did entertainment spike vs last month", "am I on track for my annual savings"). The subagent has 12 read-only tools and iterates internally before returning markdown.
 
 **Notion:** `search_notion`, `read_notion_page`, `query_notion_database`
 

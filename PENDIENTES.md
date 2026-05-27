@@ -108,6 +108,34 @@ Para WhatsApp en Zentra (B2B SaaS de psicólogos con clientes pagando), **no usa
 - `whatsapp.js` Evolution API wrapper + endpoint `/webhook/whatsapp/<secret>` + `/wa` alias en Telegram (apagado por flag)
 - Send body compatible v1 y v2 de Evolution (envía `text` y `textMessage.text` simultáneo)
 
+### Shipped 2026-05-27 (Financial Analyst subagent + dashboard polish)
+
+**4ª agente: Financial Analyst subagente** (`analyst.js`):
+- Read-only, 12 tools especializados (get_dashboard_summary, compare_periods, get_consolidated_history, spend_by_category, spend_by_merchant, monthly_totals, spend_pace, get_account_cashflow, query_transactions, get_pending_items, get_fx_rate, get_category_transactions).
+- Tool-loop interno máx 5 rondas, fuerza respuesta final si excede.
+- ANALYST_SYSTEM_PROMPT encoded con TODAS las reglas: MECE per category, BNP-parent vs Amex/Revolut-children, is_internal_transfer semantics, tricky merchants (HENNER=health, SWISSLIFE=savings, PRELEVEMENT=internal, Top-up=internal, Naturalia=groceries, Carlos=health), pending items, FX. Output: markdown ≤300 words.
+- Main agent (`agent.js`) gana tool `analyst_query(question)` que delega queries financieras complejas. Devuelve `{markdown}` que el main pasa tal cual al usuario.
+- Trade-off: el analyst tiene un prompt MÁS LARGO sin inflar el contexto del main agent. Read-only = sin riesgo de corromper datos.
+
+**Dashboard polish UX (post-v3):**
+- **Future periods**: `listBudgetPeriods()` ahora incluye los próximos 6 meses → podés crear el budget de Junio/Julio antes de tener data (clickable en el period picker).
+- **Categorization audit Dismiss persistente**: localStorage (`catAuditDismissed`) recuerda qué sugerencias rechazaste → no vuelven a aparecer en próximos reloads. Window-exposed `clearAuditDismissed()` para resetear.
+- **Spending dial reemplazado** ("Would have left" → "Spent this month"): anillo único color-coded (green/amber/red según %), center muestra €spent · X% · de €income · €available still. Sin formulas matemáticas, sin "if conditional".
+- **TOTAL row al final** de la tabla Spending: typography Headline grande, color-coded, border-top 2px. Stats line chico arriba sigue ahí.
+- **"Use another month as template"** reemplaza "Copy from…" (más intuitivo). Prompt aclara: solo rellena categorías vacías, no sobreescribe.
+- **Edit Budget modal — fix surgical update**: después de un save, las celdas Actual y % de esa fila se actualizan inmediatamente con los datos frescos del backend. Antes la modal quedaba estática y el usuario pensaba que el save no funcionaba (sí funcionaba, pero la UI no reflejaba).
+- **Transactions inline category change — fix re-filter**: cambio inline ahora hace flash verde 600ms + actualiza `histLastData.rows` en caché + re-renderiza con filtros vigentes. Si tenés filtro "Other" y cambias una tx a "Shopping", el row desaparece automáticamente.
+- **Histórico filters i18n**: stats line traducido a inglés (era "transacciones · salidas · entradas · neto" → ahora "transactions · out · in · net"). Empty state también.
+- **Dropdown empty-state fix**: `ensureHistoricoInit()` ahora SIEMPRE puebla los selectores Year/Month (fallback a JS Date si no hay currentData). Antes daban un check vacío raro cuando entrabas a Histórico con `?tab=historico` antes de que `load()` completara.
+- **No-cache headers en `/dashboard`**: `Cache-Control: no-cache, no-store, must-revalidate` evita que el browser sirva JS viejo después de un deploy. ~50KB de HTML, hit insignificante vs pain de stale code.
+- **Audit modal regex bug fixes**:
+  - HENNER + AXA SANTE + MALAKOFF + ALAN + CPAM + AMELI + SECURITE SOCIALE movidos ANTES de la regla "vir sepa recu" → income. Antes los reembolsos de mutuelle se categorizaban como income.
+  - Naturalia eliminado de la regla restaurants, agregado a groceries.
+  - Pago Deuda variable_expense → category=debt (estaba en transfers → inflaba el donut transfers via attribution).
+  - Inversion PERCO variable_expense → category=savings (mismo problema).
+  - SWISSLIFE assurance ET → savings reforzado (ya estaba pero verificado).
+- **Audit modal UX**: checkboxes default OFF (opt-in, no opt-out), botón "Dismiss" per fila para rechazar sin aplicar, "Close (do nothing)" como salida segura, "Apply selected" en vez de "Apply all".
+
 ### Shipped 2026-05-26 (dashboard v3 — MECE per categoría + auditoría + pending)
 
 **Modelo de presupuesto refactorizado:**
