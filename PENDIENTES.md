@@ -108,6 +108,25 @@ Para WhatsApp en Zentra (B2B SaaS de psicólogos con clientes pagando), **no usa
 - `whatsapp.js` Evolution API wrapper + endpoint `/webhook/whatsapp/<secret>` + `/wa` alias en Telegram (apagado por flag)
 - Send body compatible v1 y v2 de Evolution (envía `text` y `textMessage.text` simultáneo)
 
+### Shipped 2026-05-27 (mobile pass — narrow viewport adaptation)
+
+Dashboard was desktop-first. User reported "tiene que verse más adaptado" on phone. Quick adjustments — all in `dashboard.js` HTML template with Tailwind `sm:` breakpoint (640px):
+
+| Component | Before (mobile) | After |
+|---|---|---|
+| Header | Logo + wordmark + 2 tabs + period picker → overflow at <420px | Wordmark hidden `<sm`, smaller logo (32px vs 36px), tabs/picker compact (`px-2.5`, `text-xs`) |
+| Spending table | 5 cols (Category, Budget, Actual, **Δ**, %) too wide | Δ col hidden on mobile (`%` already communicates over/under). Material icon hidden too (emoji enough). Smaller padding `px-2 sm:px-3`. |
+| Accounts grid | `grid-cols-1 md:grid-cols-4` → BNP+Amex+Revolut+Total stacked vertically (long scroll) | `grid-cols-2 md:grid-cols-4` — 2×2 on mobile, 4×1 desktop |
+| Transactions table | Account col + Date + dropdown ate merchant space | Account col hidden on mobile; account badge appears **inline within the merchant cell** with smaller font. Header `"Amount €"` → `"€"` |
+| Filter row separator | `\|` divider rendered as orphan line when wrapping | Hidden on mobile via `hidden sm:inline` |
+
+**Lesson reinforced**: every time I edit the HTML template, re-run the inline-`<script>` parse check (`new Function(html.match(/<script>...).[1])`) — the syntax error from yesterday (`"Mark \"" + who + "\"..."` rendering broken JS) was caught early this time by the same workflow.
+
+**Still desktop-only (deferred — not blocking phone usage):**
+- Edit budget modal: 4-col table fine on phone but Save button + Use-template + Close + Modal-title cram in header
+- Charts row: donut + variance progress bars stack vertically on `<lg`, currently fine but variance bars are tall
+- Period picker popover: `w-80` (320px) fixed width — may overflow on very narrow phones (<340px)
+
 ### Shipped 2026-05-27 (mutation UX overhaul — "dirty marker → explicit Save" pattern)
 
 **Problem the day exposed:** auto-save on `change`/`blur` events of `<input type=number>` and `<select>` was unreliable. When the user typed in the budget editor and immediately clicked X to close, no `change` event fired (only fires on blur) → save was lost → user thought "no funciona". The first fix attempted debounce + flush-on-close, which introduced race conditions for slow typing (a save in flight blocked the next one via a concurrency guard).
