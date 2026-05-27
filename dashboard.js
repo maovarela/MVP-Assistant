@@ -1199,6 +1199,9 @@ export function renderDashboard(period) {
     list.querySelectorAll(".pendingSettle").forEach((b) => {
       b.onclick = async () => {
         const id = parseInt(b.dataset.id, 10);
+        const row = b.closest("[class*='rounded-lg']");
+        const who = row?.querySelector(".text-on-surface")?.textContent?.trim() || "this item";
+        if (!confirm("Mark \"" + who + "\" as settled?")) return;
         await fetch("/api/pending?key=" + encodeURIComponent(key), {
           method: "POST", headers: { "content-type": "application/json" },
           body: JSON.stringify({ op: "settle", payload: { id } }),
@@ -1394,20 +1397,37 @@ export function renderDashboard(period) {
   document.getElementById("catAuditClose").onclick  = closeCatAudit;
   document.getElementById("catAuditClose2").onclick = closeCatAudit;
   document.getElementById("catAuditApplyAll").onclick = async () => {
-    const items = [...document.querySelectorAll(".catAuditCheck")]
-      .filter((c) => c.checked && !c.disabled)
-      .map((c) => ({ id: parseInt(c.dataset.id, 10), category: c.dataset.suggested }));
-    if (!items.length) { alert("No rows selected. Check the boxes next to the suggestions you agree with."); return; }
-    if (!confirm(\`Apply \${items.length} category change\${items.length === 1 ? "" : "s"}?\`)) return;
+    const checkedBoxes = [...document.querySelectorAll(".catAuditCheck")]
+      .filter((c) => c.checked && !c.disabled);
+    if (!checkedBoxes.length) { alert("No rows selected. Check the boxes next to the suggestions you agree with."); return; }
+    if (!confirm(\`Apply \${checkedBoxes.length} category change\${checkedBoxes.length === 1 ? "" : "s"}?\`)) return;
+    const items = checkedBoxes.map((c) => ({ id: parseInt(c.dataset.id, 10), category: c.dataset.suggested }));
+    const btn = document.getElementById("catAuditApplyAll");
+    btn.disabled = true;
+    btn.textContent = "💾 Applying…";
     const r = await fetch("/api/categorization-audit/apply?key=" + encodeURIComponent(key), {
       method: "POST", headers: { "content-type": "application/json" },
       body: JSON.stringify({ items }),
     });
     const j = await r.json().catch(() => ({}));
+    btn.disabled = false;
+    btn.textContent = "Apply selected";
     if (!r.ok) { alert("Failed: " + (j.error || r.status)); return; }
-    alert(\`Updated \${j.updated} transactions\`);
-    closeCatAudit();
-    await load(currentData.period);
+    // Remove applied rows in place — user keeps working in modal
+    const body = document.getElementById("catAuditBody");
+    for (const c of checkedBoxes) {
+      const row = c.closest("tr");
+      if (row) row.remove();
+    }
+    const remaining = body.querySelectorAll("tbody tr").length;
+    document.getElementById("catAuditSub").innerHTML =
+      \`<strong>\${remaining}</strong> remaining · ✓ Applied \${j.updated}\`;
+    document.getElementById("catAuditCount").textContent = remaining;
+    if (remaining === 0) {
+      body.innerHTML = \`<div class="p-8 text-center text-outline italic">All clear — no more suggestions. <button onclick="document.getElementById('catAuditModal').classList.add('hidden')" class="ml-2 underline text-primary">Close</button></div>\`;
+    }
+    // Refresh background dashboard so totals reflect the changes
+    load(currentData.period);
   };
 
   let auditData = null;
@@ -1652,6 +1672,14 @@ export function renderDashboard(period) {
   // (la verdad MECE). Debajo de cada categoría se muestran sus fixed_items
   // como sub-detalle informativo (Arriendo €1604 dentro de housing, etc.).
   function openBudgetEditor() {
+    document.getElementById("budgetModalSub").textContent = "Period " + currentData?.period + " — budget per category";
+    renderBudgetBody();
+    document.getElementById("budgetModal").classList.remove("hidden");
+  }
+  // Exposed so the "Use another month as template" handler can refresh
+  // the modal body in-place after copying, without losing scroll/focus.
+  window.rerenderBudgetBody = renderBudgetBody;
+  function renderBudgetBody() {
     const d = currentData; if (!d) return;
     document.getElementById("budgetModalSub").textContent = "Period " + d.period + " — budget per category";
     const body = document.getElementById("budgetBody");
@@ -1782,8 +1810,6 @@ export function renderDashboard(period) {
 
     // Wire Save button (in modal header) — saves all dirty, keeps modal open
     document.getElementById("budgetSaveBtn").onclick = saveAllDirty;
-
-    document.getElementById("budgetModal").classList.remove("hidden");
   }
   window.openBudgetEditor = openBudgetEditor;
   async function closeBudgetModal() {
@@ -1802,15 +1828,26 @@ export function renderDashboard(period) {
     const fromPeriod = prompt("Which month do you want to copy budgets from?\\nType in YYYY-MM format. Example: 2026-05 to use May 2026 as template for " + currentData.period + ".");
     if (!fromPeriod || !/^\d{4}-\d{2}$/.test(fromPeriod)) return;
     if (!confirm("Only fills in empty categories (won't overwrite values you already set in " + currentData.period + "). Continue?")) return;
+    const cloneBtn = document.getElementById("budgetCloneBtn");
+    const origText = cloneBtn.textContent;
+    cloneBtn.disabled = true;
+    cloneBtn.textContent = "Copying…";
     const r = await fetch("/api/budget?key=" + encodeURIComponent(key), {
       method: "POST", headers: { "content-type": "application/json" },
       body: JSON.stringify({ period: currentData.period, kind: "copy_categories", payload: { srcPeriod: fromPeriod } }),
     });
     const j = await r.json().catch(() => ({}));
+    cloneBtn.disabled = false;
+    cloneBtn.textContent = origText;
     if (!r.ok) { alert("Error: " + (j.error || r.status)); return; }
-    alert("Copied " + (j.copied ?? 0) + " categories from " + fromPeriod);
+    // Refresh data + re-render modal body IN-PLACE (no close/reopen — preserves scroll/focus)
     await load(currentData.period);
-    openBudgetEditor();
+    if (typeof window.rerenderBudgetBody === "function") window.rerenderBudgetBody();
+    // Inline confirmation (replaces the disruptive alert)
+    const sub = document.getElementById("budgetModalSub");
+    const prev = sub.textContent;
+    sub.innerHTML = \`<span class="text-primary font-semibold">✓ Copied \${j.copied ?? 0} categories from \${fromPeriod}</span>\`;
+    setTimeout(() => { sub.textContent = prev; }, 3000);
   };
 
   // ─── BNP balance edit modal ──────────────────────────────────────────────
