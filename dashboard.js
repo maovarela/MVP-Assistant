@@ -962,7 +962,7 @@ export function renderDashboard(period) {
       const meta = ACCOUNT_META[acct];
       const opening = d.opening_eur, closing = d.closing_eur;
       const netClr  = d.net_change_eur >= 0 ? "text-primary" : "text-error";
-      const editBtn = acct === "bnp" ? \`<button id="bnpEditBtn" class="text-[10px] text-primary font-semibold hover:underline">Editar</button>\` : "";
+      const editBtn = acct === "bnp" ? \`<button id="bnpEditBtn" onclick="event.stopPropagation()" class="text-[10px] text-primary font-semibold hover:underline">Editar</button>\` : "";
       totals.credits         += d.credits_eur;
       totals.debits          += d.debits_eur;
       totals.internalCredits += d.internal_credits_eur || 0;
@@ -1652,9 +1652,27 @@ export function renderDashboard(period) {
           input.dataset.orig = val;
           input.classList.add("ring-2", "ring-primary");
           setTimeout(() => input.classList.remove("ring-2", "ring-primary"), 1000);
+          // Reload background dashboard data
           await load(d.period);
+          // Surgical update of THIS row's actual/% cells with fresh data,
+          // and refresh the modal's snapshot reference so the next save
+          // computes from current state. Preserves focus on inputs.
+          const row = input.closest("tr");
+          const fresh = (currentData?.category_rows || []).find((x) => x.category === category)
+            || { actual_eur: 0, budget_eur: val };
+          const pct = val > 0 ? Math.round((fresh.actual_eur / val) * 1000) / 10 : null;
+          const pctClr = pct == null ? "text-outline" :
+                         pct > 100  ? "text-error" :
+                         pct > 80   ? "text-warn"  : "text-primary";
+          const cells = row.querySelectorAll("td");
+          if (cells[2]) cells[2].textContent = fmt(fresh.actual_eur);
+          if (cells[3]) {
+            cells[3].textContent = fmtPct(pct);
+            cells[3].className = "px-4 py-2.5 text-right tabular-nums font-semibold " + pctClr;
+          }
         } else {
-          alert("Error guardando: " + r.status);
+          const errMsg = await r.text().catch(() => r.status);
+          alert("Save failed (" + r.status + "): " + errMsg);
           input.value = orig;
         }
         input.disabled = false;
