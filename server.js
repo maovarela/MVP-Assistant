@@ -226,6 +226,13 @@ const app = express();
 app.use(express.json({ limit: "10mb" }));
 
 app.get("/", (_req, res) => res.json({ status: "MVP-Assistant running" }));
+
+// Inline favicon (SVG, "€" glyph). Avoids 404 noise in the browser console.
+app.get("/favicon.ico", (_req, res) => {
+  res.set("Content-Type", "image/svg+xml");
+  res.set("Cache-Control", "public, max-age=86400");
+  res.send(`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100"><rect width="100" height="100" rx="20" fill="#1e4d8b"/><text x="50" y="72" font-family="Arial,sans-serif" font-size="68" font-weight="bold" text-anchor="middle" fill="white">€</text></svg>`);
+});
 app.get("/healthz", (_req, res) => res.json({ ok: true }));
 
 // Visibility into the DB without needing Telegram round-trips. No auth — it
