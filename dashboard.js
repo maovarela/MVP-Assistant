@@ -1349,17 +1349,27 @@ export function renderDashboard(period) {
         const id = parseInt(b.dataset.id, 10);
         const cat = b.dataset.suggested;
         b.disabled = true;
+        b.textContent = "Applying…";
         const r = await fetch("/api/categorization-audit/apply?key=" + encodeURIComponent(key), {
           method: "POST", headers: { "content-type": "application/json" },
           body: JSON.stringify({ items: [{ id, category: cat }] }),
         });
-        if (r.ok) {
-          b.textContent = "✓ Done";
-          const row = b.closest("tr");
-          row.classList.add("opacity-40");
-          row.querySelector(".catAuditCheck").checked = false;
-          row.querySelector(".catAuditCheck").disabled = true;
-        } else b.disabled = false;
+        if (!r.ok) {
+          b.disabled = false;
+          b.textContent = "✓ Apply";
+          alert("Apply failed (" + r.status + ")");
+          return;
+        }
+        // Mirror Dismiss flow: remove row, update header + badge, empty-state on last
+        const row = b.closest("tr");
+        row.remove();
+        const remaining = body.querySelectorAll("tbody tr").length;
+        document.getElementById("catAuditSub").innerHTML =
+          \`<strong>\${remaining}</strong> remaining\`;
+        document.getElementById("catAuditCount").textContent = remaining;
+        if (remaining === 0) {
+          body.innerHTML = \`<div class="p-8 text-center text-outline italic">All clear — no more suggestions.</div>\`;
+        }
       };
     });
     body.querySelectorAll(".catAuditDismiss").forEach((b) => {
