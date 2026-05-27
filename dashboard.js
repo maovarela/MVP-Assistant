@@ -1201,7 +1201,7 @@ export function renderDashboard(period) {
         const id = parseInt(b.dataset.id, 10);
         const row = b.closest("[class*='rounded-lg']");
         const who = row?.querySelector(".text-on-surface")?.textContent?.trim() || "this item";
-        if (!confirm("Mark \"" + who + "\" as settled?")) return;
+        if (!confirm('Mark "' + who + '" as settled?')) return;
         await fetch("/api/pending?key=" + encodeURIComponent(key), {
           method: "POST", headers: { "content-type": "application/json" },
           body: JSON.stringify({ op: "settle", payload: { id } }),
