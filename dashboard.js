@@ -1649,13 +1649,17 @@ export function renderDashboard(period) {
         </tbody>
       </table>\`;
 
-    body.querySelectorAll(".catBudgetInput").forEach((input) => {
-      input.onchange = async () => {
-        const category = input.dataset.category;
-        const orig = parseFloat(input.dataset.orig);
-        const val  = parseFloat(input.value);
-        if (!Number.isFinite(val) || val === orig) return;
-        input.disabled = true;
+    // Shared save logic — used by both 'change' (blur/Enter) and debounced 'input'
+    // (typing). Native <input type=number> only fires 'change' on blur, so users
+    // who type a value and immediately close the modal would lose their edit.
+    async function saveBudgetInput(input) {
+      if (input.dataset.saving === "1") return;
+      const category = input.dataset.category;
+      const orig = parseFloat(input.dataset.orig);
+      const val  = parseFloat(input.value);
+      if (!Number.isFinite(val) || val === orig) return;
+      input.dataset.saving = "1";
+      try {
         const r = await fetch("/api/budget?key=" + encodeURIComponent(key), {
           method: "POST", headers: { "content-type": "application/json" },
           body: JSON.stringify({ period: d.period, kind: "category", payload: { category, budget_eur: val } }),
@@ -1664,11 +1668,9 @@ export function renderDashboard(period) {
           input.dataset.orig = val;
           input.classList.add("ring-2", "ring-primary");
           setTimeout(() => input.classList.remove("ring-2", "ring-primary"), 1000);
-          // Reload background dashboard data
+          // Reload background dashboard data (refreshes the table behind the modal)
           await load(d.period);
-          // Surgical update of THIS row's actual/% cells with fresh data,
-          // and refresh the modal's snapshot reference so the next save
-          // computes from current state. Preserves focus on inputs.
+          // Surgical update of THIS row's actual/% cells with fresh data
           const row = input.closest("tr");
           const fresh = (currentData?.category_rows || []).find((x) => x.category === category)
             || { actual_eur: 0, budget_eur: val };
@@ -1687,15 +1689,36 @@ export function renderDashboard(period) {
           alert("Save failed (" + r.status + "): " + errMsg);
           input.value = orig;
         }
-        input.disabled = false;
+      } finally {
+        delete input.dataset.saving;
+      }
+    }
+    const debouncers = new WeakMap();
+    body.querySelectorAll(".catBudgetInput").forEach((input) => {
+      input.onchange = () => saveBudgetInput(input);  // fires on blur / Enter
+      input.oninput  = () => {                          // fires on every keystroke
+        clearTimeout(debouncers.get(input));
+        debouncers.set(input, setTimeout(() => saveBudgetInput(input), 700));
       };
     });
+    // Expose for the close handlers to force-flush any pending edits
+    window.flushBudgetInputs = () => {
+      body.querySelectorAll(".catBudgetInput").forEach((inp) => {
+        clearTimeout(debouncers.get(inp));
+        saveBudgetInput(inp);  // best-effort, no await
+      });
+    };
 
     document.getElementById("budgetModal").classList.remove("hidden");
   }
   window.openBudgetEditor = openBudgetEditor;
-  document.getElementById("budgetClose").onclick = () => document.getElementById("budgetModal").classList.add("hidden");
-  document.getElementById("budgetDoneBtn").onclick = () => document.getElementById("budgetModal").classList.add("hidden");
+  function closeBudgetModal() {
+    // Flush any pending typed-but-not-blurred edits before closing
+    if (typeof window.flushBudgetInputs === "function") window.flushBudgetInputs();
+    document.getElementById("budgetModal").classList.add("hidden");
+  }
+  document.getElementById("budgetClose").onclick   = closeBudgetModal;
+  document.getElementById("budgetDoneBtn").onclick = closeBudgetModal;
   document.getElementById("budgetCloneBtn").onclick = async () => {
     const fromPeriod = prompt("Which month do you want to copy budgets from?\\nType in YYYY-MM format. Example: 2026-05 to use May 2026 as template for " + currentData.period + ".");
     if (!fromPeriod || !/^\d{4}-\d{2}$/.test(fromPeriod)) return;
