@@ -30,6 +30,7 @@ import { searchNotion, readNotionPage, queryNotionDatabase } from "./notion.js";
 import { listEvents, searchEvents } from "./calendar.js";
 import { sendEmail } from "./mailer.js";
 import { runAdvisorReview } from "./advisor.js";
+import { runAnalyst } from "./analyst.js";
 
 // ─── System Prompt ────────────────────────────────────────────────────────────
 
@@ -278,6 +279,13 @@ const TOOLS = [
       lookback_months:  { type: "number", description: "Cuántos meses pasados para detectar tendencias. Default 6." },
     },
   }),
+  fn("analyst_query", "Subagente especializado: Financial Analyst (read-only). Le pasas UNA pregunta libre y él internamente decide qué tools financieros llamar (hasta 5 rondas) y devuelve markdown ya formateado. Úsalo cuando la pregunta requiere MULTIPLES queries o análisis cruzado: 'analiza mi shopping este Q', 'compara abril vs marzo por categoría', 'qué patrón ves en mis transferencias', 'estoy on track para mis ahorros del año', 'por qué subió tanto entertainment'. Pasa la respuesta markdown TAL CUAL al usuario sin re-resumir. NO lo uses para mutaciones (set_*) ni para preguntas simples (cuánto gasté, qué tarea tengo) — para esas usa las tools directas.", {
+    type: "object",
+    properties: {
+      question: { type: "string", description: "La pregunta financiera completa, en el lenguaje del usuario." },
+    },
+    required: ["question"],
+  }),
   fn("set_account_balance", "Setea balance inicial o final de una cuenta (BNP/Amex/Revolut) para un periodo. Útil cuando el usuario dice 'al 1 de mayo tenía 4205 en BNP'. Si no pasas closing, se calcula automáticamente como opening + ingresos - egresos.", {
     type: "object",
     properties: {
@@ -414,6 +422,8 @@ async function executeTool(name, input) {
     case "get_budget_summary":  return getDashboardSummary(input.period);
     case "financial_advisor_review":
       return await runAdvisorReview({ period: input.period, lookbackMonths: input.lookback_months });
+    case "analyst_query":
+      return { markdown: await runAnalyst(input.question) };
     case "set_account_balance":      return setAccountBalance(input);
     case "get_account_cashflow":     return getAccountCashflow({ account: input.account || "bnp", period: input.period });
     case "scan_inbox_now":      return await fetchAndParseRecent({ daysBack: input.days_back || 1 });
