@@ -65,31 +65,30 @@ export function renderDashboard(period) {
   </style>
 </head><body class="bg-background text-on-background font-body antialiased min-h-screen pb-8">
 
-<!-- HEADER (compact, sticky) -->
-<header class="sticky top-0 z-50 flex items-center justify-between px-4 py-3 bg-surface/85 backdrop-blur-md border-b border-outline-variant/20">
-  <div class="flex items-center gap-4">
+<!-- HEADER (compact, sticky, mobile-aware) -->
+<header class="sticky top-0 z-50 px-3 sm:px-4 py-2.5 bg-surface/85 backdrop-blur-md border-b border-outline-variant/20">
+  <div class="flex items-center justify-between gap-2">
     <!-- Logo: minimalist geometric mark + wordmark in Space Grotesk -->
-    <div class="flex items-center gap-2.5">
-      <div class="w-9 h-9 rounded-lg bg-on-surface flex items-center justify-center">
-        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+    <div class="flex items-center gap-2 flex-shrink-0">
+      <div class="w-8 h-8 sm:w-9 sm:h-9 rounded-lg bg-on-surface flex items-center justify-center">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
           <path d="M3 17V21H21V17M3 17L8 8L13 14L17 6L21 11" stroke="white" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
         </svg>
       </div>
-      <div class="flex flex-col leading-tight">
+      <div class="hidden sm:flex flex-col leading-tight">
         <div class="font-headline font-bold text-base tracking-tight text-on-surface">Accounts</div>
         <div class="font-headline font-medium text-[10px] tracking-[0.2em] text-outline uppercase">MVP</div>
       </div>
     </div>
     <!-- Tab nav: Overview | Transactions -->
-    <nav class="flex items-center gap-1 ml-2">
-      <button id="tabResumen"   class="tabBtn px-3 py-1.5 rounded-full text-xs font-semibold transition-colors bg-primary text-on-primary">Overview</button>
-      <button id="tabHistorico" class="tabBtn px-3 py-1.5 rounded-full text-xs font-semibold transition-colors bg-surface-container text-on-surface hover:bg-surface-container-high">Transactions</button>
+    <nav class="flex items-center gap-1">
+      <button id="tabResumen"   class="tabBtn px-2.5 sm:px-3 py-1.5 rounded-full text-xs font-semibold transition-colors bg-primary text-on-primary">Overview</button>
+      <button id="tabHistorico" class="tabBtn px-2.5 sm:px-3 py-1.5 rounded-full text-xs font-semibold transition-colors bg-surface-container text-on-surface hover:bg-surface-container-high">Transactions</button>
     </nav>
-  </div>
 
-  <!-- Period picker: single button that opens a popover with year tabs + month grid -->
-  <div class="relative">
-    <button id="periodBtn" class="flex items-center gap-2 bg-primary-container text-on-primary-container rounded-full pl-4 pr-3 py-2 text-sm font-semibold hover:opacity-90 transition-opacity">
+    <!-- Period picker: single button that opens a popover with year tabs + month grid -->
+    <div class="relative flex-shrink-0">
+    <button id="periodBtn" class="flex items-center gap-1 sm:gap-2 bg-primary-container text-on-primary-container rounded-full pl-2.5 sm:pl-4 pr-2 sm:pr-3 py-1.5 sm:py-2 text-xs sm:text-sm font-semibold hover:opacity-90 transition-opacity whitespace-nowrap">
       <span id="periodBtnLabel">—</span>
       <span class="material-symbols-outlined" style="font-size: 18px;">expand_more</span>
     </button>
@@ -105,6 +104,7 @@ export function renderDashboard(period) {
         </button>
       </div>
       <div id="periodMonths" class="grid grid-cols-3 gap-1.5 p-3"></div>
+    </div>
     </div>
   </div>
 </header>
@@ -186,7 +186,7 @@ export function renderDashboard(period) {
       <span class="material-symbols-outlined text-secondary" style="font-size: 18px;">account_balance</span>
       <h3 class="font-headline font-bold text-sm tracking-tight">Accounts <span id="bnpPeriodLabel" class="text-outline">—</span></h3>
     </div>
-    <div class="grid grid-cols-1 md:grid-cols-4 gap-3" id="accountsGrid">
+    <div class="grid grid-cols-2 md:grid-cols-4 gap-2 sm:gap-3" id="accountsGrid">
       <!-- populated by JS — one card per account + a Total card -->
     </div>
     <!-- Internal-transfer panel — BNP madre → hijas Amex/Revolut -->
@@ -241,14 +241,14 @@ export function renderDashboard(period) {
       <div class="px-3 py-2 border-b border-outline-variant/15 bg-surface-container-low">
         <input id="gastosFilter" type="search" placeholder="🔎 Filter category…" class="w-full md:w-64 bg-surface-container text-on-surface border border-outline-variant/30 rounded-md text-xs px-2 py-1 focus:ring-2 focus:ring-primary focus:outline-none" />
       </div>
-      <table class="w-full text-sm">
+      <table class="w-full text-xs sm:text-sm">
         <thead class="bg-surface-container">
           <tr class="text-left text-[10px] uppercase tracking-wider text-outline">
-            <th class="px-3 py-2.5 cursor-pointer select-none hover:text-on-surface" data-sort="name">Category <span class="gastosSortArrow text-outline" data-col="name"></span></th>
-            <th class="px-3 py-2.5 text-right cursor-pointer select-none hover:text-on-surface" data-sort="budget">Budget <span class="gastosSortArrow text-outline" data-col="budget"></span></th>
-            <th class="px-3 py-2.5 text-right cursor-pointer select-none hover:text-on-surface" data-sort="actual">Actual <span class="gastosSortArrow text-outline" data-col="actual"></span></th>
-            <th class="px-3 py-2.5 text-right cursor-pointer select-none hover:text-on-surface" data-sort="delta">Δ <span class="gastosSortArrow text-outline" data-col="delta"></span></th>
-            <th class="px-3 py-2.5 text-right w-16 cursor-pointer select-none hover:text-on-surface" data-sort="pct">% <span class="gastosSortArrow text-outline" data-col="pct"></span></th>
+            <th class="px-2 sm:px-3 py-2.5 cursor-pointer select-none hover:text-on-surface" data-sort="name">Category <span class="gastosSortArrow text-outline" data-col="name"></span></th>
+            <th class="px-2 sm:px-3 py-2.5 text-right cursor-pointer select-none hover:text-on-surface" data-sort="budget">Budget <span class="gastosSortArrow text-outline" data-col="budget"></span></th>
+            <th class="px-2 sm:px-3 py-2.5 text-right cursor-pointer select-none hover:text-on-surface" data-sort="actual">Actual <span class="gastosSortArrow text-outline" data-col="actual"></span></th>
+            <th class="hidden sm:table-cell px-2 sm:px-3 py-2.5 text-right cursor-pointer select-none hover:text-on-surface" data-sort="delta">Δ <span class="gastosSortArrow text-outline" data-col="delta"></span></th>
+            <th class="px-2 sm:px-3 py-2.5 text-right w-12 sm:w-16 cursor-pointer select-none hover:text-on-surface" data-sort="pct">% <span class="gastosSortArrow text-outline" data-col="pct"></span></th>
           </tr>
         </thead>
         <tbody id="gastosTbl"></tbody>
@@ -376,7 +376,7 @@ export function renderDashboard(period) {
           <select id="histYearTo"  class="bg-surface-container text-on-surface border border-outline-variant/30 rounded-md text-xs px-2 py-1 focus:ring-2 focus:ring-primary focus:outline-none"></select>
           <select id="histMonthTo" class="bg-surface-container text-on-surface border border-outline-variant/30 rounded-md text-xs px-2 py-1 focus:ring-2 focus:ring-primary focus:outline-none"></select>
         </div>
-        <span class="text-outline-variant">|</span>
+        <span class="hidden sm:inline text-outline-variant">|</span>
         <div class="flex items-center gap-1.5 flex-wrap" id="histAccountFilter">
           <span class="text-[11px] font-bold text-on-surface mr-1">Accounts</span>
           <!-- chips populated by JS -->
@@ -412,11 +412,11 @@ export function renderDashboard(period) {
       <table class="w-full text-sm" id="historicoTbl">
         <thead class="bg-surface-container">
           <tr class="text-left text-[10px] uppercase tracking-wider text-outline">
-            <th class="px-3 py-2.5 w-24 cursor-pointer select-none hover:text-on-surface" data-histsort="date">Date <span class="histSortArrow" data-col="date"></span></th>
-            <th class="px-3 py-2.5 w-20 cursor-pointer select-none hover:text-on-surface" data-histsort="account">Account <span class="histSortArrow" data-col="account"></span></th>
-            <th class="px-3 py-2.5 cursor-pointer select-none hover:text-on-surface" data-histsort="merchant">Merchant <span class="histSortArrow" data-col="merchant"></span></th>
-            <th class="px-3 py-2.5 text-right w-24 cursor-pointer select-none hover:text-on-surface" data-histsort="amount">Amount € <span class="histSortArrow" data-col="amount"></span></th>
-            <th class="px-3 py-2.5 w-56 cursor-pointer select-none hover:text-on-surface" data-histsort="category">Category <span class="histSortArrow" data-col="category"></span></th>
+            <th class="px-2 sm:px-3 py-2.5 w-20 sm:w-24 cursor-pointer select-none hover:text-on-surface" data-histsort="date">Date <span class="histSortArrow" data-col="date"></span></th>
+            <th class="hidden sm:table-cell px-2 sm:px-3 py-2.5 w-20 cursor-pointer select-none hover:text-on-surface" data-histsort="account">Account <span class="histSortArrow" data-col="account"></span></th>
+            <th class="px-2 sm:px-3 py-2.5 cursor-pointer select-none hover:text-on-surface" data-histsort="merchant">Merchant <span class="histSortArrow" data-col="merchant"></span></th>
+            <th class="px-2 sm:px-3 py-2.5 text-right w-20 sm:w-24 cursor-pointer select-none hover:text-on-surface" data-histsort="amount">€ <span class="histSortArrow" data-col="amount"></span></th>
+            <th class="px-2 sm:px-3 py-2.5 w-32 sm:w-56 cursor-pointer select-none hover:text-on-surface" data-histsort="category">Category <span class="histSortArrow" data-col="category"></span></th>
           </tr>
         </thead>
         <tbody id="historicoBody"><tr><td colspan="5" class="px-3 py-8 text-center text-outline italic">Loading…</td></tr></tbody>
@@ -767,14 +767,14 @@ export function renderDashboard(period) {
         ? \`<div class="text-[10px] text-outline truncate max-w-xs">\${escapeHtml(tx.description)}</div>\`
         : "";
       return \`<tr class="border-b border-outline-variant/15 last:border-0">
-        <td class="px-3 py-2 text-outline tabular-nums whitespace-nowrap">\${tx.date || "—"}</td>
-        <td class="px-3 py-2"><span class="px-2 py-0.5 rounded text-[10px] font-semibold \${acctClass}">\${tx.account}</span></td>
-        <td class="px-3 py-2">
-          <div class="font-medium text-on-surface">\${escapeHtml(tx.merchant || "—")}\${intMark}</div>
+        <td class="px-2 sm:px-3 py-2 text-outline tabular-nums whitespace-nowrap text-[11px] sm:text-sm">\${tx.date || "—"}</td>
+        <td class="hidden sm:table-cell px-2 sm:px-3 py-2"><span class="px-2 py-0.5 rounded text-[10px] font-semibold \${acctClass}">\${tx.account}</span></td>
+        <td class="px-2 sm:px-3 py-2">
+          <div class="font-medium text-on-surface text-xs sm:text-sm flex items-center gap-1.5 flex-wrap"><span class="sm:hidden px-1.5 py-0.5 rounded text-[9px] font-semibold \${acctClass}">\${tx.account}</span>\${escapeHtml(tx.merchant || "—")}\${intMark}</div>
           \${desc}
         </td>
-        <td class="px-3 py-2 text-right tabular-nums font-semibold \${amtClr}">\${sign}\${fmt(Math.abs(tx.amount))}</td>
-        <td class="px-3 py-2">
+        <td class="px-2 sm:px-3 py-2 text-right tabular-nums font-semibold whitespace-nowrap \${amtClr}">\${sign}\${fmt(Math.abs(tx.amount))}</td>
+        <td class="px-2 sm:px-3 py-2">
           <select data-tx-id="\${tx.id}" class="histCatSel w-full bg-surface-container border-0 rounded text-xs px-2 py-1 focus:ring-2 focus:ring-primary focus:outline-none">
             \${categoryOptions(tx.category)}
           </select>
@@ -2193,17 +2193,17 @@ export function renderDashboard(period) {
           ? \`<div class="text-[10px] text-outline pl-6 mt-0.5">\${c.fixed_items.map((it) => it.label + " " + fmt(it.budget_eur)).join(" · ")}</div>\`
           : "";
         return \`<tr class="border-b border-outline-variant/15 hover:bg-surface-container-low cursor-pointer" onclick="openCategoryDrill('\${c.category}', '\${d.period}')">
-          <td class="px-3 py-2.5">
+          <td class="px-2 sm:px-3 py-2.5">
             <div class="flex items-center gap-2">
-              <span class="material-symbols-outlined text-outline" style="font-size: 16px">\${ICON[c.category] || ICON.other}</span>
+              <span class="material-symbols-outlined text-outline hidden sm:inline" style="font-size: 16px">\${ICON[c.category] || ICON.other}</span>
               <span class="text-on-surface font-medium">\${meta.emoji} \${meta.label}</span>
             </div>
             \${subItems}
           </td>
-          <td class="px-3 py-2.5 text-right tabular-nums">\${c.budget_eur > 0 ? fmt(c.budget_eur) : '<span class="text-outline">—</span>'}</td>
-          <td class="px-3 py-2.5 text-right tabular-nums">\${fmt(c.actual_eur)}</td>
-          <td class="px-3 py-2.5 text-right tabular-nums \${deltaClr}">\${deltaTxt}</td>
-          <td class="px-3 py-2.5 text-right"><span class="px-2 py-0.5 rounded-full text-[10px] font-semibold \${pctClr}">\${fmtPct(pct)}</span></td>
+          <td class="px-2 sm:px-3 py-2.5 text-right tabular-nums">\${c.budget_eur > 0 ? fmt(c.budget_eur) : '<span class="text-outline">—</span>'}</td>
+          <td class="px-2 sm:px-3 py-2.5 text-right tabular-nums">\${fmt(c.actual_eur)}</td>
+          <td class="hidden sm:table-cell px-2 sm:px-3 py-2.5 text-right tabular-nums \${deltaClr}">\${deltaTxt}</td>
+          <td class="px-2 sm:px-3 py-2.5 text-right"><span class="px-1.5 sm:px-2 py-0.5 rounded-full text-[10px] font-semibold \${pctClr}">\${fmtPct(pct)}</span></td>
         </tr>\`;
       }).join("");
 
@@ -2217,14 +2217,14 @@ export function renderDashboard(period) {
                           totPct > 100 ? "bg-error-container text-error" :
                           totPct > 80  ? "bg-warn-container text-warn"   : "bg-primary-container text-on-primary-container";
       const totalsRow = \`<tr class="bg-surface-container border-t-2 border-on-surface/30">
-        <td class="px-3 py-4">
-          <div class="font-headline font-bold text-base text-on-surface">TOTAL</div>
+        <td class="px-2 sm:px-3 py-4">
+          <div class="font-headline font-bold text-sm sm:text-base text-on-surface">TOTAL</div>
           <div class="text-[11px] text-outline">\${filteredCats.length} \${filteredCats.length === 1 ? "category" : "categories"}</div>
         </td>
-        <td class="px-3 py-4 text-right tabular-nums font-headline font-bold text-lg text-on-surface">\${fmt(totBudget)}</td>
-        <td class="px-3 py-4 text-right tabular-nums font-headline font-bold text-lg text-on-surface">\${fmt(totActual)}</td>
-        <td class="px-3 py-4 text-right tabular-nums font-headline font-bold text-lg \${totDeltaClr}">\${totBudget === 0 ? "—" : (totDelta >= 0 ? "+" : "") + fmt(totDelta)}</td>
-        <td class="px-3 py-4 text-right"><span class="px-2.5 py-1 rounded-full text-sm font-bold \${totPctClr}">\${fmtPct(totPct)}</span></td>
+        <td class="px-2 sm:px-3 py-4 text-right tabular-nums font-headline font-bold text-base sm:text-lg text-on-surface">\${fmt(totBudget)}</td>
+        <td class="px-2 sm:px-3 py-4 text-right tabular-nums font-headline font-bold text-base sm:text-lg text-on-surface">\${fmt(totActual)}</td>
+        <td class="hidden sm:table-cell px-2 sm:px-3 py-4 text-right tabular-nums font-headline font-bold text-lg \${totDeltaClr}">\${totBudget === 0 ? "—" : (totDelta >= 0 ? "+" : "") + fmt(totDelta)}</td>
+        <td class="px-2 sm:px-3 py-4 text-right"><span class="px-2 sm:px-2.5 py-1 rounded-full text-xs sm:text-sm font-bold \${totPctClr}">\${fmtPct(totPct)}</span></td>
       </tr>\`;
 
       tbl.innerHTML = rowsHtml + totalsRow;
