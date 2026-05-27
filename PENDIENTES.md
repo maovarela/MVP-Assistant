@@ -108,6 +108,55 @@ Para WhatsApp en Zentra (B2B SaaS de psicólogos con clientes pagando), **no usa
 - `whatsapp.js` Evolution API wrapper + endpoint `/webhook/whatsapp/<secret>` + `/wa` alias en Telegram (apagado por flag)
 - Send body compatible v1 y v2 de Evolution (envía `text` y `textMessage.text` simultáneo)
 
+### Shipped 2026-05-27 (mutation UX overhaul — "dirty marker → explicit Save" pattern)
+
+**Problem the day exposed:** auto-save on `change`/`blur` events of `<input type=number>` and `<select>` was unreliable. When the user typed in the budget editor and immediately clicked X to close, no `change` event fired (only fires on blur) → save was lost → user thought "no funciona". The first fix attempted debounce + flush-on-close, which introduced race conditions for slow typing (a save in flight blocked the next one via a concurrency guard).
+
+**Final pattern — "dirty marker + explicit Save button"** applied to all 3 mutation surfaces:
+
+| Surface | Trigger | Indicator | Save action |
+|---|---|---|---|
+| **Edit Budget** modal | Type in any `€` input | Orange ring + `dirty` class | `💾 Save N changes` button in header (disabled when 0 dirty). Close with dirty → `confirm("Save before closing?")`. Per-row surgical update of Actual/% after save (no scroll loss). |
+| **Transactions** tab | Change category dropdown | Orange ring on dropdown | `💾 Save N changes` button next to Search. Batch save → re-render so filter (e.g. Category=Other) re-applies → rows that no longer match disappear. |
+| **Drilldown** modal | Change category dropdown | Orange ring + Apply button | `💾 Save N changes` bar above the tx list. Batch save → reload background dashboard. |
+
+Backend `POST /api/budget kind=category` and `POST /api/transactions/category` are UPSERT-idempotent, so no concurrency guards needed.
+
+**Categorization audit modal polish:**
+- **Per-row Apply now removes the row** from the table + decrements `N remaining` in header + `(N)` in badge + shows "All clear — no more suggestions" empty-state when 0. Previously it only dimmed the row → users thought nothing happened.
+- **Apply selected stays in modal** (no `closeCatAudit() + alert()` after bulk save). Subtitle updates inline: `"N remaining · ✓ Applied X"`. User can keep working on remaining suggestions.
+- **Dismiss persists** via `localStorage.catAuditDismissed`. Dismissed rows don't reappear on reload. `window.clearAuditDismissed()` exposed for debugging.
+- **Checkboxes default OFF** (opt-in, not opt-out). Clearer UX.
+
+**"Use another month as template" (budget clone):**
+- Refreshes modal body **in-place** via new `window.rerenderBudgetBody` (extracted from `openBudgetEditor`). No more close+reopen → preserves scroll position and focus.
+- Inline confirmation in subtitle: `"✓ Copied N categories from 2026-04"` (auto-clears after 3s). Replaces disruptive `alert()`.
+
+**Pending Settle button now confirms** (consistent with Delete): `Mark "Sebas Estupinan" as settled?`. Accidental clicks no longer silently mark items settled.
+
+**No-cache headers on `/dashboard`:** `Cache-Control: no-cache, no-store, must-revalidate` + `Pragma: no-cache` + `Expires: 0`. Prevents stale JS bugs after Railway redeploys — the user kept seeing old code after fixes were pushed because their browser cached the HTML.
+
+**Inline SVG favicon** (€ glyph on blue) at `/favicon.ico` to silence the `404 /favicon.ico` console noise.
+
+**Future periods in budget picker:** `listBudgetPeriods()` now includes today + 6 months ahead so the user can plan Junio/Julio before any data exists for them.
+
+### ⚠️ Aprendizajes 2026-05-27
+
+#### `<input type=number>` change event only fires on blur — not while typing
+- Auto-save on `change`/`blur` looks correct in code but breaks for the user who types and immediately closes the modal without tabbing.
+- The "debounce on `input`" alternative had its own race condition: a save in flight blocked the next one via a concurrency guard (`dataset.saving === "1"`), losing the final keystroke.
+- **Mitigación**: dropped auto-save entirely in favor of explicit "dirty marker + Save button" pattern. Trade-off: one extra click per save batch, but 100% reliable + multi-edit-friendly + visible "you have unsaved changes" state.
+
+#### Escaped quotes in nested template strings collapse — and `node -c` won't catch it
+- The whole dashboard.js content is a single backtick template string returned by `renderDashboard()`. Backticks don't require escaping `"` inside, so my `"Mark \"" + who + "\" as settled?"` rendered to `"Mark "" + who + "" as settled?"` in the inline `<script>` → entire JS file failed to parse in the browser → **nothing rendered**.
+- `node -c dashboard.js` validates the OUTER template — passes fine. The inline `<script>` content is opaque to the syntax check.
+- **Mitigación inmediata**: use single quotes outside / double inside when emitting JS literals from the template: `'Mark "' + who + '" as settled?'`.
+- **Mitigación de proceso (TODO)**: extend the syntax-check workflow to also `new Function(renderDashboard(null).match(/<script>([\s\S]*?)<\/script>/g)...)` so any inline-script error fails CI/local check before push. Otherwise the user only finds out when the dashboard is completely blank.
+
+#### Modal that doesn't refresh after a save = "no funciona" from the user
+- 4 separate sessions of "no funciona" all turned out to be UI not reflecting the save (backend was always correct via curl). Symptoms: input value reverts visually, % cell doesn't update, row stays in filtered list, modal closes when user wanted to keep working.
+- **Mitigación**: every successful save now has visible feedback within 1 second (green flash, row removal, counter decrement, inline confirmation). When in doubt, surgical-update the changed cells rather than full re-render (preserves focus).
+
 ### Shipped 2026-05-27 (Financial Analyst subagent + dashboard polish)
 
 **4ª agente: Financial Analyst subagente** (`analyst.js`):
