@@ -358,6 +358,7 @@ export function renderDashboard(period) {
         <p class="text-xs text-outline">Flat list — edit category inline for quick fixes.</p>
       </div>
       <div class="flex items-center gap-2 flex-wrap">
+        <button id="histSaveBtn" class="px-4 py-2 rounded-lg text-sm font-semibold bg-surface-container text-outline cursor-not-allowed" disabled>✓ No unsaved changes</button>
         <input id="histSearch" type="search" placeholder="🔎 Search merchant…" class="bg-surface-container border-0 rounded-full text-xs font-medium px-3 py-1.5 w-48 focus:ring-2 focus:ring-primary focus:outline-none" />
       </div>
     </div>
@@ -449,6 +450,7 @@ export function renderDashboard(period) {
         <div class="text-xs text-outline" id="budgetModalSub">—</div>
       </div>
       <div class="flex items-center gap-2">
+        <button id="budgetSaveBtn" class="px-4 py-2 rounded-lg text-sm font-semibold bg-surface-container text-outline cursor-not-allowed" disabled>✓ No unsaved changes</button>
         <button id="budgetCloneBtn" class="text-xs font-semibold text-primary hover:underline" title="Pre-fill empty categories with another month's values">📋 Use another month as template</button>
         <button id="budgetClose" class="w-9 h-9 rounded-full hover:bg-surface-container flex items-center justify-center">
           <span class="material-symbols-outlined">close</span>
@@ -458,7 +460,7 @@ export function renderDashboard(period) {
     <div class="flex-1 overflow-y-auto" id="budgetBody"></div>
     <div class="px-5 py-3 border-t border-outline-variant/20 flex items-center justify-between text-xs">
       <span class="text-outline">Changes save instantly. Other months are not affected.</span>
-      <button id="budgetDoneBtn" class="px-4 py-2 rounded-lg bg-primary text-on-primary font-semibold">Done</button>
+      <button id="budgetDoneBtn" class="px-4 py-2 rounded-lg bg-primary text-on-primary font-semibold">Close</button>
     </div>
   </div>
 </div>
@@ -783,35 +785,59 @@ export function renderDashboard(period) {
     tbody.querySelectorAll(".histCatSel").forEach((sel) => {
       const orig = sel.value;
       sel.dataset.orig = orig;
-      sel.onchange = async () => {
-        const txId = parseInt(sel.dataset.txId, 10);
-        const newCat = sel.value;
-        sel.disabled = true;
-        const ok = await changeCategory(txId, newCat);
-        if (ok) {
-          sel.dataset.orig = newCat;
-          // Flash the row to confirm save
-          const row = sel.closest("tr");
-          if (row) {
-            row.classList.add("ring-2", "ring-primary", "ring-inset", "bg-primary-container/20");
-            setTimeout(() => row.classList.remove("ring-2", "ring-primary", "ring-inset", "bg-primary-container/20"), 600);
-          }
-          // Update cached row so filter logic (incl. category dropdown) re-applies
-          if (histLastData?.rows) {
-            const cached = histLastData.rows.find((r) => r.id === txId);
-            if (cached) cached.category = newCat;
-            // Re-render after the flash so the row disappears smoothly if it
-            // no longer matches the active category filter.
-            setTimeout(() => renderHistorico(histLastData), 650);
-          }
-        } else {
-          alert("Save failed for category change");
-          sel.value = sel.dataset.orig;
-        }
-        sel.disabled = false;
+      // Mark dirty on change — DON'T auto-save. User clicks "Save changes" button.
+      sel.onchange = () => {
+        const isDirty = sel.value !== sel.dataset.orig;
+        sel.classList.toggle("ring-2", isDirty);
+        sel.classList.toggle("ring-warn", isDirty);
+        sel.dataset.dirty = isDirty ? "1" : "";
+        refreshHistDirtyCounter();
       };
     });
+    refreshHistDirtyCounter();
   }
+
+  function refreshHistDirtyCounter() {
+    const dirty = document.querySelectorAll(".histCatSel[data-dirty='1']").length;
+    const btn = document.getElementById("histSaveBtn");
+    if (!btn) return;
+    btn.textContent = dirty > 0 ? \`💾 Save \${dirty} change\${dirty === 1 ? "" : "s"}\` : "✓ No unsaved changes";
+    btn.disabled = dirty === 0;
+    btn.className = "px-4 py-2 rounded-lg text-sm font-semibold " +
+      (dirty > 0 ? "bg-primary text-on-primary hover:opacity-90" : "bg-surface-container text-outline cursor-not-allowed");
+  }
+
+  async function saveHistDirty() {
+    const dirty = [...document.querySelectorAll(".histCatSel[data-dirty='1']")];
+    if (!dirty.length) return;
+    const btn = document.getElementById("histSaveBtn");
+    if (btn) { btn.disabled = true; btn.textContent = "💾 Saving…"; }
+    let saved = 0; let failed = 0;
+    for (const sel of dirty) {
+      const txId = parseInt(sel.dataset.txId, 10);
+      const newCat = sel.value;
+      const ok = await changeCategory(txId, newCat);
+      if (ok) {
+        sel.dataset.orig = newCat;
+        sel.dataset.dirty = "";
+        sel.classList.remove("ring-warn");
+        sel.classList.add("ring-primary");
+        setTimeout(() => sel.classList.remove("ring-2", "ring-primary"), 800);
+        if (histLastData?.rows) {
+          const cached = histLastData.rows.find((r) => r.id === txId);
+          if (cached) cached.category = newCat;
+        }
+        saved++;
+      } else {
+        failed++;
+      }
+    }
+    refreshHistDirtyCounter();
+    // Re-render so any filter (e.g. Category=Other) hides rows that no longer match
+    if (histLastData) renderHistorico(histLastData);
+    if (failed > 0) alert(\`Saved \${saved} · \${failed} failed\`);
+  }
+  window.saveHistDirty = saveHistDirty;
 
   function escapeHtml(s) {
     return String(s).replace(/[&<>"']/g, (c) => ({ "&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;" }[c]));
@@ -829,6 +855,8 @@ export function renderDashboard(period) {
         histSearchTimer = setTimeout(loadHistorico, 250);
       };
     }
+    const histSaveBtn = document.getElementById("histSaveBtn");
+    if (histSaveBtn) histSaveBtn.onclick = saveHistDirty;
     // Client-side filters (no re-fetch needed — work on cached histLastData)
     const reRender = () => { if (histLastData) renderHistorico(histLastData); };
     ["histCategoryFilter","histTypeFilter"].forEach((id) => {
@@ -1432,13 +1460,17 @@ export function renderDashboard(period) {
     const r = await fetch(url);
     if (!r.ok) { body.innerHTML = "<div class='p-8 text-error'>Error " + r.status + "</div>"; return; }
     const d = await r.json();
-    document.getElementById("drillSub").textContent = d.count + " transacciones · " + fmt(d.total) + " · " + d.period;
+    document.getElementById("drillSub").textContent = d.count + " transactions · " + fmt(d.total) + " · " + d.period;
     const ACCOUNT_BADGE = {
       "BNP":     "bg-secondary-container text-secondary",
       "Amex":    "bg-primary-container text-on-primary-container",
       "Revolut": "bg-tertiary-container/60 text-tertiary",
     };
     body.innerHTML = d.rows.length ? \`
+      <div class="px-4 py-2 border-b border-outline-variant/15 bg-surface-container-low flex items-center justify-between">
+        <span class="text-xs text-outline">Change categories below, then click Save.</span>
+        <button id="drillSaveBtn" class="px-3 py-1.5 rounded-lg text-xs font-semibold bg-surface-container text-outline cursor-not-allowed" disabled>✓ No unsaved changes</button>
+      </div>
       <table class="w-full text-sm">
         <thead class="bg-surface-container sticky top-0">
           <tr class="text-left text-[10px] uppercase tracking-wider text-outline">
@@ -1458,7 +1490,7 @@ export function renderDashboard(period) {
               <td class="px-3 py-2 text-on-surface">\${r.merchant || "—"}</td>
               <td class="px-3 py-2 text-right tabular-nums \${r.amount < 0 ? "" : "text-primary"}">\${fmt(r.amount)}</td>
               <td class="px-3 py-2 text-right">
-                <select data-tx-id="\${r.id ?? ""}" data-current-cat="\${category}" class="drillRecat text-xs bg-surface-container border-0 rounded-lg pl-2.5 pr-7 py-1.5 font-medium hover:bg-surface-container-high focus:ring-2 focus:ring-primary focus:outline-none transition-colors">
+                <select data-tx-id="\${r.id ?? ""}" data-orig="\${category}" class="drillRecat text-xs bg-surface-container border-0 rounded-lg pl-2.5 pr-7 py-1.5 font-medium hover:bg-surface-container-high focus:ring-2 focus:ring-primary focus:outline-none transition-colors">
                   \${categoryOptions(category)}
                 </select>
               </td>
@@ -1467,28 +1499,48 @@ export function renderDashboard(period) {
         </tbody>
       </table>\` : "<div class='p-8 text-center text-outline italic'>No transactions</div>";
 
+    function refreshDrillDirtyCounter() {
+      const dirty = body.querySelectorAll(".drillRecat[data-dirty='1']").length;
+      const btn = document.getElementById("drillSaveBtn");
+      if (!btn) return;
+      btn.textContent = dirty > 0 ? \`💾 Save \${dirty} change\${dirty === 1 ? "" : "s"}\` : "✓ No unsaved changes";
+      btn.disabled = dirty === 0;
+      btn.className = "px-3 py-1.5 rounded-lg text-xs font-semibold " +
+        (dirty > 0 ? "bg-primary text-on-primary hover:opacity-90" : "bg-surface-container text-outline cursor-not-allowed");
+    }
     body.querySelectorAll(".drillRecat").forEach((sel) => {
-      sel.onchange = async () => {
-        const txId = parseInt(sel.dataset.txId, 10);
-        const newCat = sel.value;
-        const oldCat = sel.dataset.currentCat;
-        if (!txId || !newCat || newCat === oldCat) return;
-        sel.disabled = true;
-        const ok = await changeCategory(txId, newCat);
-        if (ok) {
-          sel.dataset.currentCat = newCat;
-          sel.classList.add("bg-primary-container", "text-on-primary-container");
-          setTimeout(() => sel.classList.remove("bg-primary-container", "text-on-primary-container"), 1200);
-          // Refresh the underlying dashboard so totals/charts reflect the change.
-          // Modal stays open; user can keep retagging.
-          load(currentData.period);
-        } else {
-          alert("Error cambiando categoría");
-          sel.value = oldCat;
-        }
-        sel.disabled = false;
+      sel.onchange = () => {
+        const isDirty = sel.value !== sel.dataset.orig;
+        sel.dataset.dirty = isDirty ? "1" : "";
+        sel.classList.toggle("ring-2", isDirty);
+        sel.classList.toggle("ring-warn", isDirty);
+        refreshDrillDirtyCounter();
       };
     });
+    const drillSaveBtn = document.getElementById("drillSaveBtn");
+    if (drillSaveBtn) drillSaveBtn.onclick = async () => {
+      const dirty = [...body.querySelectorAll(".drillRecat[data-dirty='1']")];
+      if (!dirty.length) return;
+      drillSaveBtn.disabled = true;
+      drillSaveBtn.textContent = "💾 Saving…";
+      let saved = 0; let failed = 0;
+      for (const sel of dirty) {
+        const txId = parseInt(sel.dataset.txId, 10);
+        if (!txId) continue;
+        const ok = await changeCategory(txId, sel.value);
+        if (ok) {
+          sel.dataset.orig = sel.value;
+          sel.dataset.dirty = "";
+          sel.classList.remove("ring-2", "ring-warn");
+          sel.classList.add("bg-primary-container", "text-on-primary-container");
+          setTimeout(() => sel.classList.remove("bg-primary-container", "text-on-primary-container"), 1000);
+          saved++;
+        } else { failed++; }
+      }
+      await load(currentData.period);
+      refreshDrillDirtyCounter();
+      if (failed > 0) alert(\`Saved \${saved} · \${failed} failed\`);
+    };
   }
   // expose to inline onclicks
   window.openCategoryDrill = openCategoryDrill;
@@ -1649,70 +1701,89 @@ export function renderDashboard(period) {
         </tbody>
       </table>\`;
 
-    // Save logic. Simple and robust: only listens to 'change' (fires on blur/
-    // Enter) — no debounce, no concurrency guards. The backend UPSERT is
-    // idempotent so concurrent saves are safe. Force-blur on modal close
-    // covers the "typed but didn't tab away" case.
-    async function saveBudgetInput(input) {
-      const category = input.dataset.category;
-      const orig = parseFloat(input.dataset.orig);
-      const val  = parseFloat(input.value);
-      console.log("[budget save] try", { category, orig, val });
-      if (!Number.isFinite(val)) { console.log("[budget save] skipped — NaN"); return; }
-      if (val === orig)          { console.log("[budget save] skipped — unchanged"); return; }
-      try {
-        const r = await fetch("/api/budget?key=" + encodeURIComponent(key), {
-          method: "POST", headers: { "content-type": "application/json" },
-          body: JSON.stringify({ period: d.period, kind: "category", payload: { category, budget_eur: val } }),
-        });
-        console.log("[budget save] HTTP", r.status);
-        if (!r.ok) {
-          const errMsg = await r.text().catch(() => r.status);
-          alert("Save failed (" + r.status + "): " + errMsg);
-          input.value = orig;
-          return;
-        }
-        input.dataset.orig = val;
-        input.classList.add("ring-2", "ring-primary");
-        setTimeout(() => input.classList.remove("ring-2", "ring-primary"), 1000);
-        // Refresh background dashboard data so the main table reflects the save
-        await load(d.period);
-        // Surgical update of THIS row's actual/% cells with fresh data
-        const row = input.closest("tr");
-        const fresh = (currentData?.category_rows || []).find((x) => x.category === category)
-          || { actual_eur: 0, budget_eur: val };
-        const pct = val > 0 ? Math.round((fresh.actual_eur / val) * 1000) / 10 : null;
-        const pctClr = pct == null ? "text-outline" :
-                       pct > 100  ? "text-error" :
-                       pct > 80   ? "text-warn"  : "text-primary";
-        const cells = row.querySelectorAll("td");
-        if (cells[2]) cells[2].textContent = fmt(fresh.actual_eur);
-        if (cells[3]) {
-          cells[3].textContent = fmtPct(pct);
-          cells[3].className = "px-4 py-2.5 text-right tabular-nums font-semibold " + pctClr;
-        }
-      } catch (err) {
-        console.error("[budget save] network error", err);
-        alert("Network error saving: " + err.message);
+    // Explicit save button. Inputs get an orange ring while "dirty" (modified
+    // but not saved). User clicks "Save changes" to commit all dirty ones in
+    // batch. Way more reliable than relying on change/blur events that don't
+    // always fire as users expect.
+    function refreshDirtyCounter() {
+      const dirty = body.querySelectorAll(".catBudgetInput.dirty").length;
+      const saveBtn = document.getElementById("budgetSaveBtn");
+      const doneBtn = document.getElementById("budgetDoneBtn");
+      if (saveBtn) {
+        saveBtn.textContent = dirty > 0 ? \`💾 Save \${dirty} change\${dirty === 1 ? "" : "s"}\` : "✓ No unsaved changes";
+        saveBtn.disabled = dirty === 0;
+        saveBtn.className = "px-4 py-2 rounded-lg text-sm font-semibold " +
+          (dirty > 0 ? "bg-primary text-on-primary hover:opacity-90" : "bg-surface-container text-outline cursor-not-allowed");
+      }
+      if (doneBtn) {
+        doneBtn.textContent = dirty > 0 ? \`💾 Save & close (\${dirty})\` : "Close";
       }
     }
     body.querySelectorAll(".catBudgetInput").forEach((input) => {
-      input.onchange = () => saveBudgetInput(input);
+      input.oninput = () => {
+        const orig = parseFloat(input.dataset.orig);
+        const val  = parseFloat(input.value);
+        const isDirty = Number.isFinite(val) && val !== orig;
+        input.classList.toggle("dirty", isDirty);
+        input.classList.toggle("ring-2", isDirty);
+        input.classList.toggle("ring-warn", isDirty);
+        refreshDirtyCounter();
+      };
     });
-    // On modal close, force any focused input to blur (which triggers change).
-    window.flushBudgetInputs = () => {
-      const active = document.activeElement;
-      if (active && active.classList && active.classList.contains("catBudgetInput")) {
-        active.blur();  // this fires change → saveBudgetInput
+    refreshDirtyCounter();
+
+    // Batch save all dirty inputs. Called by Save button + Save & close.
+    async function saveAllDirty() {
+      const dirty = [...body.querySelectorAll(".catBudgetInput.dirty")];
+      if (!dirty.length) return { ok: true, saved: 0 };
+      const saveBtn = document.getElementById("budgetSaveBtn");
+      if (saveBtn) { saveBtn.disabled = true; saveBtn.textContent = "💾 Saving…"; }
+      let saved = 0; let failed = 0;
+      for (const input of dirty) {
+        const category = input.dataset.category;
+        const val = parseFloat(input.value);
+        if (!Number.isFinite(val)) continue;
+        try {
+          const r = await fetch("/api/budget?key=" + encodeURIComponent(key), {
+            method: "POST", headers: { "content-type": "application/json" },
+            body: JSON.stringify({ period: d.period, kind: "category", payload: { category, budget_eur: val } }),
+          });
+          if (r.ok) {
+            input.dataset.orig = val;
+            input.classList.remove("dirty", "ring-2", "ring-warn");
+            input.classList.add("ring-2", "ring-primary");
+            setTimeout(() => input.classList.remove("ring-2", "ring-primary"), 800);
+            saved++;
+          } else {
+            failed++;
+            console.error("[budget save] failed for", category, "status", r.status);
+          }
+        } catch (err) {
+          failed++;
+          console.error("[budget save] network error for", category, err);
+        }
       }
-    };
+      await load(d.period);
+      refreshDirtyCounter();
+      if (failed > 0) alert(\`Saved \${saved} · \${failed} failed (check console)\`);
+      return { ok: failed === 0, saved };
+    }
+    window.saveBudgetChanges = saveAllDirty;
+
+    // Wire Save button (in modal header) — saves all dirty, keeps modal open
+    document.getElementById("budgetSaveBtn").onclick = saveAllDirty;
 
     document.getElementById("budgetModal").classList.remove("hidden");
   }
   window.openBudgetEditor = openBudgetEditor;
-  function closeBudgetModal() {
-    // Flush any pending typed-but-not-blurred edits before closing
-    if (typeof window.flushBudgetInputs === "function") window.flushBudgetInputs();
+  async function closeBudgetModal() {
+    // If user has unsaved changes, ask before closing
+    const dirty = document.querySelectorAll("#budgetBody .catBudgetInput.dirty").length;
+    if (dirty > 0) {
+      if (confirm(\`You have \${dirty} unsaved change\${dirty === 1 ? "" : "s"}. Save before closing?\`)) {
+        if (typeof window.saveBudgetChanges === "function") await window.saveBudgetChanges();
+      }
+    }
     document.getElementById("budgetModal").classList.add("hidden");
   }
   document.getElementById("budgetClose").onclick   = closeBudgetModal;
