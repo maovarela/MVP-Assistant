@@ -327,6 +327,12 @@ app.get("/dashboard", (req, res) => {
   if (!requireKey(req, res, "DASH_KEY")) return;
   const period = (req.query.period || "").toString().match(/^\d{4}-\d{2}$/) ? req.query.period : null;
   res.set("content-type", "text/html; charset=utf-8");
+  // No-cache so dashboard updates are picked up instantly after a deploy.
+  // The HTML is small (~50 KB) and the user opens it ~5x/day max, so the
+  // hit of always re-fetching is negligible vs the pain of stale JS.
+  res.set("Cache-Control", "no-cache, no-store, must-revalidate");
+  res.set("Pragma", "no-cache");
+  res.set("Expires", "0");
   res.send(renderDashboard(period));
 });
 
