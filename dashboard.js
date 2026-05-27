@@ -1649,69 +1649,62 @@ export function renderDashboard(period) {
         </tbody>
       </table>\`;
 
-    // Shared save logic — used by both 'change' (blur/Enter) and debounced 'input'
-    // (typing). Native <input type=number> only fires 'change' on blur, so users
-    // who type a value and immediately close the modal would lose their edit.
+    // Save logic. Simple and robust: only listens to 'change' (fires on blur/
+    // Enter) — no debounce, no concurrency guards. The backend UPSERT is
+    // idempotent so concurrent saves are safe. Force-blur on modal close
+    // covers the "typed but didn't tab away" case.
     async function saveBudgetInput(input) {
       const category = input.dataset.category;
       const orig = parseFloat(input.dataset.orig);
       const val  = parseFloat(input.value);
-      console.log("[budget save] try:", { category, orig, val, raw: input.value });
-      if (input.dataset.saving === "1") { console.log("[budget save] skipped — already saving"); return; }
-      if (!Number.isFinite(val))       { console.log("[budget save] skipped — NaN value"); return; }
-      if (val === orig)                { console.log("[budget save] skipped — same as original"); return; }
-      input.dataset.saving = "1";
+      console.log("[budget save] try", { category, orig, val });
+      if (!Number.isFinite(val)) { console.log("[budget save] skipped — NaN"); return; }
+      if (val === orig)          { console.log("[budget save] skipped — unchanged"); return; }
       try {
         const r = await fetch("/api/budget?key=" + encodeURIComponent(key), {
           method: "POST", headers: { "content-type": "application/json" },
           body: JSON.stringify({ period: d.period, kind: "category", payload: { category, budget_eur: val } }),
         });
-        console.log("[budget save] response:", r.status);
-        if (r.ok) {
-          input.dataset.orig = val;
-          input.classList.add("ring-2", "ring-primary");
-          setTimeout(() => input.classList.remove("ring-2", "ring-primary"), 1000);
-          console.log("[budget save] ✓ persisted, reloading dashboard");
-          // Reload background dashboard data (refreshes the table behind the modal)
-          await load(d.period);
-          console.log("[budget save] ✓ dashboard reloaded");
-          // Surgical update of THIS row's actual/% cells with fresh data
-          const row = input.closest("tr");
-          const fresh = (currentData?.category_rows || []).find((x) => x.category === category)
-            || { actual_eur: 0, budget_eur: val };
-          const pct = val > 0 ? Math.round((fresh.actual_eur / val) * 1000) / 10 : null;
-          const pctClr = pct == null ? "text-outline" :
-                         pct > 100  ? "text-error" :
-                         pct > 80   ? "text-warn"  : "text-primary";
-          const cells = row.querySelectorAll("td");
-          if (cells[2]) cells[2].textContent = fmt(fresh.actual_eur);
-          if (cells[3]) {
-            cells[3].textContent = fmtPct(pct);
-            cells[3].className = "px-4 py-2.5 text-right tabular-nums font-semibold " + pctClr;
-          }
-        } else {
+        console.log("[budget save] HTTP", r.status);
+        if (!r.ok) {
           const errMsg = await r.text().catch(() => r.status);
           alert("Save failed (" + r.status + "): " + errMsg);
           input.value = orig;
+          return;
         }
-      } finally {
-        delete input.dataset.saving;
+        input.dataset.orig = val;
+        input.classList.add("ring-2", "ring-primary");
+        setTimeout(() => input.classList.remove("ring-2", "ring-primary"), 1000);
+        // Refresh background dashboard data so the main table reflects the save
+        await load(d.period);
+        // Surgical update of THIS row's actual/% cells with fresh data
+        const row = input.closest("tr");
+        const fresh = (currentData?.category_rows || []).find((x) => x.category === category)
+          || { actual_eur: 0, budget_eur: val };
+        const pct = val > 0 ? Math.round((fresh.actual_eur / val) * 1000) / 10 : null;
+        const pctClr = pct == null ? "text-outline" :
+                       pct > 100  ? "text-error" :
+                       pct > 80   ? "text-warn"  : "text-primary";
+        const cells = row.querySelectorAll("td");
+        if (cells[2]) cells[2].textContent = fmt(fresh.actual_eur);
+        if (cells[3]) {
+          cells[3].textContent = fmtPct(pct);
+          cells[3].className = "px-4 py-2.5 text-right tabular-nums font-semibold " + pctClr;
+        }
+      } catch (err) {
+        console.error("[budget save] network error", err);
+        alert("Network error saving: " + err.message);
       }
     }
-    const debouncers = new WeakMap();
     body.querySelectorAll(".catBudgetInput").forEach((input) => {
-      input.onchange = () => saveBudgetInput(input);  // fires on blur / Enter
-      input.oninput  = () => {                          // fires on every keystroke
-        clearTimeout(debouncers.get(input));
-        debouncers.set(input, setTimeout(() => saveBudgetInput(input), 700));
-      };
+      input.onchange = () => saveBudgetInput(input);
     });
-    // Expose for the close handlers to force-flush any pending edits
+    // On modal close, force any focused input to blur (which triggers change).
     window.flushBudgetInputs = () => {
-      body.querySelectorAll(".catBudgetInput").forEach((inp) => {
-        clearTimeout(debouncers.get(inp));
-        saveBudgetInput(inp);  // best-effort, no await
-      });
+      const active = document.activeElement;
+      if (active && active.classList && active.classList.contains("catBudgetInput")) {
+        active.blur();  // this fires change → saveBudgetInput
+      }
     };
 
     document.getElementById("budgetModal").classList.remove("hidden");
