@@ -171,7 +171,7 @@ export function renderDashboard(period) {
     <div class="flex items-center justify-between px-4 py-3 border-b border-outline-variant/15">
       <div class="flex items-center gap-2">
         <span class="material-symbols-outlined text-tertiary" style="font-size: 18px;">trending_up</span>
-        <h3 class="font-headline font-bold text-sm tracking-tight">Comparativo últimos 3 meses</h3>
+        <h3 class="font-headline font-bold text-sm tracking-tight">Last 3 months comparison</h3>
       </div>
       <div class="text-[11px]" id="comparisonTotalDelta">—</div>
     </div>
@@ -366,6 +366,13 @@ export function renderDashboard(period) {
     <!-- Filter row -->
     <div class="space-y-2 mb-3 pb-3 border-b border-outline-variant/15">
       <div class="flex flex-wrap items-center gap-3">
+        <div class="flex items-center gap-1" id="histPresets">
+          <button data-range="3m"  class="histPreset px-2.5 py-1 rounded-full text-[11px] font-semibold bg-surface-container text-outline hover:bg-surface-container-high transition-colors">3m</button>
+          <button data-range="6m"  class="histPreset px-2.5 py-1 rounded-full text-[11px] font-semibold bg-surface-container text-outline hover:bg-surface-container-high transition-colors">6m</button>
+          <button data-range="12m" class="histPreset px-2.5 py-1 rounded-full text-[11px] font-semibold bg-surface-container text-outline hover:bg-surface-container-high transition-colors">12m</button>
+          <button data-range="ytd" class="histPreset px-2.5 py-1 rounded-full text-[11px] font-semibold bg-surface-container text-outline hover:bg-surface-container-high transition-colors">YTD</button>
+        </div>
+        <span class="hidden sm:inline text-outline-variant">|</span>
         <div class="flex items-center gap-1.5">
           <label class="text-[11px] font-bold text-on-surface">From</label>
           <select id="histYearFrom"  class="bg-surface-container text-on-surface border border-outline-variant/30 rounded-md text-xs px-2 py-1 focus:ring-2 focus:ring-primary focus:outline-none"></select>
@@ -604,12 +611,14 @@ export function renderDashboard(period) {
     const periods = (currentData?.available_periods?.length
       ? currentData.available_periods
       : [currentData?.period, fallback].filter(Boolean));
-    let years = [...new Set(periods.map((p) => p.slice(0, 4)))].sort().reverse();
-    if (!years.length) {
-      // Last-resort: 3 years around today
-      const y = now.getFullYear();
-      years = [String(y + 1), String(y), String(y - 1), String(y - 2)];
-    }
+    // Years from the data, PLUS the current year and 2 prior — so the quick
+    // presets (and manual picks) that reach back across a year boundary always
+    // have their year available in the dropdown.
+    const ny = now.getFullYear();
+    let years = [...new Set([
+      ...periods.map((p) => p.slice(0, 4)),
+      String(ny), String(ny - 1), String(ny - 2),
+    ])].sort().reverse();
     const MONTH_LABELS = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
     const months = Array.from({ length: 12 }, (_, i) => ({ v: String(i+1).padStart(2,"0"), l: MONTH_LABELS[i] }));
     const yearOpts  = years.map((y)   => \`<option value="\${y}">\${y}</option>\`).join("");
@@ -687,6 +696,25 @@ export function renderDashboard(period) {
     }
 
     histInitialized = true;
+  }
+
+  // Set the From/To selects to an explicit YYYY-MM range and reload. Used by
+  // the quick-preset chips (3m / 6m / 12m / YTD).
+  function setHistRange(fromYM, toYM) {
+    ensureHistoricoInit();
+    const apply = (yId, mId, ym) => {
+      const [y, m] = ym.split("-");
+      const yEl = document.getElementById(yId);
+      const mEl = document.getElementById(mId);
+      if (yEl) {
+        if (!Array.from(yEl.options).some((o) => o.value === y)) yEl.add(new Option(y, y));
+        yEl.value = y;
+      }
+      if (mEl) mEl.value = m;
+    };
+    apply("histYearFrom", "histMonthFrom", fromYM);
+    apply("histYearTo",   "histMonthTo",   toYM);
+    loadHistorico();
   }
 
   async function loadHistorico() {
@@ -844,9 +872,28 @@ export function renderDashboard(period) {
   }
 
   setTimeout(() => {
+    const PRESET_ON  = "bg-primary text-on-primary";
+    const PRESET_OFF = "bg-surface-container text-outline hover:bg-surface-container-high";
+    const clearPresetActive = () =>
+      document.querySelectorAll(".histPreset").forEach((b) => { b.className = b.className.replace(PRESET_ON, PRESET_OFF); });
     ["histYearFrom","histMonthFrom","histYearTo","histMonthTo"].forEach((id) => {
       const el = document.getElementById(id);
-      if (el) el.onchange = loadHistorico;
+      // Manual range edits clear any active preset highlight
+      if (el) el.onchange = () => { clearPresetActive(); loadHistorico(); };
+    });
+    document.querySelectorAll(".histPreset").forEach((b) => {
+      b.onclick = () => {
+        const anchor = new Date(); anchor.setDate(1);
+        const ym = (off) => { const d = new Date(anchor); d.setMonth(d.getMonth() - off); return d.getFullYear() + "-" + String(d.getMonth() + 1).padStart(2, "0"); };
+        const thisM = ym(0);
+        const r = b.dataset.range;
+        if      (r === "3m")  setHistRange(ym(2),  thisM);
+        else if (r === "6m")  setHistRange(ym(5),  thisM);
+        else if (r === "12m") setHistRange(ym(11), thisM);
+        else if (r === "ytd") setHistRange(anchor.getFullYear() + "-01", thisM);
+        clearPresetActive();
+        b.className = b.className.replace(PRESET_OFF, PRESET_ON);
+      };
     });
     const searchEl = document.getElementById("histSearch");
     if (searchEl) {
@@ -2236,7 +2283,7 @@ export function renderDashboard(period) {
 
   function renderComparison(c) {
     if (!c || !c.months || c.months.length < 2) {
-      document.getElementById("comparisonBody").innerHTML = \`<div class="text-xs text-outline italic p-3">Necesitas al menos 2 meses de data</div>\`;
+      document.getElementById("comparisonBody").innerHTML = \`<div class="text-xs text-outline italic p-3">Need at least 2 months of data</div>\`;
       return;
     }
     const totalsRow = c.summary.total_per_month;
@@ -2278,7 +2325,7 @@ export function renderDashboard(period) {
               const isLast = i === r.totals.length - 1;
               const hide = i !== lastVisibleIdx && i !== prevVisibleIdx ? "hidden sm:table-cell" : "";
               const m = c.months[i];
-              return \`<td class="\${hide} px-2 sm:px-3 py-2 text-right tabular-nums \${isLast ? "font-semibold text-on-surface" : "text-outline"} hover:bg-surface-container-high cursor-pointer" onclick="event.stopPropagation(); openCategoryDrill('\${r.category}', '\${m}')" title="Click → ver tx de \${m}">\${fmt(v)}</td>\`;
+              return \`<td class="\${hide} px-2 sm:px-3 py-2 text-right tabular-nums \${isLast ? "font-semibold text-on-surface" : "text-outline"} hover:bg-surface-container-high cursor-pointer" onclick="event.stopPropagation(); openCategoryDrill('\${r.category}', '\${m}')" title="Click → view tx for \${m}">\${fmt(v)}</td>\`;
             }).join("");
             return \`<tr class="border-b border-outline-variant/15 last:border-0">
               <td class="px-2 sm:px-3 py-2"><span class="material-symbols-outlined text-outline mr-1.5 align-middle" style="font-size:14px">\${ICON[r.category] || ICON.other}</span><span class="capitalize">\${r.category}</span></td>
@@ -2289,7 +2336,7 @@ export function renderDashboard(period) {
           }).join("")}
         </tbody>
       </table>
-      </div>\` : \`<div class="text-xs text-outline italic p-3">Sin movimientos significativos entre los meses</div>\`;
+      </div>\` : \`<div class="text-xs text-outline italic p-3">No significant changes between months</div>\`;
   }
 
   // ─── CFO-grade charts ───────────────────────────────────────────────────

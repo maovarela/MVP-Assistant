@@ -708,6 +708,26 @@ function currentPeriod() {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
 }
 
+/** Dashboard default period: open on the current month, but if it has no real
+ *  spend yet (e.g. the month just started — "ya es mes corrido"), fall back to
+ *  the latest month that does, so the dashboard never opens on an all-0€ view.
+ *  An explicit ?period= always overrides this. */
+function defaultDashboardPeriod() {
+  const cur = currentPeriod();
+  const hasData = db.prepare(`
+    SELECT 1 FROM transactions
+    WHERE amount < 0 AND is_internal_transfer = 0 AND strftime('%Y-%m', date) = ?
+    LIMIT 1
+  `).get(cur);
+  if (hasData) return cur;
+  const latest = db.prepare(`
+    SELECT strftime('%Y-%m', date) AS p FROM transactions
+    WHERE amount < 0 AND is_internal_transfer = 0
+    GROUP BY p ORDER BY p DESC LIMIT 1
+  `).get();
+  return latest?.p || cur;
+}
+
 /** Insert/replace FX rates for a period. Manual entries are never overwritten
  *  by auto-fetched ones — this protects user-entered rates from the cron. */
 export function setFxRate(period, { usd_cop, eur_usd, tax_fr_pct = 0, source = "manual" }) {
@@ -1216,7 +1236,7 @@ export function getActualSpendVsBudget(period) {
 
 /** Full payload for the dashboard JSON endpoint. */
 export function getDashboardSummary(period) {
-  const p = period || currentPeriod();
+  const p = period || defaultDashboardPeriod();
   const raw = listBudgetPeriod(p);
   const attrib = getActualSpendVsBudget(p);
   const fixedWithActual    = attrib.rows;

@@ -43,6 +43,7 @@ import { categorize as keywordCategorize } from "./bankCsv.js";
 import { refreshCurrentMonthFx } from "./fx.js";
 import { renderDashboard } from "./dashboard.js";
 import { runWeeklyAdvisorBriefing } from "./advisor.js";
+import { toTelegramHTML } from "./tgformat.js";
 
 // ─── Config ──────────────────────────────────────────────────────────────────
 
@@ -149,9 +150,9 @@ async function handleTelegramUpdate(update) {
     text,
     replyTo: async (reply) => {
       try {
-        await bot.sendMessage(chatId, reply, { parse_mode: "Markdown" });
+        await bot.sendMessage(chatId, toTelegramHTML(reply), { parse_mode: "HTML" });
       } catch (err) {
-        console.warn("[bot] markdown send failed, retrying plain:", err.message);
+        console.warn("[bot] HTML send failed, retrying plain:", err.message);
         await bot.sendMessage(chatId, reply);
       }
     },
@@ -967,14 +968,17 @@ async function registerWebhook() {
 async function broadcast(text, { markdown = true } = {}) {
   const tasks = [];
   if (ENABLE_TELEGRAM && CHAT_ID) {
+    // Telegram gets HTML (renders **bold**/#### headers our LLM emits — legacy
+    // Markdown shows them literally). On any parse error, fall back to plain.
     tasks.push(
-      bot.sendMessage(CHAT_ID, text, markdown ? { parse_mode: "Markdown" } : {})
+      bot.sendMessage(CHAT_ID, markdown ? toTelegramHTML(text) : text, markdown ? { parse_mode: "HTML" } : {})
          .catch((err) => bot.sendMessage(CHAT_ID, text).catch(() =>
            console.error("[broadcast] telegram failed:", err.message)
          ))
     );
   }
   if (ENABLE_WHATSAPP && WA_OWNER_NUMBER && isWhatsAppConfigured()) {
+    // WhatsApp keeps its own *single-asterisk* markup — send the raw text.
     tasks.push(
       sendWhatsApp(WA_OWNER_NUMBER, text).then((r) => {
         if (!r.ok) console.warn(`[broadcast] whatsapp failed: ${r.error}`);
@@ -999,7 +1003,7 @@ function startScheduler() {
   // Daily 8:00 Paris — briefing
   cron.schedule("0 8 * * *", async () => {
     try {
-      const reply = await runAgent("Dame el briefing del día. (1) Llama list_calendar_events (days_ahead 1) para eventos de hoy y mañana — menciónalos primero con hora y ubicación si aplica. (2) Tareas vencidas y urgentes esta semana. (3) Llama spend_pace y resume: gasto del mes hasta hoy, proyección fin de mes vs mes pasado, y top 3 categorías con su delta % vs el mismo periodo del mes anterior.");
+      const reply = await runAgent("Dame el briefing del día. (1) Llama list_calendar_events (days_ahead 1) para eventos de hoy y mañana — menciónalos primero con hora y ubicación si aplica. (2) Tareas vencidas y urgentes esta semana. (3) Llama spend_pace y resume: gasto del mes hasta hoy, proyección fin de mes vs mes pasado, y top 3 categorías con su delta % vs el mismo periodo del mes anterior. FORMATO: cada bloque con un header '### Título' en su propia línea, viñetas '- ' una por línea, cifras/horas clave en **negritas**.");
       await broadcast(`📋 *Briefing del día*\n\n${reply}`);
     } catch (err) { console.error("[cron] daily briefing:", err.message); }
   }, { timezone: "Europe/Paris" });
@@ -1049,10 +1053,26 @@ function startScheduler() {
     } catch (err) { console.error("[cron] revolut nudge:", err.message); }
   }, { timezone: "Europe/Paris" });
 
+  // 6th of every month, 09:00 Paris — monthly bank-statement reminder.
+  // By the 6th all three banks (BNP, Amex, Revolut) have published the prior
+  // month's statement, so it's the earliest day a full month can be ingested.
+  cron.schedule("0 9 6 * *", async () => {
+    try {
+      await broadcast(
+        "🏦 *Statements del mes pasado listos*\n\n" +
+        "Ya puedes descargar los statements completos del mes anterior (todos los bancos publicaron al día 6). Súbelos al bot para cerrar el mes:\n\n" +
+        "- *BNP* → app → cuenta → Relevés → PDF/CSV\n" +
+        "- *Amex* → online → Statements → CSV\n" +
+        "- *Revolut* → avatar → Statements → cuenta → mes completo → Excel/CSV\n\n" +
+        "Compártelos aquí (CSV o PDF) y quedan ingestados."
+      );
+    } catch (err) { console.error("[cron] monthly statements reminder:", err.message); }
+  }, { timezone: "Europe/Paris" });
+
   // Sunday 18:00 Paris — weekly review
   cron.schedule("0 18 * * 0", async () => {
     try {
-      const reply = await runAgent("Hazme el weekly review. Llama list_calendar_events (days_ahead 7) para los eventos de la próxima semana — inclúyelos. Luego: qué completé, qué bloqueado, prioridades próxima semana, y desglose de gasto de la semana.");
+      const reply = await runAgent("Hazme el weekly review. Llama list_calendar_events (days_ahead 7) para los eventos de la próxima semana — inclúyelos. Luego: qué completé, qué bloqueado, prioridades próxima semana, y desglose de gasto de la semana. FORMATO: cada bloque con un header '### Título' en su propia línea, viñetas '- ' una por línea, cifras/fechas clave en **negritas**.");
       await broadcast(`📊 *Weekly Review*\n\n${reply}`);
     } catch (err) { console.error("[cron] weekly review:", err.message); }
   }, { timezone: "Europe/Paris" });

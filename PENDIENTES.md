@@ -287,6 +287,32 @@ Backend `POST /api/budget kind=category` and `POST /api/transactions/category` a
 - `scripts/import-local.mjs` — importador local que normaliza CSVs y produce `normalized-transactions.csv` (gitignored)
 - `.gitignore` ahora cubre `scripts/normalized-*.csv`, `.obsidian/`, `qr.png`
 
+### Shipped 2026-06-03
+
+- **Histórico: chips de rango rápido** (`dashboard.js`): botones 3m / 6m / 12m / YTD sobre el filtro From/To que setean el rango con un clic (highlight activo, se limpia si editas el rango a mano). El dropdown de años ahora siempre incluye año actual + 2 previos para que los presets que cruzan año funcionen. Los 4 selects manuales se mantienen para rangos custom.
+- **Recordatorio mensual de statements** (`server.js` cron `0 9 6 * *`, Europe/Paris): el día 6 de cada mes el bot avisa que ya puede descargar los statements completos del mes anterior (BNP/Amex/Revolut publican al día 6) y los suba al bot. Mismo patrón que el nudge de Revolut.
+- **Dashboard mes default = último mes con datos** (`memory.defaultDashboardPeriod()`): si el mes corriente aún no tiene gasto real (ej. el mes recién arrancó), el dashboard abre en el último mes **con** movimientos en vez de mostrar todo 0 €. `?period=` y el selector siguen mandando.
+- **Comparativo a inglés**: la sección "Last 3 months comparison" (antes "Comparativo últimos 3 meses") + sus textos auxiliares pasaron a inglés para alinear con el resto del dashboard.
+- **Formato Telegram arreglado** (`tgformat.js` nuevo): los briefings salían con `**` y `####` literales porque se enviaban con `parse_mode:"Markdown"` (legacy → negrita es `*uno*`, no `**dos**`; headers no existen). Ahora todo lo que va a Telegram pasa por `toTelegramHTML()` → convierte `**`/`*`/`####`/`-`/`` `code` `` a HTML real (`<b>`, `•`, separación de secciones). WhatsApp queda con su `*` intacto. Fallback a texto plano si el parse falla.
+  - Prompts de briefing/weekly + system prompt del CFO (`advisor.js`) ahora piden headers `### Sección` + viñetas `-` + cifras en `**negritas**` para jerarquía consistente.
+  - `index.js` tiene el mismo bug pero es **legacy** — producción corre `server.js` (Procfile + `npm start`). No se tocó.
+
+## Custom domain & acceso — mauriciovarela.com
+
+El dashboard se sirve bajo un subdominio de `mauriciovarela.com` (dominio registrado en **Cloudflare**), con acceso restringido a un solo usuario vía **Cloudflare Access** (Zero Trust). **Cero cambios de código** — todo se configura en Railway + Cloudflare.
+
+**Rutas (recordatorio):** `/` es solo el health check de Railway (`{"status":"MVP-Assistant running"}`) — NO es error. El dashboard vive en **`/dashboard?key=$DASH_KEY`**. Webhooks en `/webhook/telegram` y `/webhook/whatsapp/<secret>`.
+
+**Setup que funciona:**
+1. Railway → service → Settings → Networking → **Custom Domain** → agregar subdominio (ej. `money.mauriciovarela.com`) → copiar el CNAME target.
+2. Cloudflare → DNS → CNAME `money` → target de Railway. **Primero DNS-only (gris)** para que Railway emita su cert TLS; cuando Railway marque *Active*, pasar a **Proxied (naranja)** + SSL/TLS = **Full**.
+3. Cloudflare **Zero Trust → Access → Applications**, dos apps sobre el mismo host (orden importa, la de webhooks primero por path más específico):
+   - **App A — Webhooks:** path `/webhook/*` → policy **Bypass → Everyone**. ⚠️ **Obligatorio**: sin esto Telegram/WhatsApp no pueden entregar (no saben hacer login) y el bot queda mudo.
+   - **App B — Dashboard:** resto del host → policy **Allow → email `varelaperezmauricio@gmail.com`**.
+4. El `?key=$DASH_KEY` se mantiene como segunda capa — el frontend ya lo manda y las cookies de Access viajan solas en peticiones del mismo origen. URL final: `https://money.mauriciovarela.com/dashboard?key=$DASH_KEY`.
+
+**Trampa documentada:** cualquier candado a nivel de dominio (Access, basic-auth global) rompe los webhooks si no se exenta `/webhook/*`.
+
 ## Notas de arquitectura
 
 - Canales activos: Telegram (siempre). WhatsApp queda como capacidad latente — código presente, gateado por `ENABLE_WHATSAPP`.

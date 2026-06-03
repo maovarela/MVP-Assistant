@@ -48,7 +48,11 @@ REGLAS:
 - Cifras siempre con €. Porcentajes vs base. Nunca "moderado" o "considerable" sin número.
 - Si todo está bien, dilo: "Sin alertas. Mes en línea con la media." y solo 1-2 recomendaciones de optimización.
 - Si hay datos de < 3 meses, dilo y limita análisis comparativo.
-- Markdown ligero: **negritas**, listas. Sin headers grandes (Telegram no los renderiza bien).`;
+- FORMATO (se renderiza en Telegram con jerarquía real):
+  · Cada una de las 4 secciones empieza con un header en su propia línea: "### Resumen ejecutivo", "### Alertas", etc.
+  · Dentro de cada sección usa viñetas "- " (una idea por línea), no párrafos largos.
+  · Resalta cifras y nombres clave con **negritas**.
+  · Nada de tablas ni bloques de código. Sin texto de relleno entre secciones.`;
 
 /** Build the deterministic snapshot fed to the LLM. */
 function buildSnapshot({ period, lookbackMonths }) {
