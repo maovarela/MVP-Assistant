@@ -10,6 +10,7 @@
 - **Proactive watchman**: corre cada 2h entre 08:00–22:00 Paris. Default silencio. Snapshot → JSON estricto → `broadcast()` solo si `interrupt=true`.
 - **Daily briefing**: ahora incluye calendario (1d ahead) + `spend_pace` (gasto MTD, proyección fin de mes, top 3 categorías con delta % vs mismo periodo mes anterior).
 - **Bulk import histórico**: `scripts/import-local.mjs` + endpoint `POST /import/normalized?key=$INTERNAL_IMPORT_KEY`. Soporta cargar años de CSV en un solo curl.
+- **B2B / techo micro shipped 2026-06-05** (`ceiling.js` + tab B2B): el operador opera Vandfort + Zentra + Touro bajo **una sola EI** (SIRET 10549166600019), así que el CA de los tres **suma a un único techo**. El módulo calcula el CA combinado del año, lo atribuye por keyword, excluye salario CDI + transferencias internas, marca ingresos sin clasificar, proyecta el cruce a fin de año, y dispara alerta por Telegram al cruzar 60/70/85/95/100% de la franchise TVA (€37.5k) y el techo micro (€77.7k). Cuenta Shine registrada como prefijo `shine:` (B2B independiente de lo personal). **Pendiente único**: ingestión de Shine (CSV/email/API — por definir cuando la cuenta esté activa); hoy el tab muestra €0 sin datos. Zentra y Touro comparten cuenta Stripe → no se separan entre sí desde el banco.
 - **WhatsApp**: **diferido** — código integrado pero apagado por flag (`ENABLE_WHATSAPP=false` default). Detalles abajo.
 
 ## ⚠️ Aprendizajes 2026-05-24 (no repetir)

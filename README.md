@@ -73,7 +73,9 @@ MVP-Assistant/
 ├── proactive.js             # ③ Proactive watchman — 2h scans, strict-JSON output
 ├── transactions.js          # ① Ingestor entrypoint — email/CSV/PDF
 ├── bankCsv.js               # Deterministic Amex/Revolut/BNP parsers (sign-correct, multi-section, internal-transfer auto-flag)
-├── dashboard.js             # HTML shell for /dashboard (Overview + Transactions tabs, Chart.js via CDN, mobile-first)
+├── ceiling.js               # B2B micro-entreprise ceiling: combined CA (Vandfort+Zentra+Touro = 1 EI), forecast, threshold alerts
+├── ceiling.config.json      # Ceiling thresholds + per-business income keywords (editable)
+├── dashboard.js             # HTML shell for /dashboard (Overview + Transactions + B2B tabs, Chart.js via CDN, mobile-first)
 ├── fx.js                    # Free FX rate fetch (exchangerate.host + open.er-api fallback)
 ├── memory.js                # SQLite layer: messages, projects, tasks, transactions, budgets, pending_items, llm_calls
 ├── email.js                 # IMAP reader (Gmail app password)
@@ -85,6 +87,7 @@ MVP-Assistant/
 ├── scripts/
 │   ├── import-local.mjs     # One-shot local importer for historic Amex/Revolut CSVs
 │   ├── seed-budget.mjs      # One-shot seed for the budget dashboard (uses budget-seed.json)
+│   ├── ceiling-status.mjs   # Dry-run: prints combined CA, per-business split, forecast, which alerts would fire
 │   ├── remove-uniqlo-cleopatra.mjs # One-shot variable_expenses cleanup example
 │   └── budget-seed.example.json # Template — copy to budget-seed.json (gitignored) and edit
 ├── railway.json
@@ -226,10 +229,11 @@ Dedup is keyed by Amex transaction reference / Revolut row hash, so re-running i
 
 Open `https://<your-host>/dashboard?key=$DASH_KEY` on your phone. Replaces the manual monthly Google Sheet. UI is in English.
 
-### Two-tab layout
+### Three-tab layout
 
 - **Overview** — KPIs, dial, budget vs actual per category, donut/charts, accounts, internal-transfer panel, pending items.
 - **Transactions** — flat editable transaction list with from/to month range, account multi-filter, category/type/min-amount filters, sortable columns, inline category dropdown (per-tx fix in one click).
+- **B2B** — micro-entreprise view, independent of personal accounts. Combined CA for the year (Vandfort + Zentra + Touro share one EI = one ceiling), per-business split, linear year-end forecast, and progress bars vs the two thresholds (Franchise TVA €37.5k, Techo micro €77.7k) with estimated crossing date. Fed by `ceiling.js` / `GET /api/ceiling.json`. CA excludes CDI salary + internal transfers and surfaces unclassified income. Shows €0 until Shine transactions are ingested (account prefix `shine:`).
 
 ### Source-of-truth model (MECE per category)
 
@@ -349,8 +353,9 @@ Detects drift between the parser regex (`bankCsv.js:categorize()`) and stored ca
 | GET  | `/` | Liveness — `{ status }` |
 | GET  | `/healthz` | Railway healthcheck |
 | GET  | `/debug/stats` | Aggregates: tx count, by_source, by_sign, by_month, latest_10, spend_pace, `db_path`. Read-only, no PII. |
-| GET  | `/dashboard?key=$DASH_KEY[&period=YYYY-MM]` | Budget dashboard HTML (Overview + Transactions tabs). |
+| GET  | `/dashboard?key=$DASH_KEY[&period=YYYY-MM]` | Budget dashboard HTML (Overview + Transactions + B2B tabs). |
 | GET  | `/api/dashboard.json?key=$DASH_KEY[&period=YYYY-MM]` | Full dashboard payload (incomes, category_rows MECE, debts, FX, totals, donut/variance data, internal-transfer breakdown). |
+| GET  | `/api/ceiling.json?key=$DASH_KEY` | B2B tab data: combined CA for the year, per-business split, forecast, progress vs Franchise TVA + Techo micro thresholds. Read-only (the 2h watchman is what fires/dedups alerts). |
 | GET  | `/api/cashflow.json?key=$DASH_KEY&account=bnp\|amex\|revolut&period=YYYY-MM` | Per-account cashflow: opening/closing balance + credits/debits split into external vs internal. |
 | GET  | `/api/transactions.json?key=$DASH_KEY` | Flat tx list for Transactions tab. Params: `period_from`, `period_to`, `accounts` (csv), `search`, `limit`. |
 | GET  | `/api/category.json?key=$DASH_KEY&category=X[&period=Y]` | Drilldown — txs in a single category (handles NULL → 'uncategorised'). |
