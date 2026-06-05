@@ -413,6 +413,79 @@ export async function importPdf(filePath) {
   return { inserted, skipped, errors: 0, total: txs.length };
 }
 
+// ─── Manual entry ─────────────────────────────────────────────────────────────
+
+/**
+ * Log a single real transaction by hand. Shared core for every "quick capture"
+ * surface: chat quick-add, the dashboard "+ Add" form, receipt OCR, and voice
+ * notes. Normalizes the sign (expenses negative, income positive), auto-detects
+ * the category from the merchant when none is given, and inserts via the same
+ * path as imported transactions. external_id is left null so legitimate repeats
+ * (two coffees the same day) are never blocked as duplicates.
+ *
+ * @returns {{id:number, date:string, merchant:string, amount:number, currency:string, category:string}}
+ */
+export function logManualExpense(e = {}) {
+  const amt = Number(e.amount_eur);
+  if (!Number.isFinite(amt) || amt === 0) throw new Error("amount_eur must be a non-zero number");
+
+  const date = (typeof e.date === "string" && /^\d{4}-\d{2}-\d{2}$/.test(e.date))
+    ? e.date
+    : new Date().toISOString().slice(0, 10);
+  const merchant = (e.merchant || "").toString().trim() || "Manual entry";
+  const currency = (e.currency || "EUR").toString().toUpperCase();
+  let category = e.category && CATEGORIES.includes(e.category) ? e.category : null;
+  if (!category) category = keywordCategorize(merchant) || "other";
+  const signed = e.is_income ? Math.abs(amt) : -Math.abs(amt);
+
+  const id = insertTransaction({
+    external_id: null,            // manual entries don't dedup — repeats are real
+    source:      e.source || "manual",
+    date, merchant, amount: signed, currency, category,
+    description: e.description || null,
+    raw:         null,
+    is_internal_transfer: false,
+  });
+  return { id, date, merchant, amount: signed, currency, category };
+}
+
+// ─── Receipt photo OCR ────────────────────────────────────────────────────────
+
+const RECEIPT_PROMPT = `You read a photo of a purchase receipt/ticket and extract the expense.
+Return STRICT JSON, no prose, no markdown:
+{"amount": 12.34, "merchant": "clean store name", "date": "YYYY-MM-DD" or null, "currency": "EUR", "category": "one of: ${CATEGORIES.join(", ")}"}
+
+Rules:
+- amount = the GRAND TOTAL actually paid (a positive number). Never the subtotal or a single line item.
+- merchant = the store/brand name, cleaned (e.g. "Monoprix", not "MONOPRIX SA 75007").
+- date = the purchase date printed on the receipt if visible, otherwise null.
+- currency = ISO code; default "EUR" if ambiguous.
+- category = best guess from the list, based on the merchant and items.
+If it is not a receipt or no total is readable, return {"amount": null}.`;
+
+/**
+ * Extract a single expense from a receipt photo. Needs a multimodal model, so it
+ * locks to the primary provider (Gemini). Returns the parsed object
+ * { amount, merchant, date, currency, category } — amount is null if unreadable.
+ */
+export async function parseReceiptImage(buffer, mimeType = "image/jpeg") {
+  const b64 = Buffer.from(buffer).toString("base64");
+  const resp = await callLLM({
+    providers: ["primary"], // image input — don't fall back to text-only providers
+    messages: [
+      { role: "system", content: RECEIPT_PROMPT },
+      { role: "user", content: [
+        { type: "text", text: "Extract the expense from this receipt." },
+        { type: "image_url", image_url: { url: `data:${mimeType};base64,${b64}` } },
+      ] },
+    ],
+    max_tokens: 500,
+    temperature: 0.1,
+  });
+  const txt = resp.choices[0]?.message?.content || "";
+  return JSON.parse(extractJson(txt));
+}
+
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
 /**

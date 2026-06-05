@@ -84,6 +84,10 @@ export function renderDashboard(period) {
     <nav class="flex items-center gap-1">
       <button id="tabResumen"   class="tabBtn px-2.5 sm:px-3 py-1.5 rounded-full text-xs font-semibold transition-colors bg-primary text-on-primary">Overview</button>
       <button id="tabHistorico" class="tabBtn px-2.5 sm:px-3 py-1.5 rounded-full text-xs font-semibold transition-colors bg-surface-container text-on-surface hover:bg-surface-container-high">Transactions</button>
+      <button id="tabB2b"       class="tabBtn px-2.5 sm:px-3 py-1.5 rounded-full text-xs font-semibold transition-colors bg-surface-container text-on-surface hover:bg-surface-container-high">B2B</button>
+      <button id="addExpenseBtn" title="Log an expense" class="flex items-center gap-1 px-2.5 sm:px-3 py-1.5 rounded-full text-xs font-semibold transition-colors bg-surface-container text-on-surface hover:bg-surface-container-high">
+        <span class="material-symbols-outlined" style="font-size:16px">add</span><span class="hidden sm:inline">Add</span>
+      </button>
     </nav>
 
     <!-- Period picker: single button that opens a popover with year tabs + month grid -->
@@ -349,6 +353,72 @@ export function renderDashboard(period) {
 
 </main>
 
+<!-- VIEW: B2B (Shine / negocio — independiente de las cuentas personales) -->
+<main id="viewB2B" class="hidden max-w-5xl mx-auto px-4 pt-4 space-y-4">
+
+  <!-- Status / connect-Shine note -->
+  <section class="rounded-2xl p-4 flex items-start gap-3 border border-outline-variant/15 bg-surface-container-lowest">
+    <span class="material-symbols-outlined text-secondary" style="font-size:18px">storefront</span>
+    <div class="text-xs text-on-surface">
+      <div class="font-semibold">Cuenta B2B (Shine) — independiente de tus cuentas personales</div>
+      <div class="text-outline mt-0.5">Vandfort + Zentra + Touro comparten un solo techo micro (una sola EI). Conecta Shine para alimentar el CA real; hoy se calcula desde las transacciones ya ingestadas.</div>
+    </div>
+  </section>
+
+  <!-- Techo: CA combinado + progreso vs umbrales -->
+  <section class="rounded-2xl bg-surface-container-lowest border border-outline-variant/15 p-5 space-y-4">
+    <div class="flex items-end justify-between gap-3 flex-wrap">
+      <div>
+        <div class="text-[10px] font-bold uppercase tracking-wider text-outline">CA combinado <span id="b2bYear">—</span></div>
+        <div class="font-headline text-3xl font-bold tabular-nums mt-1" id="b2bCA">—</div>
+        <div class="text-[11px] text-outline mt-0.5"><span id="b2bYearFraction">—</span> del año · run-rate <span id="b2bRunRate" class="text-on-surface font-semibold">—</span>/día</div>
+      </div>
+      <div class="text-right">
+        <div class="text-[10px] font-bold uppercase tracking-wider text-outline">Proyección fin de año</div>
+        <div class="font-headline text-xl font-bold tabular-nums mt-1" id="b2bProjected">—</div>
+      </div>
+    </div>
+
+    <!-- Franchise TVA -->
+    <div>
+      <div class="flex items-center justify-between text-[11px] mb-1">
+        <span class="font-semibold text-on-surface">Franchise TVA</span>
+        <span class="text-outline"><span id="b2bTvaPct">—</span> · <span id="b2bTvaCross">—</span></span>
+      </div>
+      <div class="h-2.5 rounded-full bg-surface-container overflow-hidden">
+        <div id="b2bTvaBar" class="h-full rounded-full bg-primary transition-all duration-700" style="width:0%"></div>
+      </div>
+      <div class="text-[10px] text-outline mt-0.5" id="b2bTvaLabel">— / —</div>
+    </div>
+
+    <!-- Techo micro -->
+    <div>
+      <div class="flex items-center justify-between text-[11px] mb-1">
+        <span class="font-semibold text-on-surface">Techo micro-entreprise</span>
+        <span class="text-outline"><span id="b2bMicroPct">—</span> · <span id="b2bMicroCross">—</span></span>
+      </div>
+      <div class="h-2.5 rounded-full bg-surface-container overflow-hidden">
+        <div id="b2bMicroBar" class="h-full rounded-full bg-primary transition-all duration-700" style="width:0%"></div>
+      </div>
+      <div class="text-[10px] text-outline mt-0.5" id="b2bMicroLabel">— / —</div>
+    </div>
+  </section>
+
+  <!-- Split por negocio -->
+  <section class="rounded-2xl bg-surface-container-lowest border border-outline-variant/15 overflow-hidden">
+    <div class="flex items-center gap-2 px-4 py-3 border-b border-outline-variant/15">
+      <span class="material-symbols-outlined text-secondary" style="font-size:18px">donut_small</span>
+      <h3 class="font-headline font-bold text-sm tracking-tight">CA por negocio</h3>
+    </div>
+    <div id="b2bSplit" class="p-2">
+      <div class="text-xs text-outline italic p-3">Loading…</div>
+    </div>
+  </section>
+
+  <p class="text-[10px] text-outline px-1">Umbrales a confirmar con expert-comptable (services €37.5k / €77.7k · vente €188.7k). Salario CDI y transferencias internas excluidos del CA. Zentra y Touro comparten cuenta Stripe: no se separan entre sí desde el banco.</p>
+
+</main>
+
 <!-- VIEW: Histórico (flat editable transactions list) -->
 <main id="viewHistorico" class="hidden max-w-6xl mx-auto px-4 pt-4 space-y-4">
   <section class="rounded-2xl bg-surface-container-lowest border border-outline-variant/15 p-5">
@@ -497,6 +567,48 @@ export function renderDashboard(period) {
   </div>
 </div>
 
+<!-- Add expense modal -->
+<div id="addExpenseModal" class="hidden fixed inset-0 z-[100] bg-black/40 flex items-end md:items-center justify-center p-0 md:p-4">
+  <div class="bg-surface-container-lowest w-full md:max-w-md md:rounded-2xl rounded-t-2xl overflow-hidden">
+    <div class="px-5 py-4 border-b border-outline-variant/20 flex items-center justify-between">
+      <div class="font-headline font-bold text-lg">Add expense</div>
+      <button id="addExpenseClose" class="w-9 h-9 rounded-full hover:bg-surface-container flex items-center justify-center">
+        <span class="material-symbols-outlined">close</span>
+      </button>
+    </div>
+    <div class="p-5 space-y-4">
+      <div class="grid grid-cols-2 gap-3">
+        <div>
+          <label class="text-xs font-bold uppercase tracking-wider text-outline">Amount (€)</label>
+          <input id="aeAmount" type="number" step="0.01" min="0" placeholder="12.50" class="mt-1 w-full px-3 py-2 bg-surface-container rounded-lg border border-outline-variant/30 focus:ring-2 focus:ring-primary focus:outline-none text-sm tabular-nums" />
+        </div>
+        <div>
+          <label class="text-xs font-bold uppercase tracking-wider text-outline">Date</label>
+          <input id="aeDate" type="date" class="mt-1 w-full px-3 py-2 bg-surface-container rounded-lg border border-outline-variant/30 focus:ring-2 focus:ring-primary focus:outline-none text-sm" />
+        </div>
+      </div>
+      <div>
+        <label class="text-xs font-bold uppercase tracking-wider text-outline">Merchant</label>
+        <input id="aeMerchant" type="text" placeholder="Café de Flore" class="mt-1 w-full px-3 py-2 bg-surface-container rounded-lg border border-outline-variant/30 focus:ring-2 focus:ring-primary focus:outline-none text-sm" />
+      </div>
+      <div>
+        <label class="text-xs font-bold uppercase tracking-wider text-outline">Category</label>
+        <select id="aeCategory" class="mt-1 w-full px-3 py-2 bg-surface-container rounded-lg border border-outline-variant/30 focus:ring-2 focus:ring-primary focus:outline-none text-sm">
+          <option value="">Auto-detect from merchant</option>
+        </select>
+      </div>
+      <label class="flex items-center gap-2 text-sm text-on-surface">
+        <input id="aeIncome" type="checkbox" class="rounded" /> This is income (refund / inflow)
+      </label>
+      <p id="aeError" class="hidden text-[11px] text-error"></p>
+    </div>
+    <div class="px-5 py-3 border-t border-outline-variant/20 flex justify-end gap-2">
+      <button id="aeCancel" class="px-4 py-2 rounded-lg text-sm font-medium text-on-surface hover:bg-surface-container">Cancel</button>
+      <button id="aeSave"   class="px-4 py-2 rounded-lg text-sm font-semibold bg-primary text-on-primary hover:opacity-90">Save</button>
+    </div>
+  </div>
+</div>
+
 <!-- Audit modal -->
 <div id="auditModal" class="hidden fixed inset-0 z-[100] bg-black/40 flex items-end md:items-center justify-center p-0 md:p-4">
   <div class="bg-surface-container-lowest w-full md:max-w-3xl md:rounded-2xl rounded-t-2xl max-h-[90vh] overflow-hidden flex flex-col">
@@ -578,6 +690,7 @@ export function renderDashboard(period) {
     activeTab = tab;
     document.getElementById("viewResumen").classList.toggle("hidden",   tab !== "resumen");
     document.getElementById("viewHistorico").classList.toggle("hidden", tab !== "historico");
+    document.getElementById("viewB2B").classList.toggle("hidden",       tab !== "b2b");
     document.querySelectorAll(".tabBtn").forEach((b) => {
       const isActive = b.id.endsWith(tab.charAt(0).toUpperCase() + tab.slice(1));
       b.className = "tabBtn px-3 py-1.5 rounded-full text-xs font-semibold transition-colors " +
@@ -587,13 +700,67 @@ export function renderDashboard(period) {
     url.searchParams.set("tab", tab);
     history.replaceState(null, "", url);
     if (tab === "historico") loadHistorico();
+    if (tab === "b2b") loadB2B();
   }
   // bind after DOM is parsed (this script is at end of body so OK)
   setTimeout(() => {
     document.getElementById("tabResumen").onclick   = () => switchTab("resumen");
     document.getElementById("tabHistorico").onclick = () => switchTab("historico");
+    document.getElementById("tabB2b").onclick       = () => switchTab("b2b");
     if (activeTab === "historico") switchTab("historico");
+    if (activeTab === "b2b")       switchTab("b2b");
   }, 0);
+
+  // ─── B2B (Shine / negocio) tab loader ─────────────────────────────────────
+  // Reads /api/ceiling.json (CA combinado del año, split por negocio, forecast,
+  // progreso vs umbrales). Bars reuse the dial semantics: >90% error, >60% warn.
+  async function loadB2B() {
+    const elSplit = document.getElementById("b2bSplit");
+    try {
+      const r = await fetch("/api/ceiling.json?key=" + encodeURIComponent(key));
+      const d = await r.json();
+      if (d.error) throw new Error(d.error);
+      const eur = (n) => "€" + Number(n || 0).toLocaleString("fr-FR");
+      const set = (id, v) => { const e = document.getElementById(id); if (e) e.textContent = v; };
+
+      set("b2bYear", d.year || "");
+      set("b2bCA", eur(d.totalCA));
+      set("b2bRunRate", eur(d.perDay));
+      set("b2bProjected", eur(d.projected));
+      set("b2bYearFraction", (d.fractionElapsed != null ? d.fractionElapsed + "%" : "—"));
+
+      const th = {};
+      (d.thresholds || []).forEach((t) => { th[t.key] = t; });
+      const fillBar = (t, barId, pctId, crossId, labelId) => {
+        if (!t) return;
+        const bar = document.getElementById(barId);
+        if (bar) {
+          bar.style.width = Math.min(100, t.pct || 0) + "%";
+          bar.className = "h-full rounded-full transition-all duration-700 " +
+            ((t.pct || 0) >= 90 ? "bg-error" : (t.pct || 0) >= 60 ? "bg-warn" : "bg-primary");
+        }
+        set(pctId, (t.pct != null ? t.pct + "%" : "—"));
+        set(crossId, t.crossDate ? ("cruce ~" + t.crossDate) : "sin cruce proyectado");
+        set(labelId, eur(d.totalCA) + " / " + eur(t.amount));
+      };
+      fillBar(th.tva_franchise, "b2bTvaBar",   "b2bTvaPct",   "b2bTvaCross",   "b2bTvaLabel");
+      fillBar(th.micro_ceiling, "b2bMicroBar", "b2bMicroPct", "b2bMicroCross", "b2bMicroLabel");
+
+      const rows = (d.byBusiness || []).slice();
+      if (d.unattributed) rows.push({ name: "Sin clasificar", ca: d.unattributed, pct_of_total: null });
+      const html = rows.map((b) =>
+        '<div class="flex items-center justify-between px-3 py-2 text-sm">' +
+          '<span class="text-on-surface">' + b.name + '</span>' +
+          '<span class="tabular-nums font-semibold">' + eur(b.ca) +
+            (b.pct_of_total != null ? ' <span class="text-outline text-[11px] font-normal">' + b.pct_of_total + '%</span>' : '') +
+          '</span>' +
+        '</div>'
+      ).join("");
+      elSplit.innerHTML = html || '<div class="text-xs text-outline italic p-3">Sin ingresos de negocio aún. Conecta Shine para empezar.</div>';
+    } catch (err) {
+      elSplit.innerHTML = '<div class="text-xs text-error p-3">Error: ' + (err.message || err) + '</div>';
+    }
+  }
 
   let histSearchTimer = null;
   let histAccounts = new Set(["bnp", "amex", "revolut"]); // default: all
@@ -923,6 +1090,66 @@ export function renderDashboard(period) {
         reRender();
       };
     });
+
+    // ── Add-expense modal (manual quick capture) ──
+    const aeModal = document.getElementById("addExpenseModal");
+    if (aeModal) {
+      const aeCatSel = document.getElementById("aeCategory");
+      if (aeCatSel && aeCatSel.options.length <= 1) {
+        aeCatSel.innerHTML = '<option value="">Auto-detect from merchant</option>' +
+          CAT_GROUPS.map((g) => {
+            const opts = g.cats.map((c) => {
+              const meta = CAT_META[c] || { emoji: "", label: c };
+              return \`<option value="\${c}">\${meta.emoji}  \${meta.label}</option>\`;
+            }).join("");
+            return \`<optgroup label="\${g.name}">\${opts}</optgroup>\`;
+          }).join("");
+      }
+      const aeErr  = document.getElementById("aeError");
+      const aeOpen = () => {
+        document.getElementById("aeAmount").value   = "";
+        document.getElementById("aeMerchant").value = "";
+        document.getElementById("aeCategory").value = "";
+        document.getElementById("aeIncome").checked = false;
+        document.getElementById("aeDate").value     = new Date().toISOString().slice(0, 10);
+        aeErr.classList.add("hidden");
+        aeModal.classList.remove("hidden");
+        setTimeout(() => document.getElementById("aeAmount").focus(), 50);
+      };
+      const aeClose = () => aeModal.classList.add("hidden");
+      const aeSaveFn = async () => {
+        const amount = parseFloat(document.getElementById("aeAmount").value);
+        if (!amount || amount <= 0) { aeErr.textContent = "Enter a valid amount"; aeErr.classList.remove("hidden"); return; }
+        const body = {
+          amount_eur: amount,
+          merchant:   document.getElementById("aeMerchant").value.trim(),
+          category:   document.getElementById("aeCategory").value || undefined,
+          date:       document.getElementById("aeDate").value || undefined,
+          is_income:  document.getElementById("aeIncome").checked,
+        };
+        const btn = document.getElementById("aeSave");
+        btn.disabled = true; btn.textContent = "Saving…";
+        try {
+          const r = await fetch("/api/transactions/add?key=" + encodeURIComponent(key), {
+            method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body),
+          });
+          const d = await r.json();
+          if (!r.ok || d.error) throw new Error(d.error || "Error " + r.status);
+          aeClose();
+          await load(currentData?.period);
+        } catch (err) {
+          aeErr.textContent = err.message; aeErr.classList.remove("hidden");
+        } finally {
+          btn.disabled = false; btn.textContent = "Save";
+        }
+      };
+      document.getElementById("addExpenseBtn").onclick   = aeOpen;
+      document.getElementById("addExpenseClose").onclick = aeClose;
+      document.getElementById("aeCancel").onclick        = aeClose;
+      document.getElementById("aeSave").onclick          = aeSaveFn;
+      aeModal.onclick = (e) => { if (e.target === aeModal) aeClose(); };
+      document.getElementById("aeAmount").onkeydown = (e) => { if (e.key === "Enter") aeSaveFn(); };
+    }
   }, 100);
 
   const CIRCUM = 282.7;

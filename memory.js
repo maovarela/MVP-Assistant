@@ -179,6 +179,17 @@ db.exec(`
     settled_at    TEXT
   );
 
+  -- Dedup ledger for proactive budget-pace alerts. One row per (period, category,
+  -- bucket) so the 2h watchman never re-sends the same pace warning. bucket 1 =
+  -- "on pace to exceed", bucket 2 = "already over budget".
+  CREATE TABLE IF NOT EXISTS proactive_pace_sent (
+    period      TEXT NOT NULL,
+    category    TEXT NOT NULL,
+    bucket      INTEGER NOT NULL,
+    sent_at     TEXT NOT NULL DEFAULT (datetime('now')),
+    PRIMARY KEY (period, category, bucket)
+  );
+
   CREATE INDEX IF NOT EXISTS idx_incomes_period           ON incomes(period);
   CREATE INDEX IF NOT EXISTS idx_fixed_expenses_period    ON fixed_expenses(period);
   CREATE INDEX IF NOT EXISTS idx_variable_expenses_period ON variable_expenses(period);
@@ -613,6 +624,65 @@ export function getSpendPace() {
   };
 }
 
+/**
+ * Mid-month budget-pace alerts for the proactive watchman. For the CURRENT month
+ * only, flags discretionary categories that are either already over budget
+ * (bucket 2) or on a linear pace to blow past it (bucket 1). Returns only alerts
+ * NOT already sent this period at that bucket — dedup lives in proactive_pace_sent
+ * so the 2h watchman never nags. Caller marks them sent via markPaceAlertsSent().
+ */
+export function getBudgetPaceAlerts({ period } = {}) {
+  const p = period || currentPeriod();
+  if (p !== currentPeriod()) return []; // past months are closed — nothing to warn
+
+  const now = new Date();
+  const dayOfMonth  = now.getDate();
+  const daysInMonth = new Date(now.getFullYear(), now.getMonth() + 1, 0).getDate();
+  const daysLeft    = daysInMonth - dayOfMonth;
+  const fractionElapsed = dayOfMonth / daysInMonth;
+  if (dayOfMonth < 4) return []; // too early — projections are noise in the first days
+
+  // Pace only makes sense for discretionary spend. Fixed/non-spend buckets
+  // (rent, savings, income, internal moves, bank fees) just create noise.
+  const SKIP = new Set(["income", "savings", "transfers", "fees", "housing"]);
+
+  const rows = getDashboardSummary(p).category_rows || [];
+  const alreadySent = (cat, bucket) =>
+    db.prepare(`SELECT 1 FROM proactive_pace_sent WHERE period=? AND category=? AND bucket=?`).get(p, cat, bucket);
+
+  const alerts = [];
+  for (const r of rows) {
+    if (SKIP.has(r.category)) continue;
+    const budget = r.budget_eur || 0;
+    const actual = r.actual_eur || 0;
+    if (budget <= 0 || actual < 20) continue; // no budget set, or too little spent to matter
+
+    const pct       = actual / budget;
+    const projected = Math.round(actual / fractionElapsed);
+
+    let bucket = 0;
+    if (actual >= budget) bucket = 2;                                              // already over
+    else if (projected > budget * 1.1 && pct >= 0.5 && daysLeft >= 3) bucket = 1;  // on pace to exceed
+    if (!bucket) continue;
+    if (alreadySent(r.category, bucket)) continue;
+
+    alerts.push({
+      period: p, category: r.category, bucket,
+      budget: Math.round(budget), actual: Math.round(actual),
+      projected, pct: Math.round(pct * 100), days_left: daysLeft,
+    });
+  }
+  // Worst projected overshoot first
+  return alerts.sort((a, b) => (b.projected - b.budget) - (a.projected - a.budget));
+}
+
+/** Record pace alerts as sent so the watchman won't repeat them this month. */
+export function markPaceAlertsSent(alerts) {
+  if (!alerts?.length) return;
+  const stmt = db.prepare(`INSERT OR IGNORE INTO proactive_pace_sent (period, category, bucket) VALUES (?, ?, ?)`);
+  db.transaction((list) => { for (const a of list) stmt.run(a.period, a.category, a.bucket); })(alerts);
+}
+
 /** Has this email already been processed? */
 export function isEmailProcessed(messageId) {
   const row = db.prepare(`SELECT 1 FROM processed_emails WHERE message_id = ?`).get(messageId);
@@ -808,7 +878,7 @@ export function setMatchKeyword({ label, match_keyword, period, target = "fixed"
 // Account is identified by the external_id prefix on transactions:
 //   bnp:* → BNP, amex:* → Amex card, revolut:* → Revolut.
 
-const ACCOUNT_PREFIX = { bnp: "bnp:", amex: "amex:", revolut: "revolut:" };
+const ACCOUNT_PREFIX = { bnp: "bnp:", amex: "amex:", revolut: "revolut:", shine: "shine:" };
 
 /** Set or update an account's opening/closing balance for a period. */
 export function setAccountBalance({ account, period, opening_eur, closing_eur, source = "manual" }) {

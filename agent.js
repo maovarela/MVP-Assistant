@@ -24,7 +24,7 @@ import {
   setAccountBalance, getAccountCashflow,
 } from "./memory.js";
 import { fetchAndParseRecent, searchEmails, readEmailByUid } from "./email.js";
-import { CATEGORIES } from "./transactions.js";
+import { CATEGORIES, logManualExpense } from "./transactions.js";
 import { callLLM } from "./llm.js";
 import { searchNotion, readNotionPage, queryNotionDatabase } from "./notion.js";
 import { listEvents, searchEvents } from "./calendar.js";
@@ -104,6 +104,7 @@ TOOLS POR ESCENARIO:
 - "cómo voy este mes" / "resumen del presupuesto" → get_budget_summary.
 - "cuánto he gastado en X" → spend_by_category / spend_by_merchant.
 - "dame consejos" / "analiza mis finanzas" / "qué opinas de mi mes" / "revisión financiera" → financial_advisor_review (devuelve markdown formateado — pásaselo tal cual).
+- "gasté 12€ en café" / "pagué 45 en el súper" / "-30 taxi" / "me llegaron 200 de reembolso" → log_expense (gasto/ingreso REAL hecho a mano). Distinto de set_fixed_expense (eso es budget planeado).
 - "mi arriendo este mes son 1600€" → set_fixed_expense(label:"Arriendo", budget_eur:1600, category:"housing").
 - "el dolar está a 4100" → set_fx_rate.
 - "mi salario este mes fueron 3700 netos" → set_income.
@@ -182,6 +183,19 @@ const TOOLS = [
       merchant: { type: "string", description: "Substring del comercio" },
       limit:    { type: "number", description: "Default 100" },
     },
+  }),
+  fn("log_expense", "Registra UN gasto (o ingreso) real a mano en el momento — efectivo, Revolut, o cualquier cosa que no llegue por email. Úsalo cuando el usuario diga cosas como 'gasté 12€ en café', 'pagué 45 en el súper', '-30 taxi', 'me llegaron 200 de reembolso'. Parsea monto, comercio, categoría y fecha del mensaje. NO lo confundas con set_fixed_expense/add_variable_expense (esos son BUDGET planeado, no gasto real).", {
+    type: "object",
+    properties: {
+      amount_eur:  { type: "number", description: "Monto en EUR, magnitud positiva (el signo lo pone la tool). Ej. 12.5" },
+      merchant:    { type: "string", description: "Comercio o concepto. Ej. 'Café de Flore', 'Carrefour', 'Taxi'" },
+      category:    { type: "string", description: `Una de: ${CATEGORIES.join(", ")}. Si no estás seguro, omítela y se auto-detecta del comercio.` },
+      date:        { type: "string", description: "YYYY-MM-DD. Default hoy. Acepta 'ayer'/'el lunes' → conviértelo tú a fecha ISO." },
+      currency:    { type: "string", description: "Default EUR" },
+      is_income:   { type: "boolean", description: "true si es un ingreso/reembolso (se guarda positivo). Default false (gasto)." },
+      description: { type: "string", description: "Nota opcional" },
+    },
+    required: ["amount_eur"],
   }),
   fn("spend_by_category", "Total gastado agrupado por categoría (solo outflows)", {
     type: "object",
@@ -413,6 +427,7 @@ async function executeTool(name, input) {
     case "monthly_totals":      return monthlyTotals(input);
     case "transaction_stats":   return getTransactionStats();
     case "spend_pace":          return getSpendPace();
+    case "log_expense":         return logManualExpense(input);
 
     case "set_fx_rate":         return setFxRate(input.period, input);
     case "set_income":          return upsertIncome(input);

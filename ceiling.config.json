@@ -1,0 +1,17 @@
+{
+  "_doc": "Alertas de techo micro-entreprise (EI). CA = chiffre d'affaires = ingresos BRUTOS de negocio del ano civil. Como es UNA sola EI, Vandfort + Zentra + Touro suman al mismo techo. Edita keywords/umbrales y reinicia el bot. Montos a CONFIRMAR con expert-comptable (cambiaron en 2025) y segun si 58.29C cuenta como prestation de services (77700) o vente (188700). NOTA: Zentra y Touro cobran por la MISMA cuenta Stripe, asi que el feed bancario no los separa (payout combinado) -> van en un solo bucket. El total contra el techo es correcto igual. Para el split Zentra-vs-Touro haria falta data a nivel Stripe (producto/metadata), no el banco. Vandfort: forma de cobro POR DEFINIR -> agrega su keyword cuando se sepa.",
+  "activityType": "services",
+  "currency": "EUR",
+  "thresholds": {
+    "tva_franchise": { "label": "Franchise TVA", "amount_eur": 37500 },
+    "micro_ceiling": { "label": "Techo micro-entreprise", "amount_eur": 77700 }
+  },
+  "alertLevelsPct": [60, 70, 85, 95, 100],
+  "skipCategories": ["transfers", "savings", "reimbursement", "refund"],
+  "personalKeywords": ["salaire", "salary", "virement interne", "remboursement"],
+  "blindspotWarnPct": 15,
+  "businesses": [
+    { "name": "Zentra+Touro (Stripe)", "keywords": ["stripe", "zentra", "touro"] },
+    { "name": "Vandfort", "keywords": [] }
+  ]
+}

@@ -12,8 +12,11 @@ import { callLLMText } from "./llm.js";
 import db, {
   listTasks,
   listTransactions,
+  getBudgetPaceAlerts,
+  markPaceAlertsSent,
 } from "./memory.js";
 import { listEvents } from "./calendar.js";
+import { getCeilingAlerts, markCeilingAlertsSent, formatCeilingAlerts } from "./ceiling.js";
 
 const SYSTEM_PROMPT = `Eres el watchman proactivo de Mauricio Varela.
 
@@ -31,6 +34,7 @@ Razones VÁLIDAS para interrumpir AHORA (no más tarde):
 Razones INVÁLIDAS (no interrumpas):
 - Información que el briefing de mañana cubrirá igual.
 - "Estás gastando mucho este mes" sin un dato concreto sorprendente.
+- Pace/exceso de budget de una categoría — eso se calcula y se manda por separado. NO lo menciones.
 - Recordatorios genéricos.
 
 OUTPUT: JSON estricto, una sola línea, sin markdown ni prose fuera del JSON:
@@ -126,12 +130,28 @@ function buildIngestorHealthSnapshot() {
   return { hours_since_last_bank_email: hoursSince };
 }
 
+// Deterministic, human-facing text for budget-pace alerts. Single * so both
+// Telegram (HTML converter) and WhatsApp render the category in bold.
+function formatPaceAlerts(alerts) {
+  const lines = alerts.map((a) =>
+    a.bucket === 2
+      ? `- *${a.category}*: €${a.actual}/€${a.budget} (${a.pct}%) — ya pasaste el budget`
+      : `- *${a.category}*: €${a.actual}/€${a.budget} (${a.pct}%), proyección €${a.projected} → te pasas`
+  );
+  const dl = alerts[0]?.days_left;
+  return `📊 *Pace de budget*${dl != null ? ` (quedan ${dl} días)` : ""}\n${lines.join("\n")}`;
+}
+
 // ─── Public entrypoint ───────────────────────────────────────────────────────
 
 /**
  * Run one proactive scan. Returns:
  *   { interrupt: boolean, message: string, why: string, snapshot: ... }
  * Caller is responsible for actually broadcasting the message if interrupt=true.
+ *
+ * Two independent signals are merged: (1) deterministic budget-pace alerts
+ * (computed + deduped in memory.js — these fire on their own, even if the LLM
+ * call fails) and (2) the fuzzy LLM watchman for anomalies/tasks/calendar.
  */
 export async function runProactiveScan() {
   const snapshot = {
@@ -143,13 +163,49 @@ export async function runProactiveScan() {
     ingestor:     buildIngestorHealthSnapshot(),
   };
 
+  // (1) Deterministic budget-pace alerts. Independent of the LLM so they still
+  // fire if the model call errors. Mark sent now (we always surface them).
+  let pacePart = "";
+  let paceWhy  = "";
+  try {
+    const paceAlerts = getBudgetPaceAlerts();
+    if (paceAlerts.length) {
+      pacePart = formatPaceAlerts(paceAlerts);
+      paceWhy  = `pace:${paceAlerts.map((a) => `${a.category}/${a.bucket}`).join(",")}`;
+      markPaceAlertsSent(paceAlerts);
+    }
+    snapshot.budget_pace = { new_alerts: paceAlerts };
+  } catch (err) {
+    console.error("[proactive] pace check failed:", err.message);
+  }
+
+  // (1b) Deterministic micro-entreprise ceiling alerts. Same contract as pace:
+  // computed + deduped in ceiling.js, fire even if the LLM call errors. CA de
+  // Vandfort + Zentra + Touro suma a un unico techo (es una sola EI).
+  let ceilingPart = "";
+  let ceilingWhy  = "";
+  try {
+    const { alerts: ceilingAlerts, status } = getCeilingAlerts();
+    snapshot.ceiling = status;
+    if (ceilingAlerts.length) {
+      ceilingPart = formatCeilingAlerts(ceilingAlerts);
+      ceilingWhy  = `ceiling:${ceilingAlerts.map((a) => `${a.threshold}/${a.bucket}`).join(",")}`;
+      markCeilingAlertsSent(ceilingAlerts);
+    }
+  } catch (err) {
+    console.error("[proactive] ceiling check failed:", err.message);
+  }
+
+  // (2) Fuzzy LLM watchman. Failures degrade to silence — pace alerts (if any)
+  // still go out.
+  let llmMessage = "";
+  let llmWhy     = "";
   const userPrompt =
     `Snapshot actual (JSON):\n\n${JSON.stringify(snapshot, null, 2)}\n\n` +
     `Decide si interrumpir. Devuelve SOLO el JSON.`;
 
-  let text;
   try {
-    text = await callLLMText({
+    const text = await callLLMText({
       messages: [
         { role: "system", content: SYSTEM_PROMPT },
         { role: "user",   content: userPrompt },
@@ -157,33 +213,27 @@ export async function runProactiveScan() {
       max_tokens: 400,
       temperature: 0.2,
     });
+    // Strip markdown fences if a provider wraps JSON in ```json blocks.
+    const cleaned = text.replace(/^```(?:json)?\s*|\s*```$/g, "").trim();
+    const decision = JSON.parse(cleaned);
+    if (typeof decision.interrupt !== "boolean") {
+      llmWhy = "missing_interrupt_field";
+    } else if (decision.interrupt && !decision.message?.trim()) {
+      llmWhy = "interrupt_true_but_no_message";
+    } else {
+      llmMessage = decision.interrupt ? (decision.message || "").trim() : "";
+      llmWhy     = decision.why || (decision.interrupt ? "" : "llm_silent");
+    }
   } catch (err) {
-    console.error("[proactive] LLM call failed:", err.message);
-    return { interrupt: false, message: "", why: `llm_error: ${err.message}`, snapshot };
+    console.error("[proactive] LLM scan failed:", err.message);
+    llmWhy = `llm_error: ${err.message}`;
   }
 
-  // Strip markdown fences if a provider wraps JSON in ```json blocks.
-  const cleaned = text.replace(/^```(?:json)?\s*|\s*```$/g, "").trim();
-
-  let decision;
-  try {
-    decision = JSON.parse(cleaned);
-  } catch (err) {
-    console.error("[proactive] non-JSON output, treating as silent:", cleaned.slice(0, 200));
-    return { interrupt: false, message: "", why: "non_json_output", snapshot };
-  }
-
-  if (typeof decision.interrupt !== "boolean") {
-    return { interrupt: false, message: "", why: "missing_interrupt_field", snapshot };
-  }
-  if (decision.interrupt && !decision.message?.trim()) {
-    return { interrupt: false, message: "", why: "interrupt_true_but_no_message", snapshot };
-  }
-
+  const parts = [pacePart, ceilingPart, llmMessage].filter(Boolean);
   return {
-    interrupt: decision.interrupt,
-    message:   decision.message || "",
-    why:       decision.why || "",
+    interrupt: parts.length > 0,
+    message:   parts.join("\n\n"),
+    why:       [paceWhy, ceilingWhy, llmWhy].filter(Boolean).join(" | "),
     snapshot,
   };
 }

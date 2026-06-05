@@ -17,7 +17,7 @@ import path from "path";
 import { runAgent } from "./agent.js";
 import { getTasksDueSoon } from "./memory.js";
 import { fetchAndParseRecent, backfillEmails } from "./email.js";
-import { importCsv, importPdf, importNormalized } from "./transactions.js";
+import { importCsv, importPdf, importNormalized, logManualExpense, parseReceiptImage, CATEGORIES } from "./transactions.js";
 import {
   sendWhatsApp,
   parseEvolutionWebhook,
@@ -25,6 +25,7 @@ import {
   isWhatsAppConfigured,
 } from "./whatsapp.js";
 import { runProactiveScan } from "./proactive.js";
+import { getCeilingStatus } from "./ceiling.js";
 import db, {
   getTransactionStats, getSpendPace,
   setFxRate, getFxRate,
@@ -44,6 +45,7 @@ import { refreshCurrentMonthFx } from "./fx.js";
 import { renderDashboard } from "./dashboard.js";
 import { runWeeklyAdvisorBriefing } from "./advisor.js";
 import { toTelegramHTML } from "./tgformat.js";
+import { transcribeAudio } from "./stt.js";
 
 // ─── Config ──────────────────────────────────────────────────────────────────
 
@@ -119,6 +121,16 @@ async function handleTelegramUpdate(update) {
     return handleDocument(msg);
   }
 
+  // Photo — treat as a receipt to OCR into a single expense
+  if (msg.photo?.length) {
+    return handleReceiptPhoto(msg);
+  }
+
+  // Voice note — transcribe, then run it through the agent (can log_expense, etc.)
+  if (msg.voice || msg.audio) {
+    return handleVoiceNote(msg);
+  }
+
   const text = msg.text?.trim();
   if (!text) return;
 
@@ -180,6 +192,60 @@ async function handleWhatsAppEvent(body) {
       if (!r.ok) console.warn(`[whatsapp] reply send failed: ${r.error}`);
     },
   });
+}
+
+async function handleVoiceNote(msg) {
+  const chatId = msg.chat.id.toString();
+  await bot.sendChatAction(chatId, "typing").catch(() => {});
+  try {
+    const audio = msg.voice || msg.audio;
+    const link  = await bot.getFileLink(audio.file_id);
+    const buf   = Buffer.from(await fetch(link).then((r) => r.arrayBuffer()));
+    const transcript = await transcribeAudio(buf, { filename: "voice.ogg" });
+    if (!transcript) {
+      await bot.sendMessage(chatId, "🎙️ No entendí el audio. ¿Lo intentas de nuevo o me lo escribes?");
+      return;
+    }
+    // Route the transcript through the normal agent — it can log an expense,
+    // answer a question, create a task, etc. Echo the transcript so the user
+    // can see what was understood.
+    const reply = await runAgent(transcript, { channel: "telegram" });
+    await bot.sendMessage(chatId,
+      toTelegramHTML(`🎙️ _"${transcript}"_\n\n${reply}`),
+      { parse_mode: "HTML" });
+  } catch (err) {
+    console.error("[voice] error:", err.message);
+    await bot.sendMessage(chatId, "⚠️ No pude transcribir el audio: " + err.message + "\nMándame el gasto en texto por ahora.");
+  }
+}
+
+async function handleReceiptPhoto(msg) {
+  const chatId = msg.chat.id.toString();
+  await bot.sendChatAction(chatId, "typing").catch(() => {});
+  try {
+    const photo = msg.photo[msg.photo.length - 1]; // largest size
+    const link  = await bot.getFileLink(photo.file_id);
+    const buf   = Buffer.from(await fetch(link).then((r) => r.arrayBuffer()));
+    const parsed = await parseReceiptImage(buf, "image/jpeg");
+    if (!parsed || parsed.amount == null) {
+      await bot.sendMessage(chatId, "📸 No pude leer un total en esa imagen. ¿Me dices el gasto en texto? (ej. \"gasté 12€ en café\")");
+      return;
+    }
+    const row = logManualExpense({
+      amount_eur: parsed.amount,
+      merchant:   msg.caption?.trim() || parsed.merchant,
+      category:   parsed.category,
+      date:       parsed.date || undefined,
+      currency:   parsed.currency,
+      source:     "receipt",
+    });
+    await bot.sendMessage(chatId,
+      toTelegramHTML(`📸 *Gasto registrado*\n- ${row.merchant}: €${Math.abs(row.amount)} (${row.category})\n- ${row.date}\n\n_Si algo está mal, dime y lo corrijo._`),
+      { parse_mode: "HTML" });
+  } catch (err) {
+    console.error("[receipt] error:", err.message);
+    await bot.sendMessage(chatId, "⚠️ No pude procesar la imagen: " + err.message);
+  }
 }
 
 async function handleDocument(msg) {
@@ -369,6 +435,19 @@ app.get("/api/year.json", (req, res) => {
   }
 });
 
+// B2B / micro-entreprise ceiling status: CA combinado del año (Vandfort + Zentra
+// + Touro, una sola EI), split por negocio, forecast y progreso vs umbrales.
+// Computed in ceiling.js (read-only; el watchman es quien dispara/dedup alertas).
+app.get("/api/ceiling.json", (req, res) => {
+  if (!requireKey(req, res, "DASH_KEY")) return;
+  try {
+    res.json(getCeilingStatus());
+  } catch (err) {
+    console.error("[ceiling json]", err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // Set or clear the match_keyword on a fixed_expense across all periods sharing
 // the same label. Called by the dashboard's keyword-edit modal.
 // If mode === 'append', the merchant_snippet is regex-escaped and appended
@@ -473,6 +552,18 @@ app.post("/api/pending", express.json({ limit: "50kb" }), (req, res) => {
     res.json({ ok: true, row });
   } catch (err) {
     console.error("[pending mutate]", err);
+    res.status(400).json({ error: err.message });
+  }
+});
+
+// Manually log a single real transaction (powers the dashboard "+ Add" form).
+// Body: { amount_eur, merchant?, category?, date?, currency?, is_income?, description? }
+app.post("/api/transactions/add", express.json({ limit: "10kb" }), (req, res) => {
+  if (!requireKey(req, res, "DASH_KEY")) return;
+  try {
+    const row = logManualExpense({ ...(req.body || {}), source: "manual" });
+    res.json({ ok: true, row });
+  } catch (err) {
     res.status(400).json({ error: err.message });
   }
 });
