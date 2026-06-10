@@ -420,7 +420,14 @@ export async function importPdf(filePath) {
         console.log(`[pdf] BNP balances → ${bals.end_period} opening=${bals.opening_eur} closing=${bals.closing_eur}`);
       } catch (err) { console.warn(`[pdf] balance write failed: ${err.message}`); }
     }
-    return { inserted, skipped, errors: 0, total: bnpTxs.length };
+    // Reconciliation guard: opening + Σ(parsed lines) must equal closing. If it
+    // doesn't, the parse is wrong — surface it instead of silently storing it.
+    let recon = null;
+    if (bals && bals.reconciled === false) {
+      recon = `opening €${bals.opening_eur} + movimientos €${bals.movements_eur} = €${bals.computed_closing_eur}, pero el statement cierra en €${bals.closing_eur} (descuadre €${bals.delta_eur})`;
+      console.warn(`[pdf] RECONCILIATION MISMATCH: ${recon}`);
+    }
+    return { inserted, skipped, errors: 0, total: bnpTxs.length, reconciled: bals?.reconciled ?? null, recon };
   }
 
   const resp = await callLLM({

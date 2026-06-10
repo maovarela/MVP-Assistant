@@ -484,6 +484,15 @@ export function insertTransaction(tx) {
   }
 }
 
+/** Delete all transactions from a given source ('pdf' | 'csv' | 'email' |
+ *  'manual' | 'receipt'). Used to purge a mis-parsed batch before re-importing
+ *  (e.g. the BNP reversed-amount cleanup). Returns the number of rows removed. */
+export function deleteTransactionsBySource(source) {
+  if (!source) throw new Error("source required");
+  const r = db.prepare(`DELETE FROM transactions WHERE source = ?`).run(source);
+  return { deleted: r.changes, source };
+}
+
 export function listTransactions({ from, to, category, merchant, limit = 100 } = {}) {
   let query = `SELECT * FROM transactions WHERE 1=1`;
   const params = [];

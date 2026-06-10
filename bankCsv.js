@@ -432,7 +432,24 @@ export function parseBnpPdfText(text) {
 
   // Attach balances as a non-enumerable property so existing callers that
   // iterate the array don't trip on it, but importPdf can read out.balances.
-  Object.defineProperty(out, "balances", { value: extractBnpBalances(text), enumerable: false });
+  const balances = extractBnpBalances(text);
+
+  // RECONCILIATION GUARD — the statement prints opening + closing balances, so
+  // opening + Σ(every parsed line) must equal closing. If it doesn't, the parse
+  // is wrong (reversed amounts, a missed line, a sign flip…) and we must NOT
+  // silently store garbage. This is the check that would have caught the
+  // reversed-amount bug on day one. Tolerance covers rounding only.
+  if (balances && balances.opening_eur != null && balances.closing_eur != null) {
+    const movements = out.reduce((s, t) => s + t.amount, 0);
+    const computedClosing = Math.round((balances.opening_eur + movements) * 100) / 100;
+    const delta = Math.round((computedClosing - balances.closing_eur) * 100) / 100;
+    balances.movements_eur   = Math.round(movements * 100) / 100;
+    balances.computed_closing_eur = computedClosing;
+    balances.delta_eur       = delta;
+    balances.reconciled      = Math.abs(delta) <= 0.01;
+  }
+
+  Object.defineProperty(out, "balances", { value: balances, enumerable: false });
   return out;
 }
 

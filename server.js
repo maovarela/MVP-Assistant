@@ -39,6 +39,7 @@ import db, {
   deleteBudgetRow,
   upsertCategoryBudget, copyCategoryBudgets,
   listPendingItems, upsertPendingItem, deletePendingItem,
+  deleteTransactionsBySource,
 } from "./memory.js";
 import { categorize as keywordCategorize } from "./bankCsv.js";
 import { refreshCurrentMonthFx } from "./fx.js";
@@ -271,12 +272,19 @@ async function handleDocument(msg) {
 
     const result = isCsv ? await importCsv(tmpPath) : await importPdf(tmpPath);
 
+    // Reconciliation warning — the parsed lines don't add up to the statement's
+    // own closing balance, so something parsed wrong. Surface it loudly.
+    const reconLine = result.reconciled === false
+      ? `\n\n⚠️ *No cuadra con el saldo del statement* — ${result.recon}. Revisa antes de confiar en estas cifras.`
+      : (result.reconciled === true ? `\n✅ Cuadra con el saldo del statement.` : "");
+
     await bot.sendMessage(chatId,
       `✅ *${doc.file_name}*\n` +
       `• Insertadas: ${result.inserted}\n` +
       `• Saltadas (duplicados): ${result.skipped}\n` +
       `• Errores: ${result.errors}\n` +
-      (result.total ? `• Total filas: ${result.total}` : ""),
+      (result.total ? `• Total filas: ${result.total}` : "") +
+      reconLine,
       { parse_mode: "Markdown" }
     );
   } catch (err) {
@@ -552,6 +560,24 @@ app.post("/api/pending", express.json({ limit: "50kb" }), (req, res) => {
     res.json({ ok: true, row });
   } catch (err) {
     console.error("[pending mutate]", err);
+    res.status(400).json({ error: err.message });
+  }
+});
+
+// Purge all transactions from one source ('pdf'=BNP, 'csv'=Amex/Revolut, etc.)
+// to re-import cleanly after a parser fix. ?dry_run=1 only counts, doesn't delete.
+//   curl -X POST "https://<host>/api/maintenance/purge-source?key=<DASH_KEY>&source=pdf&dry_run=1"
+app.post("/api/maintenance/purge-source", (req, res) => {
+  if (!requireKey(req, res, "DASH_KEY")) return;
+  try {
+    const source = (req.query.source || "").toString();
+    if (!source) return res.status(400).json({ error: "source required (pdf|csv|email|manual|receipt)" });
+    if (req.query.dry_run) {
+      const row = db.prepare(`SELECT COUNT(*) c, MIN(date) min, MAX(date) max FROM transactions WHERE source = ?`).get(source);
+      return res.json({ dry_run: true, source, would_delete: row.c, date_range: [row.min, row.max] });
+    }
+    res.json(deleteTransactionsBySource(source));
+  } catch (err) {
     res.status(400).json({ error: err.message });
   }
 });
