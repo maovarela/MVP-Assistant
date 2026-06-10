@@ -83,6 +83,8 @@ MVP-Assistant/
 ├── notion.js                # Notion read access
 ├── mailer.js                # SMTP send (Gmail)
 ├── whatsapp.js              # Evolution API wrapper (gated by ENABLE_WHATSAPP, default off)
+├── tgformat.js              # Markdown → Telegram HTML (renders **bold**/#### that legacy Markdown showed literally)
+├── stt.js                   # Speech-to-text for voice notes (Whisper via STT_API_KEY, e.g. Groq)
 ├── llm.js                   # OpenAI-compatible client w/ provider fallback chain + cooldown
 ├── scripts/
 │   ├── import-local.mjs     # One-shot local importer for historic Amex/Revolut CSVs
@@ -216,14 +218,38 @@ curl -sf "https://<your-domain>/import/normalized?key=$INTERNAL_IMPORT_KEY" \
 
 Dedup is keyed by Amex transaction reference / Revolut row hash, so re-running is safe.
 
+### Quick capture (log a single expense in the moment)
+
+Cash, Revolut-without-email, or anything that won't arrive by statement — four ways, all via the shared `transactions.logManualExpense()` core (validates, signs, auto-categorizes from merchant, inserts):
+
+1. **Chat** — tell the bot `"gasté 12€ en café"` / `"-30 taxi"` / `"me llegaron 200 de reembolso"` → `log_expense` tool. Distinct from `set_fixed_expense` (that's planned budget).
+2. **Dashboard "+ Add"** — button in the header → modal (amount/date/merchant/category/income) → `POST /api/transactions/add`.
+3. **Receipt photo** — send a photo to the bot → `parseReceiptImage()` (multimodal, Gemini) extracts total/merchant/date/category. Caption overrides merchant.
+4. **Voice note** — send audio → `stt.js` transcribes (Whisper via `STT_API_KEY`, e.g. Groq) → routed through the agent (can log an expense, answer, etc.).
+
+### Import-time reconciliation (so a parse bug can't go silent)
+
+Every statement import is checked against the statement's own numbers; on mismatch the bot replies `⚠️ No cuadra` and the dashboard shows a ⚠️ "Revisar <ACCT>" badge on that month (`account_balances.reconciled`):
+
+- **BNP** — `opening + Σ(parsed lines) == closing` (the printed balances).
+- **Revolut monthly** — per-row balance continuity (`balance[i] == balance[i-1] + amount − fee`).
+- **Amex** — CSV has no balance/total anchor, so it's not reconciled (its amounts are simple, low risk).
+
+This was added after a real bug: BNP PDF amounts ≥ €1000 were parsed reversed for months. See "deterministic parsers" below.
+
+### Overlap dedup (statements overlap — that's fine)
+
+`transactions.makeOverlapGuard()` adds a natural key — `(date, amount-cents, currency, normalized-merchant)` — on top of the per-source `external_id` hash, and skips an incoming row only up to the count already in the DB. So re-sending a file, a month-boundary overlap, or a Revolut consolidated-vs-monthly overlap all dedup cleanly, while two genuine same-day identical purchases both survive.
+
 ### Why deterministic per-bank parsers (and not just LLM)
 
-[bankCsv.js](bankCsv.js) ships hand-written parsers for Amex FR + Revolut consolidated exports because two real bugs surfaced with LLM-only parsing:
+[bankCsv.js](bankCsv.js) ships hand-written parsers for Amex FR + Revolut (consolidated **and** monthly `account-statement` formats) + BNP PDF, because real bugs surfaced with LLM-only parsing:
 
-1. **Amex CSV signs are inverted** vs the bot's convention (positive = charge in Amex; negative = outflow in our DB). LLM batch parsing was silently storing every Amex spend as income, so spend queries returned zero.
-2. **Revolut consolidated statements** contain multiple per-currency transaction tables concatenated into one file with account-summary headers in between. `csv-parse` with `columns: true` chokes on the mixed layout.
+1. **Amex CSV signs are inverted** vs the bot's convention (positive = charge in Amex; negative = outflow in our DB). LLM batch parsing silently stored every Amex spend as income.
+2. **Revolut consolidated statements** concatenate multiple per-currency tables with account-summary headers between them — `csv-parse` with `columns:true` chokes. The newer **monthly** export (`Type,Started Date,Completed Date,Amount,…`) is a separate flat format, parsed via Completed Date so it dedups against the consolidated.
+3. **BNP PDF column alignment** emits amounts with two whitespace meanings: **TAB** = column boundary (chunks reversed, `972\t1` = 1972) vs **SPACE** = thousands separator (`7 355` = 7355). Getting this wrong stored salary/rent/large transfers reversed (€9721.81 instead of €1972.81) across all months — exactly what the reconciliation guard now catches.
 
-`importCsv` now auto-detects format and uses the deterministic parser when it matches; falls back to the LLM batch path for unknown banks.
+`importCsv`/`importPdf` auto-detect format and use the deterministic parser when it matches; fall back to the LLM batch path for unknown banks.
 
 ## Budget dashboard (Cuentas MVP)
 
@@ -231,8 +257,8 @@ Open `https://<your-host>/dashboard?key=$DASH_KEY` on your phone. Replaces the m
 
 ### Three-tab layout
 
-- **Overview** — KPIs, dial, budget vs actual per category, donut/charts, accounts, internal-transfer panel, pending items.
-- **Transactions** — flat editable transaction list with from/to month range, account multi-filter, category/type/min-amount filters, sortable columns, inline category dropdown (per-tx fix in one click).
+- **Overview** — KPIs, dial, budget vs actual per category, donut/charts, accounts, internal-transfer panel, pending items, 3-month comparison (same attribution as the budget table — rent shows under housing in both). Header has a **"+ Add"** quick-expense button and a ⚠️ **"Revisar <ACCT>"** badge on months whose statement didn't reconcile. Defaults to the latest month with data (not an empty current month).
+- **Transactions** — flat editable transaction list with quick-range chips (**3m / 6m / 12m / YTD**) + from/to month range, account multi-filter, category/type/min-amount filters, sortable columns, inline category dropdown (per-tx fix in one click).
 - **B2B** — micro-entreprise view, independent of personal accounts. Combined CA for the year (Vandfort + Zentra + Touro share one EI = one ceiling), per-business split, linear year-end forecast, and progress bars vs the two thresholds (Franchise TVA €37.5k, Techo micro €77.7k) with estimated crossing date. Fed by `ceiling.js` / `GET /api/ceiling.json`. CA excludes CDI salary + internal transfers and surfaces unclassified income. Shows €0 until Shine transactions are ingested (account prefix `shine:`).
 
 ### Source-of-truth model (MECE per category)
@@ -288,6 +314,7 @@ Detects drift between the parser regex (`bankCsv.js:categorize()`) and stored ca
 "crea tarea: enviar reporte ICDB el viernes, alta prioridad"
 "marca como done la tarea 3"
 "weekly review"
+"gasté 12€ en café"            # → log_expense (also: photo of a receipt, or a voice note)
 ```
 
 ## Tools available to the agent
@@ -295,6 +322,8 @@ Detects drift between the parser regex (`bankCsv.js:categorize()`) and stored ca
 **Tasks/projects:** `create_project`, `list_projects`, `create_task`, `update_task_status`, `list_tasks`, `get_daily_summary`
 
 **Finance — read:** `list_transactions`, `spend_by_category`, `spend_by_merchant`, `monthly_totals`, `transaction_stats`, `spend_pace`, `get_account_cashflow`, `scan_inbox_now`
+
+**Finance — capture:** `log_expense` — record one real expense/income by hand ("gasté 12€ en café"). Also fed by the dashboard "+ Add" form, receipt-photo OCR, and voice notes.
 
 **Finance — budget planning:** `set_fx_rate`, `set_income`, `set_fixed_expense`, `add_variable_expense`, `set_debt`, `get_budget_summary`
 
@@ -342,7 +371,8 @@ Detects drift between the parser regex (`bankCsv.js:categorize()`) and stored ca
   - `incomes(period, label, amount_eur, kind)` — Salary Bruto/Neto + others
   - `debts(period, label, amount_src, currency, amount_eur, kind)` — loans, card balances
   - `fx_rates(period PK, usd_cop, eur_usd, tax_fr_pct, source)`
-- `account_balances(account, period, opening_eur, closing_eur, source)` — explicit opening/closing per (account, month), used to display the Inicial/Final cells. Inferred from prior period's closing when missing.
+- `account_balances(account, period, opening_eur, closing_eur, source, reconciled)` — explicit opening/closing per (account, month), used to display the Inicial/Final cells. Inferred from prior period's closing when missing. `reconciled` (1/0/null) set at import time → drives the ⚠️ dashboard badge.
+- `proactive_pace_sent(period, category, bucket)` — dedup ledger so the 2h watchman never repeats a budget-pace alert (bucket 1 = on-pace-to-exceed, 2 = already over).
 - `pending_items(id, kind, who, amount_eur, description, expected_date, status)` — off-account receivables/payables/reimbursements. `kind ∈ ('receivable', 'payable', 'reimbursement')`, `status ∈ ('open', 'settled', 'cancelled')`.
 - `llm_calls` — observability table for every LLM round-trip (provider, model, latency, tokens, ok)
 
@@ -370,6 +400,8 @@ Detects drift between the parser regex (`bankCsv.js:categorize()`) and stored ca
 | GET  | `/api/pending.json?key=$DASH_KEY[&include_settled=1]` | Pending items (receivables/payables/reimbursements) + totals. |
 | POST | `/api/pending?key=$DASH_KEY` | Mutate pending. JSON `{op?: 'delete'\|'settle', payload: {id?, kind, who, amount_eur, description?, expected_date?}}`. |
 | POST | `/api/maintenance/update-variable-category?key=$DASH_KEY` | One-shot fix: re-tag `variable_expenses.category` by label across all periods. |
+| POST | `/api/transactions/add?key=$DASH_KEY` | Log one manual transaction. Body `{amount_eur, merchant?, category?, date?, currency?, is_income?}`. Powers the dashboard "+ Add" form. |
+| POST | `/api/maintenance/purge-source?key=$DASH_KEY&source=pdf[&dry_run=1]` | Delete all txs from one source (`pdf`=BNP, `csv`=Amex/Revolut…) to re-import cleanly after a parser fix. `dry_run=1` only counts. |
 | POST | `/webhook/telegram` | Telegram update webhook (HMAC-secret-validated) |
 | POST | `/webhook/whatsapp/<secret>` | Evolution API webhook (gated by `ENABLE_WHATSAPP`) |
 | POST | `/import/normalized?key=$INTERNAL_IMPORT_KEY` | Bulk-load `text/csv` produced by `scripts/import-local.mjs`. Body limit 20 MB. |
@@ -383,9 +415,11 @@ Detects drift between the parser regex (`bankCsv.js:categorize()`) and stored ca
 | `5 * * * *` | Hourly IMAP scan for bank transaction emails (ingestor) |
 | `0 8 * * *` | Daily briefing — calendar (1d ahead) + tasks + spending pace + top categories |
 | `0 9 * * *` | Follow-ups for tasks due in next 48h |
+| `0 9 6 * *` | Monthly bank-statement reminder (day 6 — by then all 3 banks have published last month) |
 | `0 10 * * 0` | Sunday Revolut CSV upload nudge (per-tx alerts not supported) |
 | `0 18 * * 0` | Sunday weekly review — calendar (7d ahead) + completions/blockers + week spend |
-| `0 8,10,12,14,16,18,20,22 * * *` | Proactive scan — silent by default, broadcasts only if `interrupt=true` |
+| `0 19 * * 0` | Sunday CFO weekly briefing (`advisor.js` — structured review) |
+| `0 8,10,12,14,16,18,20,22 * * *` | Proactive scan — silent by default; broadcasts anomalies + **budget-pace alerts** (mid-month, deduped via `proactive_pace_sent`) if `interrupt=true` |
 
 ## Operating notes
 
