@@ -118,6 +118,31 @@ function parseRevolutMoney(s) {
  *
  * Revolut already uses negative-out / positive-in, so no sign flip.
  */
+// Balance-continuity reconciliation for Revolut: each row prints the running
+// balance, so within a currency stream balance[i] must equal balance[i-1] +
+// amount[i] - fee[i]. Any break means a row's amount/sign is wrong or a row was
+// missed — the Revolut analog of BNP's opening+Σ=closing check. reconRows must
+// be in statement (chronological) order, grouped later by currency.
+function attachRevolutRecon(out, reconRows) {
+  const byCcy = {};
+  for (const r of reconRows) (byCcy[r.currency] = byCcy[r.currency] || []).push(r);
+  let breaks = 0, checked = 0, maxDelta = 0;
+  for (const ccy of Object.keys(byCcy)) {
+    const list = byCcy[ccy];
+    for (let i = 1; i < list.length; i++) {
+      if (list[i].balance == null || list[i - 1].balance == null) continue;
+      const expected = list[i - 1].balance + list[i].amount - (list[i].fee || 0);
+      const d = Math.round((list[i].balance - expected) * 100) / 100;
+      checked++;
+      if (Math.abs(d) > 0.01) { breaks++; if (Math.abs(d) > Math.abs(maxDelta)) maxDelta = d; }
+    }
+  }
+  Object.defineProperty(out, "reconciliation", {
+    value: { reconciled: checked > 0 ? breaks === 0 : null, breaks, checked, maxDelta },
+    enumerable: false,
+  });
+}
+
 const REVOLUT_MONTHLY_HEADER_RX = /^Type,Product,Started Date,Completed Date,Description,Amount/;
 
 /**
@@ -132,6 +157,7 @@ function parseRevolutMonthly(content) {
     columns: true, skip_empty_lines: true, bom: true, relax_quotes: true, relax_column_count: true, trim: true,
   });
   const out = [];
+  const reconRows = [];
   for (const r of rows) {
     if ((r.State || "").toUpperCase() !== "COMPLETED") continue; // skip pending/reverted/declined
     const date = String(r["Completed Date"] || "").slice(0, 10);
@@ -152,7 +178,9 @@ function parseRevolutMonthly(content) {
       is_internal_transfer: isInternal,
       category: isInternal ? "internal_transfer" : undefined,
     });
+    reconRows.push({ currency, amount, fee: parseRevolutMoney(r.Fee), balance: parseRevolutMoney(r.Balance) });
   }
+  attachRevolutRecon(out, reconRows);
   return out;
 }
 
@@ -215,6 +243,10 @@ export function parseRevolutCsv(content) {
     }
     i++;
   }
+  // No reconciliation flag for the consolidated bulk export: its multi-section
+  // layout isn't strictly balance-ordered (same-day rows reorder), so per-row
+  // continuity false-positives. The monthly export (the ongoing upload path) is
+  // a single ordered stream and IS reconciled. Consolidated is a one-time load.
   return out;
 }
 

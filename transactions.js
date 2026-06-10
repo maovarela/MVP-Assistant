@@ -183,7 +183,16 @@ export async function importCsv(filePath) {
       });
       if (id) inserted++; else skipped++;
     }
-    return { inserted, skipped, errors: 0, total: parsed.length };
+    // Revolut carries a running balance per row → balance-continuity check
+    // (the Revolut analog of BNP's opening+Σ=closing). Amex CSVs have no balance
+    // or total, so there's no anchor — reconciled stays null (not flagged).
+    const rec = parsed.reconciliation;
+    let recon = null;
+    if (rec && rec.reconciled === false) {
+      recon = `${rec.breaks}/${rec.checked} filas no cuadran con el balance (desfase máx €${rec.maxDelta})`;
+      console.warn(`[csv] RECONCILIATION MISMATCH (${fmt}): ${recon}`);
+    }
+    return { inserted, skipped, errors: 0, total: parsed.length, reconciled: rec ? rec.reconciled : null, recon };
   }
 
   // Generic fallback — LLM batch parser
@@ -416,6 +425,7 @@ export async function importPdf(filePath) {
           opening_eur: bals.opening_eur,
           closing_eur: bals.closing_eur,
           source:      "pdf-extracted",
+          reconciled:  bals.reconciled,
         });
         console.log(`[pdf] BNP balances → ${bals.end_period} opening=${bals.opening_eur} closing=${bals.closing_eur}`);
       } catch (err) { console.warn(`[pdf] balance write failed: ${err.message}`); }

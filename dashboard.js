@@ -88,6 +88,9 @@ export function renderDashboard(period) {
       <button id="addExpenseBtn" title="Log an expense" class="flex items-center gap-1 px-2.5 sm:px-3 py-1.5 rounded-full text-xs font-semibold transition-colors bg-surface-container text-on-surface hover:bg-surface-container-high">
         <span class="material-symbols-outlined" style="font-size:16px">add</span><span class="hidden sm:inline">Add</span>
       </button>
+      <span id="reconBadge" class="hidden items-center gap-1 px-2.5 py-1.5 rounded-full text-xs font-semibold border border-error/40 text-error bg-surface-container-lowest" title="">
+        <span class="material-symbols-outlined" style="font-size:16px">warning</span><span id="reconBadgeText"></span>
+      </span>
     </nav>
 
     <!-- Period picker: single button that opens a popover with year tabs + month grid -->
@@ -2308,6 +2311,22 @@ export function renderDashboard(period) {
 
   function render(d) {
     populatePeriodSelectors(d.available_periods.length ? d.available_periods : [d.period], d.period);
+
+    // Reconciliation badge — flag the month if any account's statement didn't
+    // add up to its printed closing balance at import time.
+    const reconBadge = document.getElementById("reconBadge");
+    if (reconBadge) {
+      const bad = (d.reconciliation && d.reconciliation.unreconciled) || [];
+      if (bad.length) {
+        reconBadge.classList.remove("hidden");
+        reconBadge.classList.add("flex");
+        reconBadge.title = "El statement de " + bad.join(", ").toUpperCase() + " de este mes no cuadra con su saldo — las cifras pueden estar incompletas. Re-sube el statement.";
+        document.getElementById("reconBadgeText").textContent = "Revisar " + bad.map((a) => a.toUpperCase()).join("/");
+      } else {
+        reconBadge.classList.add("hidden");
+        reconBadge.classList.remove("flex");
+      }
+    }
 
     const t = d.totals;
     // category_budgets is MECE: single number per category per month. Fallback

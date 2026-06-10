@@ -287,6 +287,14 @@ if (!fixedCols.includes("match_keyword")) {
   db.exec(`ALTER TABLE fixed_expenses ADD COLUMN match_keyword TEXT`);
 }
 
+// Migration: reconciled flag on account_balances. Set at import time when a
+// statement's parsed lines add up to its printed closing balance (1) or not (0).
+// Powers the ⚠️ badge on months whose data we couldn't fully trust.
+const balCols = db.prepare(`PRAGMA table_info(account_balances)`).all().map((c) => c.name);
+if (!balCols.includes("reconciled")) {
+  db.exec(`ALTER TABLE account_balances ADD COLUMN reconciled INTEGER`);
+}
+
 // ─── Messages (conversation history) ─────────────────────────────────────────
 
 export function saveMessage(role, content, channel = "telegram") {
@@ -890,17 +898,19 @@ export function setMatchKeyword({ label, match_keyword, period, target = "fixed"
 const ACCOUNT_PREFIX = { bnp: "bnp:", amex: "amex:", revolut: "revolut:", shine: "shine:" };
 
 /** Set or update an account's opening/closing balance for a period. */
-export function setAccountBalance({ account, period, opening_eur, closing_eur, source = "manual" }) {
+export function setAccountBalance({ account, period, opening_eur, closing_eur, source = "manual", reconciled }) {
   if (!account || !period) throw new Error("account + period required");
+  const rec = reconciled == null ? null : (reconciled ? 1 : 0);
   db.prepare(`
-    INSERT INTO account_balances (account, period, opening_eur, closing_eur, source, updated_at)
-    VALUES (?, ?, ?, ?, ?, datetime('now'))
+    INSERT INTO account_balances (account, period, opening_eur, closing_eur, source, reconciled, updated_at)
+    VALUES (?, ?, ?, ?, ?, ?, datetime('now'))
     ON CONFLICT(account, period) DO UPDATE SET
       opening_eur = COALESCE(excluded.opening_eur, account_balances.opening_eur),
       closing_eur = COALESCE(excluded.closing_eur, account_balances.closing_eur),
       source      = excluded.source,
+      reconciled  = COALESCE(excluded.reconciled, account_balances.reconciled),
       updated_at  = datetime('now')
-  `).run(account, period, opening_eur ?? null, closing_eur ?? null, source);
+  `).run(account, period, opening_eur ?? null, closing_eur ?? null, source, rec);
   return db.prepare(`SELECT * FROM account_balances WHERE account = ? AND period = ?`).get(account, period);
 }
 
@@ -1409,6 +1419,13 @@ export function getDashboardSummary(period) {
     bnp_balance_history:   getAccountClosingHistory({ account: "bnp", months: 12 }),
     recent_months_comparison: getRecentMonthsComparison({ months: 3 }),
     spend_pace: getSpendPace(),
+    // Which accounts' statements for this period failed the import-time
+    // reconciliation (parsed lines ≠ printed closing balance). Powers the ⚠️ badge.
+    reconciliation: {
+      unreconciled: db.prepare(
+        `SELECT account FROM account_balances WHERE period = ? AND reconciled = 0`
+      ).all(p).map((r) => r.account),
+    },
   };
 }
 
@@ -1498,23 +1515,24 @@ export function getAuditReport(period) {
  *    [{ month: '2026-04', categories: { restaurants: 421, groceries: 312, ... } }, ...]
  *  ordered chronologically (oldest first). */
 export function getMonthlyCategorySpend({ months = 6 } = {}) {
-  const rows = db.prepare(`
-    SELECT strftime('%Y-%m', date)         AS month,
-           COALESCE(category, 'uncategorised') AS category,
-           ROUND(SUM(ABS(amount)), 2)      AS total
+  // The most recent N months that actually have spend.
+  const sortedMonths = db.prepare(`
+    SELECT DISTINCT strftime('%Y-%m', date) AS month
     FROM transactions
-    WHERE amount < 0 AND is_internal_transfer = 0
-    GROUP BY month, category
-    ORDER BY month DESC
-  `).all();
-  // Group by month
-  const byMonth = {};
-  for (const r of rows) {
-    byMonth[r.month] = byMonth[r.month] || {};
-    byMonth[r.month][r.category] = r.total;
-  }
-  const sortedMonths = Object.keys(byMonth).sort().reverse().slice(0, months).reverse();
-  return sortedMonths.map((m) => ({ month: m, categories: byMonth[m] }));
+    WHERE amount < 0 AND is_internal_transfer = 0 AND date IS NOT NULL
+    ORDER BY month DESC LIMIT ?
+  `).all(months).map((r) => r.month).reverse();
+
+  // Use the SAME attribution as the dashboard's Spending table (e.g. rent claimed
+  // by the "Arriendo" keyword counts as housing, not 'other') so the 3-month
+  // comparison and the category table never disagree.
+  return sortedMonths.map((m) => {
+    const categories = {};
+    for (const c of (getActualSpendVsBudget(m).byCategoryAttributed || [])) {
+      categories[c.category] = c.total;
+    }
+    return { month: m, categories };
+  });
 }
 
 /** Month-by-month cashflow per account + combined. Powers the Histórico tab.

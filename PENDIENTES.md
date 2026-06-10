@@ -288,6 +288,12 @@ Backend `POST /api/budget kind=category` and `POST /api/transactions/category` a
 - `scripts/import-local.mjs` — importador local que normaliza CSVs y produce `normalized-transactions.csv` (gitignored)
 - `.gitignore` ahora cubre `scripts/normalized-*.csv`, `.obsidian/`, `qr.png`
 
+### Shipped 2026-06-11
+
+- **Comparación 3-meses alineada con la tabla Spending** (`memory.getMonthlyCategorySpend`): antes usaba la categoría CRUDA de la tx (la renta caía en `other`), mientras Spending usa la atribución (renta→housing vía keyword "Arriendo"). Ahora `getMonthlyCategorySpend` reusa `getActualSpendVsBudget(mes).byCategoryAttributed` → ambas tablas categorizan IGUAL. Se acabó el "no hay housing arriba pero sí abajo".
+- **Reconciliación Revolut (mensual) + nota Amex** (`bankCsv.attachRevolutRecon`): el export mensual de Revolut trae balance por fila → se valida continuidad `balance[i] == balance[i-1] + amount - fee` por moneda. Verificado: mensual cuadra (0 breaks). El consolidado (carga histórica) NO se marca: su layout multi-sección no está estrictamente ordenado por balance (falsos positivos). Amex CSV no trae balance ni total → sin ancla, no se reconcilia (pero sus montos son simples, sin el lío de tabs de BNP).
+- **Badge de reconciliación en el dashboard** (`account_balances.reconciled` + `getDashboardSummary.reconciliation` + badge): se guarda por (cuenta, periodo) si el statement cuadró al importar; el dashboard muestra ⚠️ "Revisar BNP" en los meses cuyo statement no cuadró. Migración: `ALTER TABLE account_balances ADD COLUMN reconciled`.
+
 ### Shipped 2026-06-03
 
 - **Guard de reconciliación al importar (para que no vuelva a pasar)** (`bankCsv.parseBnpPdfText` + `importPdf` + bot): el statement de BNP imprime saldo inicial + final, así que tras parsear se verifica `opening + Σ(líneas) == closing` (tolerancia €0.01, sobre las líneas PARSEADAS, no las insertadas, así valida el parse aunque haya dedup). Si no cuadra, `importPdf` devuelve `{reconciled:false, recon}` y el bot avisa `⚠️ No cuadra con el saldo del statement`. Esto habría cazado el bug de montos invertidos el día 1. Si cuadra, el bot confirma `✅ Cuadra con el saldo del statement`.
