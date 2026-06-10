@@ -261,7 +261,12 @@ const BNP_TX_RX     = /^(\d{2})\.(\d{2})\s+(\d{2})\.(\d{2})\s+(.+?)\s+(\d+)\s*,\
 const BNP_PERIOD_RX = /du\s+\d{1,2}\s+([a-zûéôà]+)\s+(\d{4})\s+au\s+\d{1,2}\s+([a-zûéôà]+)\s+(\d{4})/i;
 
 function reverseFrenchAmount(centsStr, intStr) {
-  const cleanInt   = String(intStr).replace(/\s/g, "");
+  // BNP's PDF table aligns numbers by column, so the integer part is emitted
+  // split across whitespace in REVERSED (innermost-digit-first) order — exactly
+  // like the SOLDE header amounts. So "972<tab>1" is 1·972 = 1972, not 9721, and
+  // "721<tab>3" is 3·721 = 3721. Reverse the chunks before concatenating.
+  // (Single-chunk amounts like "42" are unaffected: reverse(["42"]) === "42".)
+  const cleanInt   = String(intStr).trim().split(/\s+/).filter(Boolean).reverse().join("");
   const cleanCents = String(centsStr).padStart(2, "0").slice(0, 2);
   const v = parseFloat(`${cleanInt}.${cleanCents}`);
   return Number.isFinite(v) ? v : null;
