@@ -23,6 +23,10 @@ import crypto from "crypto";
  */
 export function detectBankFormat(content) {
   const head = content.slice(0, 2000);
+  // Revolut "account-statement" monthly export — a flat table whose header is
+  // Type,Product,Started Date,Completed Date,Description,Amount,... — has no
+  // "Money in/out" and may not mention "Revolut" up top, so match it explicitly.
+  if (/^Type,Product,Started Date,Completed Date,Description,Amount/m.test(head)) return "revolut";
   if (head.includes("Money in/out") || /Revolut/i.test(head)) return "revolut";
   if (head.includes("Montant") && head.includes("Référence")) return "amex";
   if (/^Date,Description,Montant/m.test(head)) return "amex";
@@ -114,8 +118,51 @@ function parseRevolutMoney(s) {
  *
  * Revolut already uses negative-out / positive-in, so no sign flip.
  */
+const REVOLUT_MONTHLY_HEADER_RX = /^Type,Product,Started Date,Completed Date,Description,Amount/;
+
+/**
+ * Parse the Revolut "account-statement" monthly export — a flat table:
+ *   Type,Product,Started Date,Completed Date,Description,Amount,Fee,Currency,State,Balance
+ * Uses the Completed Date (same date basis the consolidated statement reports,
+ * verified against overlapping rows) so the natural-key overlap guard dedups a
+ * transaction that also appears in a consolidated export.
+ */
+function parseRevolutMonthly(content) {
+  const rows = parse(content, {
+    columns: true, skip_empty_lines: true, bom: true, relax_quotes: true, relax_column_count: true, trim: true,
+  });
+  const out = [];
+  for (const r of rows) {
+    if ((r.State || "").toUpperCase() !== "COMPLETED") continue; // skip pending/reverted/declined
+    const date = String(r["Completed Date"] || "").slice(0, 10);
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) continue;
+    const desc   = (r.Description || "").trim();
+    const amount = parseFloat(r.Amount);                          // already signed (neg=out)
+    if (!desc || !Number.isFinite(amount) || amount === 0) continue;
+    const currency = (r.Currency || "EUR").toUpperCase();
+    const isInternal = /\btop-?up\b/i.test(desc) || (r.Type || "").toLowerCase() === "topup";
+    // Same id formula as the consolidated parser (incl. balance) so re-importing
+    // the SAME file is idempotent and identical same-day purchases stay distinct.
+    const id = crypto.createHash("sha1")
+      .update(`revolut|${currency}|${date}|${desc}|${amount}|${r.Balance || ""}`)
+      .digest("hex").slice(0, 16);
+    out.push({
+      date, merchant: desc, amount, currency, description: desc,
+      external_id: id,
+      is_internal_transfer: isInternal,
+      category: isInternal ? "internal_transfer" : undefined,
+    });
+  }
+  return out;
+}
+
 export function parseRevolutCsv(content) {
   const lines = content.split(/\r?\n/);
+  // New monthly export format → dedicated flat-table parser.
+  const firstReal = lines.find((l) => l.trim() !== "");
+  if (firstReal && REVOLUT_MONTHLY_HEADER_RX.test(firstReal.trim())) {
+    return parseRevolutMonthly(content);
+  }
   const out = [];
   let currentCurrency = "EUR";
   let i = 0;

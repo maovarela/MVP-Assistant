@@ -290,6 +290,12 @@ Backend `POST /api/budget kind=category` and `POST /api/transactions/category` a
 
 ### Shipped 2026-06-03
 
+- **Dedup de overlaps normalizado (todos los bancos)** (`transactions.makeOverlapGuard` + `bankCsv.parseRevolutMonthly`):
+  - **Problema**: los statements se solapan en bordes de mes y entre formatos de export (Revolut consolidado vs mensual comparten ~3 semanas; re-descargas; archivos parciales de test). El `external_id` por-fuente es un hash distinto en cada formato → no cacha esos solapes.
+  - **Fix general**: guard por **clave natural** `(date, amount-en-céntimos, currency, merchant-normalizado)` aplicado en todas las rutas de import (csv determinista + LLM, pdf BNP + LLM). Es **multiplicidad-aware**: salta una fila entrante solo hasta el conteo que ya existe en la DB, así dos compras idénticas el mismo día sobreviven pero los solapes reales se descartan. Funciona contra data ya importada, sin re-hashear ni re-sembrar.
+  - **Revolut formato mensual** (`account-statement_*.csv`: `Type,Product,Started Date,Completed Date,Amount,...`) ahora se detecta y parsea determinista (usa Completed Date — misma base de fecha que el consolidado, verificado contra filas solapadas → deduplican). Antes caía al parser LLM y no cuadraba.
+  - **Verificado** (dry-run con archivos reales): consolidado (260 tx) + mensual mayo → el mensual inserta solo 12 (May 25-31) y salta 49 (solape May 1-24); re-import = 0 nuevas; 0 duplicados.
+  - **Ojo manual**: el guard NO arregla PDFs truncados/parciales (ej. los BNP `20260108.pdf` y `20260202.pdf` sin "(1)" que extraían <1300 chars) — esos hay que re-descargarlos completos. Y Amex `2026-06-20.csv` era copia byte a byte de `2026-05-20` (no es junio real).
 - **Captura manual de gastos — 4 vías** (núcleo `transactions.logManualExpense()`: valida, normaliza signo, auto-categoriza desde el merchant vía keyword, inserta con `external_id=null` para no bloquear repeticiones):
   1. **Quick-add por chat**: tool `log_expense` en `agent.js` — "gasté 12€ en café" → transacción. Distinto de set_fixed_expense (budget).
   2. **Botón "+ Add" en el dashboard**: modal con monto/fecha/merchant/categoría/income → `POST /api/transactions/add` (DASH_KEY) → recarga.

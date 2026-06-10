@@ -8,7 +8,7 @@ import { PDFParse } from "pdf-parse";
 import fs from "fs";
 import crypto from "crypto";
 
-import {
+import db, {
   insertTransaction,
   isEmailProcessed,
   markEmailProcessed,
@@ -113,6 +113,48 @@ ${(body || "").slice(0, 8000)}`;
  * Import a CSV file. Sends rows to Claude in batches to map columns to our
  * schema (different banks use different headers / locales / formats).
  */
+// ─── Overlap dedup (format-independent) ──────────────────────────────────────
+// Statements overlap at month boundaries and across export formats (a Revolut
+// consolidated statement and a monthly one share ~3 weeks; re-downloads, partial
+// test files, etc.). The per-source external_id hash differs between formats, so
+// it can't catch those. This guard adds a NATURAL key —
+// (date, amount-in-cents, currency, normalized-merchant) — and skips an incoming
+// row only up to the count already in the DB, so genuine same-day repeats (two
+// identical coffees) survive while true overlaps are dropped. Works against data
+// already imported, with no re-hashing or re-seeding.
+
+function naturalKey(t) {
+  const cents    = Math.round(Number(t.amount) * 100);
+  const merchant = (t.merchant || "").toLowerCase().replace(/\s+/g, " ").trim();
+  return `${t.date}|${cents}|${(t.currency || "EUR").toUpperCase()}|${merchant}`;
+}
+
+/**
+ * Build a multiplicity-aware overlap filter for a batch about to be imported.
+ * Returns isOverlap(tx) → true when tx duplicates a transaction already present
+ * in the DB (within the batch's date span) and should be skipped.
+ */
+function makeOverlapGuard(txs) {
+  const dates = txs.map((t) => t.date).filter(Boolean).sort();
+  const existing = new Map();
+  if (dates.length) {
+    const rows = db.prepare(
+      `SELECT date, amount, currency, merchant FROM transactions WHERE date BETWEEN ? AND ?`
+    ).all(dates[0], dates[dates.length - 1]);
+    for (const r of rows) {
+      const k = naturalKey(r);
+      existing.set(k, (existing.get(k) || 0) + 1);
+    }
+  }
+  const seen = new Map();
+  return (tx) => {
+    const k = naturalKey(tx);
+    const s = seen.get(k) || 0;
+    seen.set(k, s + 1);
+    return s < (existing.get(k) || 0); // DB already holds this many → overlap
+  };
+}
+
 export async function importCsv(filePath) {
   const content = fs.readFileSync(filePath, "utf8");
 
@@ -122,8 +164,10 @@ export async function importCsv(filePath) {
   if (fmt) {
     console.log(`[csv] detected format=${fmt} for ${filePath}`);
     const parsed = fmt === "amex" ? parseAmexCsv(content) : parseRevolutCsv(content);
+    const isOverlap = makeOverlapGuard(parsed);
     let inserted = 0, skipped = 0;
     for (const tx of parsed) {
+      if (isOverlap(tx)) { skipped++; continue; }
       const extId = tx.external_id || hashTx(tx);
       const id = insertTransaction({
         external_id: `${fmt}:${extId}`,
@@ -181,9 +225,11 @@ export async function importCsv(filePath) {
       continue;
     }
 
+    const isOverlap = makeOverlapGuard(parsedBatch.filter((t) => t && t.date && t.amount != null));
     for (let j = 0; j < parsedBatch.length; j++) {
       const tx = parsedBatch[j];
       if (!tx || !tx.date || tx.amount == null) { skipped++; continue; }
+      if (isOverlap(tx)) { skipped++; continue; }
 
       const externalId = tx.external_id || hashTx(tx, batch[j]);
       const id = insertTransaction({
@@ -340,8 +386,10 @@ export async function importPdf(filePath) {
   const bnpTxs = parseBnpPdfText(text);
   if (bnpTxs && bnpTxs.length > 0) {
     console.log(`[pdf] BNP fast-path: ${bnpTxs.length} transactions (no LLM)`);
+    const isOverlap = makeOverlapGuard(bnpTxs);
     let inserted = 0, skipped = 0;
     for (const tx of bnpTxs) {
+      if (isOverlap(tx)) { skipped++; continue; }
       const id = insertTransaction({
         external_id: `bnp:${hashTx(tx)}`,
         source:      "pdf",
@@ -393,9 +441,11 @@ export async function importPdf(filePath) {
     return { inserted: 0, skipped: 0, errors: 1 };
   }
 
+  const isOverlap = makeOverlapGuard(txs.filter((t) => t?.date && t.amount != null));
   let inserted = 0, skipped = 0;
   for (const tx of txs) {
     if (!tx?.date || tx.amount == null) { skipped++; continue; }
+    if (isOverlap(tx)) { skipped++; continue; }
     const id = insertTransaction({
       external_id: `pdf:${hashTx(tx)}`,
       source:      "pdf",
