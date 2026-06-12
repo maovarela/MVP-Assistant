@@ -212,7 +212,7 @@ export function renderDashboard(period) {
     <div class="flex items-center justify-between px-4 py-3 border-b border-outline-variant/15">
       <div class="flex items-center gap-2">
         <span class="material-symbols-outlined text-primary" style="font-size: 18px;">calendar_view_month</span>
-        <h3 class="font-headline font-bold text-sm tracking-tight">Consolidado <span id="ytdYearLabel" class="text-outline">—</span></h3>
+        <h3 class="font-headline font-bold text-sm tracking-tight">Consolidated <span id="ytdYearLabel" class="text-outline">—</span></h3>
       </div>
       <div id="ytdMonthsLabel" class="text-xs text-outline">—</div>
     </div>
@@ -1158,7 +1158,7 @@ export function renderDashboard(period) {
   const CIRCUM = 282.7;
 
   const MONTH_NAMES = ["Ene","Feb","Mar","Abr","May","Jun","Jul","Ago","Sep","Oct","Nov","Dic"];
-  const MONTH_LONG  = ["Enero","Febrero","Marzo","Abril","Mayo","Junio","Julio","Agosto","Septiembre","Octubre","Noviembre","Diciembre"];
+  const MONTH_LONG  = ["January","February","March","April","May","June","July","August","September","October","November","December"];
 
   const ICON = {
     housing: "home", groceries: "shopping_cart", restaurants: "restaurant",
@@ -1267,7 +1267,7 @@ export function renderDashboard(period) {
     const grid = document.getElementById("accountsGrid");
     grid.innerHTML = ["bnp", "amex", "revolut", "total"].map((a) =>
       \`<div class="rounded-2xl bg-surface-container-lowest border border-outline-variant/15 p-4" id="acct-\${a}">
-        <div class="text-xs text-outline">Cargando \${a === "total" ? "Total" : ACCOUNT_META[a].label}…</div>
+        <div class="text-xs text-outline">Loading \${a === "total" ? "Total" : ACCOUNT_META[a].label}…</div>
        </div>\`
     ).join("");
 
@@ -1279,7 +1279,7 @@ export function renderDashboard(period) {
       const meta = ACCOUNT_META[acct];
       const opening = d.opening_eur, closing = d.closing_eur;
       const netClr  = d.net_change_eur >= 0 ? "text-primary" : "text-error";
-      const editBtn = acct === "bnp" ? \`<button id="bnpEditBtn" onclick="event.stopPropagation()" class="text-[10px] text-primary font-semibold hover:underline">Editar</button>\` : "";
+      const editBtn = acct === "bnp" ? \`<button id="bnpEditBtn" onclick="event.stopPropagation()" class="text-[10px] text-primary font-semibold hover:underline">Edit</button>\` : "";
       totals.credits         += d.credits_eur;
       totals.debits          += d.debits_eur;
       totals.internalCredits += d.internal_credits_eur || 0;
@@ -1313,11 +1313,11 @@ export function renderDashboard(period) {
         </div>
         <div class="grid grid-cols-2 gap-2 text-center">
           <div class="bg-surface-container rounded-lg p-2">
-            <div class="text-[9px] uppercase tracking-wider text-outline">Inicial</div>
+            <div class="text-[9px] uppercase tracking-wider text-outline">Opening</div>
             <div class="font-headline text-base font-bold tabular-nums">\${opening != null ? fmt(opening) : "—"}</div>
           </div>
           <div class="bg-surface-container rounded-lg p-2">
-            <div class="text-[9px] uppercase tracking-wider text-outline">Final</div>
+            <div class="text-[9px] uppercase tracking-wider text-outline">Closing</div>
             <div class="font-headline text-base font-bold tabular-nums">\${closing != null ? fmt(closing) : "—"}</div>
           </div>
           <div class="bg-primary-container/30 rounded-lg p-2">
@@ -1736,7 +1736,7 @@ export function renderDashboard(period) {
     const netCls = net >= 0 ? "text-primary" : "text-error";
     document.getElementById("ytdCards").innerHTML = [
       \`<div class="bg-surface-container-lowest p-3 cursor-pointer hover:bg-surface-container transition-colors" onclick="openCategoryDrill('income', '\${y.year}')"><div class="text-[10px] font-bold uppercase tracking-wider text-outline">Income YTD</div><div class="font-headline text-lg font-bold tabular-nums mt-0.5 text-on-surface">\${fmt(t.income_actual_eur)}</div><div class="text-[9px] text-primary mt-0.5">click → detail</div></div>\`,
-      \`<div class="bg-surface-container-lowest p-3 cursor-pointer hover:bg-surface-container transition-colors" onclick="openYTDBreakdown(\${JSON.stringify(y).replace(/"/g, '&quot;')})"><div class="text-[10px] font-bold uppercase tracking-wider text-outline">Gasto YTD</div><div class="font-headline text-lg font-bold tabular-nums mt-0.5 text-on-surface">\${fmt(t.expenses_actual_eur)}</div><div class="text-[9px] text-primary mt-0.5">click → desglose</div></div>\`,
+      \`<div class="bg-surface-container-lowest p-3 cursor-pointer hover:bg-surface-container transition-colors" onclick="openYTDBreakdown(\${JSON.stringify(y).replace(/"/g, '&quot;')})"><div class="text-[10px] font-bold uppercase tracking-wider text-outline">Spend YTD</div><div class="font-headline text-lg font-bold tabular-nums mt-0.5 text-on-surface">\${fmt(t.expenses_actual_eur)}</div><div class="text-[9px] text-primary mt-0.5">click → breakdown</div></div>\`,
       \`<div class="bg-surface-container-lowest p-3 cursor-pointer hover:bg-surface-container transition-colors" onclick="openYTDBreakdown(\${JSON.stringify(y).replace(/"/g, '&quot;')})"><div class="text-[10px] font-bold uppercase tracking-wider text-outline">Neto YTD</div><div class="font-headline text-lg font-bold tabular-nums mt-0.5 \${netCls}">\${fmt(net)}</div><div class="text-[9px] text-primary mt-0.5">click → mensual</div></div>\`,
       \`<div class="bg-surface-container-lowest p-3 cursor-pointer hover:bg-surface-container transition-colors" onclick="openYTDBreakdown(\${JSON.stringify(y).replace(/"/g, '&quot;')})"><div class="text-[10px] font-bold uppercase tracking-wider text-outline">Media/mes</div><div class="font-headline text-lg font-bold tabular-nums mt-0.5 text-on-surface">\${fmt(t.avg_monthly_expense)}</div><div class="text-[9px] text-primary mt-0.5">click → trend</div></div>\`,
     ].join("");
@@ -1896,7 +1896,7 @@ export function renderDashboard(period) {
           <h4 class="text-xs font-bold uppercase tracking-wider text-outline mb-2">Por mes</h4>
           <table class="w-full text-sm">
             <thead><tr class="text-left text-[10px] uppercase tracking-wider text-outline border-b border-outline-variant/15">
-              <th class="px-3 py-2">Mes</th><th class="px-3 py-2 text-right">Gasto</th><th class="px-3 py-2 text-right">Ingreso</th><th class="px-3 py-2 text-right">Neto</th>
+              <th class="px-3 py-2">Month</th><th class="px-3 py-2 text-right">Spend</th><th class="px-3 py-2 text-right">Income</th><th class="px-3 py-2 text-right">Net</th>
             </tr></thead>
             <tbody>\${monthsHtml}</tbody>
           </table>
