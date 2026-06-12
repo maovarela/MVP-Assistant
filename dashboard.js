@@ -249,7 +249,7 @@ export function renderDashboard(period) {
         <input id="gastosFilter" type="search" placeholder="🔎 Filter category…" class="w-full md:w-64 bg-surface-container text-on-surface border border-outline-variant/30 rounded-md text-xs px-2 py-1 focus:ring-2 focus:ring-primary focus:outline-none" />
       </div>
       <table class="w-full text-xs sm:text-sm">
-        <thead class="bg-surface-container">
+        <thead class="bg-surface-container sticky top-0 z-10">
           <tr class="text-left text-[10px] uppercase tracking-wider text-outline">
             <th class="px-2 sm:px-3 py-2.5 cursor-pointer select-none hover:text-on-surface" data-sort="name">Category <span class="gastosSortArrow text-outline" data-col="name"></span></th>
             <th class="px-2 sm:px-3 py-2.5 text-right cursor-pointer select-none hover:text-on-surface" data-sort="budget">Budget <span class="gastosSortArrow text-outline" data-col="budget"></span></th>
