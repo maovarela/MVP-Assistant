@@ -2485,13 +2485,21 @@ export function renderDashboard(period) {
         const subItems = (c.fixed_items || []).length
           ? \`<div class="text-[10px] text-outline pl-6 mt-0.5">\${c.fixed_items.map((it) => it.label + " " + fmt(it.budget_eur)).join(" · ")}</div>\`
           : "";
-        return \`<tr class="border-b border-outline-variant/15 hover:bg-surface-container-low cursor-pointer" onclick="openCategoryDrill('\${c.category}', '\${d.period}')">
+        // Progress bar: actual vs budget, capped at 100% width, colored by usage.
+        const overBudget = c.budget_eur > 0 && c.actual_eur > c.budget_eur;
+        const barClr = pct == null ? "bg-outline-variant" : pct > 100 ? "bg-error" : pct > 80 ? "bg-warn" : "bg-primary";
+        const barW   = c.budget_eur > 0 ? Math.min(100, Math.round((c.actual_eur / c.budget_eur) * 100)) : 0;
+        const bar = c.budget_eur > 0
+          ? \`<div class="mt-1.5 h-1.5 w-full max-w-[220px] rounded-full bg-outline-variant/20 overflow-hidden"><div class="h-full \${barClr} transition-all" style="width:\${barW}%"></div></div>\`
+          : "";
+        return \`<tr class="border-b border-outline-variant/15 hover:bg-surface-container-low cursor-pointer \${overBudget ? 'border-l-2 border-l-error' : ''}" onclick="openCategoryDrill('\${c.category}', '\${d.period}')">
           <td class="px-2 sm:px-3 py-2.5">
             <div class="flex items-center gap-2">
               <span class="material-symbols-outlined text-outline hidden sm:inline" style="font-size: 16px">\${ICON[c.category] || ICON.other}</span>
               <span class="text-on-surface font-medium">\${meta.emoji} \${meta.label}</span>
             </div>
             \${subItems}
+            \${bar}
           </td>
           <td class="px-2 sm:px-3 py-2.5 text-right tabular-nums">\${c.budget_eur > 0 ? fmt(c.budget_eur) : '<span class="text-outline">—</span>'}</td>
           <td class="px-2 sm:px-3 py-2.5 text-right tabular-nums">\${fmt(c.actual_eur)}</td>
