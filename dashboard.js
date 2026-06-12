@@ -743,7 +743,7 @@ export function renderDashboard(period) {
             ((t.pct || 0) >= 90 ? "bg-error" : (t.pct || 0) >= 60 ? "bg-warn" : "bg-primary");
         }
         set(pctId, (t.pct != null ? t.pct + "%" : "—"));
-        set(crossId, t.crossDate ? ("cruce ~" + t.crossDate) : "sin cruce proyectado");
+        set(crossId, t.crossDate ? ("crosses ~" + t.crossDate) : "no crossing projected");
         set(labelId, eur(d.totalCA) + " / " + eur(t.amount));
       };
       fillBar(th.tva_franchise, "b2bTvaBar",   "b2bTvaPct",   "b2bTvaCross",   "b2bTvaLabel");
@@ -2192,7 +2192,7 @@ export function renderDashboard(period) {
 
     const conflictsBlock = a.conflicts.length ? \`
       <div class="px-5 py-3 bg-error-container/30 border-b border-outline-variant/20">
-        <div class="text-xs font-semibold text-error mb-1">\${a.conflicts.length} conflicto(s) — transacciones que matchean varios fijos</div>
+        <div class="text-xs font-semibold text-error mb-1">\${a.conflicts.length} conflict(s) — transactions matching several fixed lines</div>
         \${a.conflicts.slice(0, 5).map((c) => \`<div class="text-xs text-on-surface">\${c.merchant} \${fmt(c.amount)} → asignado a <b>\${c.assigned_to}</b> (also matches: \${c.matched_by.filter((m) => m !== c.assigned_to).join(", ")})</div>\`).join("")}
       </div>\` : "";
 
@@ -2637,7 +2637,7 @@ export function renderDashboard(period) {
     const incomeEur = d.totals.income_eur || 0;
     const pctOfIncome = incomeEur > 0 ? Math.round((total / incomeEur) * 1000) / 10 : null;
     const subClr = pctOfIncome == null ? "text-outline" : pctOfIncome > 100 ? "text-error" : pctOfIncome > 85 ? "text-warn" : "text-primary";
-    document.getElementById("donutSubtitle").textContent = pctOfIncome != null ? \`\${pctOfIncome}% del ingreso\` : "—";
+    document.getElementById("donutSubtitle").textContent = pctOfIncome != null ? \`\${pctOfIncome}% of income\` : "—";
     document.getElementById("donutSubtitle").className = "text-[11px] mt-1 " + subClr;
 
     const sorted = [...d.by_category_actual].sort((a, b) => b.total - a.total);
