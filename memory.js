@@ -1774,34 +1774,66 @@ export function listAllTransactions({ period, period_from, period_to, accounts, 
 
 export function listCategoryTransactions({ category, period }) {
   if (!category) throw new Error("category required");
-  const where = period && /^\d{4}-\d{2}$/.test(period)
+  const isMonth = period && /^\d{4}-\d{2}$/.test(period);
+  const addAccount = (rows) => {
+    for (const r of rows) {
+      const prefix = (r.external_id || "").split(":")[0];
+      r.account = ({ bnp: "BNP", amex: "Amex", revolut: "Revolut", csv: "CSV", pdf: "BNP", email: "Email" })[prefix] || prefix || "—";
+    }
+    return rows;
+  };
+  const pack = (rows) => ({
+    category, period: period || "all-time",
+    count: rows.length,
+    total: Math.round(rows.reduce((s, r) => s + Math.abs(r.amount), 0) * 100) / 100,
+    rows: addAccount(rows),
+  });
+
+  // Month + concrete category → ATTRIBUTION-AWARE, outflow-only drilldown so the
+  // total matches the Spending table's ACTUAL exactly. A tx claimed by a budget
+  // line's match_keyword (e.g. rent by "Arriendo") shows under THAT line's
+  // category, not its raw one — same rule as getActualSpendVsBudget. Variables
+  // are checked before fixed (first match wins), mirroring the aggregate.
+  if (isMonth && category !== "uncategorised") {
+    const lines = db.prepare(`
+      SELECT category, match_keyword FROM variable_expenses WHERE period = ? AND match_keyword IS NOT NULL
+      UNION ALL
+      SELECT category, match_keyword FROM fixed_expenses    WHERE period = ? AND match_keyword IS NOT NULL
+    `).all(period, period);
+    const rx = [];
+    for (const l of lines) { try { rx.push({ cat: l.category, re: new RegExp(l.match_keyword, "i") }); } catch { /* skip bad regex */ } }
+    const all = db.prepare(`
+      SELECT id, date, merchant, amount, currency, source, description, external_id, category
+      FROM transactions
+      WHERE amount < 0 AND is_internal_transfer = 0 AND strftime('%Y-%m', date) = ?
+      ORDER BY ABS(amount) DESC
+    `).all(period);
+    const rows = all.filter((r) => {
+      const claim = rx.find((x) => x.re.test(r.merchant || "") || x.re.test(r.description || ""));
+      const attributed = claim ? claim.cat : (r.category || "uncategorised");
+      return attributed === category;
+    }).slice(0, 500);
+    return pack(rows);
+  }
+
+  // All-time / year / 'uncategorised' → raw-category query (no per-period budget
+  // lines to attribute against).
+  const where = isMonth
     ? `AND strftime('%Y-%m', date) = ?`
     : period && /^\d{4}$/.test(period)
       ? `AND strftime('%Y', date) = ?`
       : "";
-  // 'uncategorised' is the COALESCE sentinel for NULL category. Match both
-  // NULL and the literal value so the drilldown actually returns rows.
   const isUncat = category === "uncategorised";
   const catCond = isUncat ? "(category IS NULL OR category = 'uncategorised')" : "category = ?";
   const args = isUncat
     ? (period ? [period] : [])
     : (period ? [category, period] : [category]);
-  const rows  = db.prepare(`
+  const rows = db.prepare(`
     SELECT id, date, merchant, amount, currency, source, description, external_id
     FROM transactions WHERE ${catCond} ${where}
     ORDER BY ABS(amount) DESC LIMIT 500
   `).all(...args);
-  // Derive a human-readable account from the external_id prefix
-  for (const r of rows) {
-    const prefix = (r.external_id || "").split(":")[0];
-    r.account = ({ bnp: "BNP", amex: "Amex", revolut: "Revolut", csv: "CSV", pdf: "BNP", email: "Email" })[prefix] || prefix || "—";
-  }
-  return {
-    category, period: period || "all-time",
-    count: rows.length,
-    total: Math.round(rows.reduce((s, r) => s + Math.abs(r.amount), 0) * 100) / 100,
-    rows,
-  };
+  return pack(rows);
 }
 
 /** Distinct periods present across budget tables AND the transactions table.
