@@ -178,7 +178,7 @@ export function renderDashboard(period) {
     <div class="flex items-center justify-between px-4 py-3 border-b border-outline-variant/15">
       <div class="flex items-center gap-2">
         <span class="material-symbols-outlined text-tertiary" style="font-size: 18px;">trending_up</span>
-        <h3 class="font-headline font-bold text-sm tracking-tight">Last 3 months comparison</h3>
+        <h3 class="font-headline font-bold text-base tracking-tight">Last 3 months comparison</h3>
       </div>
       <div class="text-[11px]" id="comparisonTotalDelta">—</div>
     </div>
@@ -191,7 +191,7 @@ export function renderDashboard(period) {
   <section class="space-y-3">
     <div class="flex items-center gap-2 px-1">
       <span class="material-symbols-outlined text-secondary" style="font-size: 18px;">account_balance</span>
-      <h3 class="font-headline font-bold text-sm tracking-tight">Accounts <span id="bnpPeriodLabel" class="text-outline">—</span></h3>
+      <h3 class="font-headline font-bold text-base tracking-tight">Accounts <span id="bnpPeriodLabel" class="text-outline">—</span></h3>
     </div>
     <div class="grid grid-cols-2 md:grid-cols-4 gap-2 sm:gap-3" id="accountsGrid">
       <!-- populated by JS — one card per account + a Total card -->
@@ -212,7 +212,7 @@ export function renderDashboard(period) {
     <div class="flex items-center justify-between px-4 py-3 border-b border-outline-variant/15">
       <div class="flex items-center gap-2">
         <span class="material-symbols-outlined text-primary" style="font-size: 18px;">calendar_view_month</span>
-        <h3 class="font-headline font-bold text-sm tracking-tight">Consolidated <span id="ytdYearLabel" class="text-outline">—</span></h3>
+        <h3 class="font-headline font-bold text-base tracking-tight">Consolidated <span id="ytdYearLabel" class="text-outline">—</span></h3>
       </div>
       <div id="ytdMonthsLabel" class="text-xs text-outline">—</div>
     </div>
@@ -411,7 +411,7 @@ export function renderDashboard(period) {
   <section class="rounded-2xl bg-surface-container-lowest border border-outline-variant/15 overflow-hidden">
     <div class="flex items-center gap-2 px-4 py-3 border-b border-outline-variant/15">
       <span class="material-symbols-outlined text-secondary" style="font-size:18px">donut_small</span>
-      <h3 class="font-headline font-bold text-sm tracking-tight">CA por negocio</h3>
+      <h3 class="font-headline font-bold text-base tracking-tight">CA por negocio</h3>
     </div>
     <div id="b2bSplit" class="p-2">
       <div class="text-xs text-outline italic p-3">Loading…</div>
