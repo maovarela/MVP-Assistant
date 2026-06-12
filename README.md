@@ -229,7 +229,7 @@ Cash, Revolut-without-email, or anything that won't arrive by statement — four
 
 ### Import-time reconciliation (so a parse bug can't go silent)
 
-Every statement import is checked against the statement's own numbers; on mismatch the bot replies `⚠️ No cuadra` and the dashboard shows a ⚠️ "Revisar <ACCT>" badge on that month (`account_balances.reconciled`):
+Every statement import is checked against the statement's own numbers; on mismatch the bot replies `⚠️ No cuadra` and the dashboard shows a ⚠️ "Review <ACCT>" badge on that month (`account_balances.reconciled`):
 
 - **BNP** — `opening + Σ(parsed lines) == closing` (the printed balances).
 - **Revolut monthly** — per-row balance continuity (`balance[i] == balance[i-1] + amount − fee`).
@@ -253,11 +253,13 @@ This was added after a real bug: BNP PDF amounts ≥ €1000 were parsed reverse
 
 ## Budget dashboard (Cuentas MVP)
 
-Open `https://<your-host>/dashboard?key=$DASH_KEY` on your phone. Replaces the manual monthly Google Sheet. UI is in English.
+Open `https://<your-host>/dashboard?key=$DASH_KEY` on your phone. Replaces the manual monthly Google Sheet.
+
+> **Convention: the dashboard UI is English-only.** Every user-facing string in `dashboard.js` (labels, headers, modals, badges, empty states, the month picker — including the B2B tab) is in English. French tax-scheme proper nouns stay (Franchise TVA, micro-entreprise, CDI, EI). The **Telegram bot stays Spanish** — that's conversational and intentional. When adding UI, write English; don't reintroduce Spanish.
 
 ### Three-tab layout
 
-- **Overview** — KPIs, dial, budget vs actual per category, donut/charts, accounts, internal-transfer panel, pending items, 3-month comparison (same attribution as the budget table — rent shows under housing in both). Header has a **"+ Add"** quick-expense button and a ⚠️ **"Revisar <ACCT>"** badge on months whose statement didn't reconcile. Defaults to the latest month with data (not an empty current month).
+- **Overview** — KPIs, dial, budget vs actual per category, donut/charts, accounts, internal-transfer panel, pending items, 3-month comparison (same attribution as the budget table — rent shows under housing in both). Header has a **"+ Add"** quick-expense button and a ⚠️ **"Review <ACCT>"** badge on months whose statement didn't reconcile. Defaults to the latest month with data (not an empty current month).
 - **Transactions** — flat editable transaction list with quick-range chips (**3m / 6m / 12m / YTD**) + from/to month range, account multi-filter, category/type/min-amount filters, sortable columns, inline category dropdown (per-tx fix in one click).
 - **B2B** — micro-entreprise view, independent of personal accounts. Combined CA for the year (Vandfort + Zentra + Touro share one EI = one ceiling), per-business split, linear year-end forecast, and progress bars vs the two thresholds (Franchise TVA €37.5k, Techo micro €77.7k) with estimated crossing date. Fed by `ceiling.js` / `GET /api/ceiling.json`. CA excludes CDI salary + internal transfers and surfaces unclassified income. Shows €0 until Shine transactions are ingested (account prefix `shine:`).
 

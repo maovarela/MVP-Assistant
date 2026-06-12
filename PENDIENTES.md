@@ -288,7 +288,14 @@ Backend `POST /api/budget kind=category` and `POST /api/transactions/category` a
 - `scripts/import-local.mjs` — importador local que normaliza CSVs y produce `normalized-transactions.csv` (gitignored)
 - `.gitignore` ahora cubre `scripts/normalized-*.csv`, `.obsidian/`, `qr.png`
 
+### Convención: UI del dashboard SOLO en inglés
+
+Todo string visible en `dashboard.js` (labels, headers, modales, badges, empty states, month picker, **tab B2B incluida**) va en **inglés**. Se mantienen nombres propios de regímenes fiscales franceses (Franchise TVA, micro-entreprise, CDI, EI). El **bot de Telegram queda en español** (conversacional, intencional). Al agregar UI: escribir en inglés, no reintroducir español.
+
 ### Shipped 2026-06-11
+
+- **Pase completo a inglés + touch targets**: traducidos los strings ES restantes del dashboard, incluida la **tab B2B** (Combined revenue, Year-end projection, Micro-entreprise ceiling, Revenue per business, Unclassified…), YTD strip, modales Audit/keyword, badge de reconciliación ("Review BNP"), modal de balance BNP, month picker (MONTH_LONG → inglés). Touch targets de tabs/Add/month-picker subidos a ~44px en móvil (`py-3.5`/`py-3`), compactos en desktop (`sm:py-1.5`/`sm:py-2`).
+- **UI polish**: barras de progreso por categoría + acento rojo over-budget · header sticky · jerarquía de headers de sección (16px) · drill-down attribution-aware (su total = ACTUAL del Spending).
 
 - **Comparación 3-meses alineada con la tabla Spending** (`memory.getMonthlyCategorySpend`): antes usaba la categoría CRUDA de la tx (la renta caía en `other`), mientras Spending usa la atribución (renta→housing vía keyword "Arriendo"). Ahora `getMonthlyCategorySpend` reusa `getActualSpendVsBudget(mes).byCategoryAttributed` → ambas tablas categorizan IGUAL. Se acabó el "no hay housing arriba pero sí abajo".
 - **Reconciliación Revolut (mensual) + nota Amex** (`bankCsv.attachRevolutRecon`): el export mensual de Revolut trae balance por fila → se valida continuidad `balance[i] == balance[i-1] + amount - fee` por moneda. Verificado: mensual cuadra (0 breaks). El consolidado (carga histórica) NO se marca: su layout multi-sección no está estrictamente ordenado por balance (falsos positivos). Amex CSV no trae balance ni total → sin ancla, no se reconcilia (pero sus montos son simples, sin el lío de tabs de BNP).
