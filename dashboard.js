@@ -82,10 +82,10 @@ export function renderDashboard(period) {
     </div>
     <!-- Tab nav: Overview | Transactions -->
     <nav class="flex items-center gap-1">
-      <button id="tabResumen"   class="tabBtn px-2.5 sm:px-3 py-1.5 rounded-full text-xs font-semibold transition-colors bg-primary text-on-primary">Overview</button>
-      <button id="tabHistorico" class="tabBtn px-2.5 sm:px-3 py-1.5 rounded-full text-xs font-semibold transition-colors bg-surface-container text-on-surface hover:bg-surface-container-high">Transactions</button>
-      <button id="tabB2b"       class="tabBtn px-2.5 sm:px-3 py-1.5 rounded-full text-xs font-semibold transition-colors bg-surface-container text-on-surface hover:bg-surface-container-high">B2B</button>
-      <button id="addExpenseBtn" title="Log an expense" class="flex items-center gap-1 px-2.5 sm:px-3 py-1.5 rounded-full text-xs font-semibold transition-colors bg-surface-container text-on-surface hover:bg-surface-container-high">
+      <button id="tabResumen"   class="tabBtn px-2.5 sm:px-3 py-3.5 sm:py-1.5 rounded-full text-xs font-semibold transition-colors bg-primary text-on-primary">Overview</button>
+      <button id="tabHistorico" class="tabBtn px-2.5 sm:px-3 py-3.5 sm:py-1.5 rounded-full text-xs font-semibold transition-colors bg-surface-container text-on-surface hover:bg-surface-container-high">Transactions</button>
+      <button id="tabB2b"       class="tabBtn px-2.5 sm:px-3 py-3.5 sm:py-1.5 rounded-full text-xs font-semibold transition-colors bg-surface-container text-on-surface hover:bg-surface-container-high">B2B</button>
+      <button id="addExpenseBtn" title="Log an expense" class="flex items-center gap-1 px-2.5 sm:px-3 py-3.5 sm:py-1.5 rounded-full text-xs font-semibold transition-colors bg-surface-container text-on-surface hover:bg-surface-container-high">
         <span class="material-symbols-outlined" style="font-size:16px">add</span><span class="hidden sm:inline">Add</span>
       </button>
       <span id="reconBadge" class="hidden items-center gap-1 px-2.5 py-1.5 rounded-full text-xs font-semibold border border-error/40 text-error bg-surface-container-lowest" title="">
@@ -95,7 +95,7 @@ export function renderDashboard(period) {
 
     <!-- Period picker: single button that opens a popover with year tabs + month grid -->
     <div class="relative flex-shrink-0">
-    <button id="periodBtn" class="flex items-center gap-1 sm:gap-2 bg-primary-container text-on-primary-container rounded-full pl-2.5 sm:pl-4 pr-2 sm:pr-3 py-1.5 sm:py-2 text-xs sm:text-sm font-semibold hover:opacity-90 transition-opacity whitespace-nowrap">
+    <button id="periodBtn" class="flex items-center gap-1 sm:gap-2 bg-primary-container text-on-primary-container rounded-full pl-2.5 sm:pl-4 pr-2 sm:pr-3 py-3 sm:py-2 text-xs sm:text-sm font-semibold hover:opacity-90 transition-opacity whitespace-nowrap">
       <span id="periodBtnLabel">—</span>
       <span class="material-symbols-outlined" style="font-size: 18px;">expand_more</span>
     </button>
@@ -363,8 +363,8 @@ export function renderDashboard(period) {
   <section class="rounded-2xl p-4 flex items-start gap-3 border border-outline-variant/15 bg-surface-container-lowest">
     <span class="material-symbols-outlined text-secondary" style="font-size:18px">storefront</span>
     <div class="text-xs text-on-surface">
-      <div class="font-semibold">Cuenta B2B (Shine) — independiente de tus cuentas personales</div>
-      <div class="text-outline mt-0.5">Vandfort + Zentra + Touro comparten un solo techo micro (una sola EI). Conecta Shine para alimentar el CA real; hoy se calcula desde las transacciones ya ingestadas.</div>
+      <div class="font-semibold">B2B account (Shine) — independent from your personal accounts</div>
+      <div class="text-outline mt-0.5">Vandfort + Zentra + Touro share a single micro ceiling (one EI). Connect Shine to feed real revenue; for now it's computed from already-ingested transactions.</div>
     </div>
   </section>
 
@@ -372,12 +372,12 @@ export function renderDashboard(period) {
   <section class="rounded-2xl bg-surface-container-lowest border border-outline-variant/15 p-5 space-y-4">
     <div class="flex items-end justify-between gap-3 flex-wrap">
       <div>
-        <div class="text-[10px] font-bold uppercase tracking-wider text-outline">CA combinado <span id="b2bYear">—</span></div>
+        <div class="text-[10px] font-bold uppercase tracking-wider text-outline">Combined revenue <span id="b2bYear">—</span></div>
         <div class="font-headline text-3xl font-bold tabular-nums mt-1" id="b2bCA">—</div>
-        <div class="text-[11px] text-outline mt-0.5"><span id="b2bYearFraction">—</span> del año · run-rate <span id="b2bRunRate" class="text-on-surface font-semibold">—</span>/día</div>
+        <div class="text-[11px] text-outline mt-0.5"><span id="b2bYearFraction">—</span> of the year · run-rate <span id="b2bRunRate" class="text-on-surface font-semibold">—</span>/day</div>
       </div>
       <div class="text-right">
-        <div class="text-[10px] font-bold uppercase tracking-wider text-outline">Proyección fin de año</div>
+        <div class="text-[10px] font-bold uppercase tracking-wider text-outline">Year-end projection</div>
         <div class="font-headline text-xl font-bold tabular-nums mt-1" id="b2bProjected">—</div>
       </div>
     </div>
@@ -397,7 +397,7 @@ export function renderDashboard(period) {
     <!-- Techo micro -->
     <div>
       <div class="flex items-center justify-between text-[11px] mb-1">
-        <span class="font-semibold text-on-surface">Techo micro-entreprise</span>
+        <span class="font-semibold text-on-surface">Micro-entreprise ceiling</span>
         <span class="text-outline"><span id="b2bMicroPct">—</span> · <span id="b2bMicroCross">—</span></span>
       </div>
       <div class="h-2.5 rounded-full bg-surface-container overflow-hidden">
@@ -411,14 +411,14 @@ export function renderDashboard(period) {
   <section class="rounded-2xl bg-surface-container-lowest border border-outline-variant/15 overflow-hidden">
     <div class="flex items-center gap-2 px-4 py-3 border-b border-outline-variant/15">
       <span class="material-symbols-outlined text-secondary" style="font-size:18px">donut_small</span>
-      <h3 class="font-headline font-bold text-base tracking-tight">CA por negocio</h3>
+      <h3 class="font-headline font-bold text-base tracking-tight">Revenue per business</h3>
     </div>
     <div id="b2bSplit" class="p-2">
       <div class="text-xs text-outline italic p-3">Loading…</div>
     </div>
   </section>
 
-  <p class="text-[10px] text-outline px-1">Umbrales a confirmar con expert-comptable (services €37.5k / €77.7k · vente €188.7k). Salario CDI y transferencias internas excluidos del CA. Zentra y Touro comparten cuenta Stripe: no se separan entre sí desde el banco.</p>
+  <p class="text-[10px] text-outline px-1">Thresholds to confirm with the expert-comptable (services €37.5k / €77.7k · vente €188.7k). CDI salary and internal transfers excluded from revenue. Zentra and Touro share a Stripe account: they can't be split apart from the bank side.</p>
 
 </main>
 
@@ -561,7 +561,7 @@ export function renderDashboard(period) {
         <label class="text-xs font-bold uppercase tracking-wider text-outline">Balance final (€) — opcional</label>
         <input id="bnpClosing" type="number" step="0.01" placeholder="se calcula automáticamente" class="mt-1 w-full px-3 py-2 bg-surface-container rounded-lg border border-outline-variant/30 focus:ring-2 focus:ring-primary focus:outline-none text-sm tabular-nums" />
       </div>
-      <p class="text-[11px] text-outline">Si dejas el balance final vacío, se calcula como opening + ingresos - egresos. Los meses siguientes heredan automáticamente.</p>
+      <p class="text-[11px] text-outline">If you leave the closing balance empty, it's computed as opening + credits − debits. Following months inherit it automatically.</p>
     </div>
     <div class="px-5 py-3 border-t border-outline-variant/20 flex justify-end gap-2">
       <button id="bnpCancel" class="px-4 py-2 rounded-lg text-sm font-medium text-on-surface hover:bg-surface-container">Cancelar</button>
@@ -618,7 +618,7 @@ export function renderDashboard(period) {
     <div class="px-5 py-4 border-b border-outline-variant/20">
       <div class="flex items-center justify-between">
         <div>
-          <div class="font-headline font-bold text-lg">Auditoría</div>
+          <div class="font-headline font-bold text-lg">Audit</div>
           <div class="text-xs text-outline" id="auditSub">—</div>
         </div>
         <button id="auditClose" class="w-9 h-9 rounded-full hover:bg-surface-container flex items-center justify-center">
@@ -666,9 +666,9 @@ export function renderDashboard(period) {
       <div class="text-xs text-outline mt-0.5" id="kwLabel">—</div>
     </div>
     <div class="p-5 space-y-3">
-      <p class="text-sm text-on-surface">Regex case-insensitive sobre merchant o descripción. Solo cuenta las transacciones que matchean. Vacío = comportamiento por defecto (split proporcional).</p>
-      <input id="kwInput" type="text" placeholder="ej. navigo|ratp|sncf" class="w-full px-3 py-2 bg-surface-container rounded-lg border border-outline-variant/30 focus:ring-2 focus:ring-primary focus:outline-none font-mono text-sm" />
-      <div class="text-[11px] text-outline">Aplicado a TODOS los periodos donde existe la línea con el mismo label.</div>
+      <p class="text-sm text-on-surface">Case-insensitive regex on merchant or description. Only counts transactions that match. Empty = default behavior (proportional split).</p>
+      <input id="kwInput" type="text" placeholder="e.g. navigo|ratp|sncf" class="w-full px-3 py-2 bg-surface-container rounded-lg border border-outline-variant/30 focus:ring-2 focus:ring-primary focus:outline-none font-mono text-sm" />
+      <div class="text-[11px] text-outline">Applied to ALL periods where a line with the same label exists.</div>
     </div>
     <div class="px-5 py-3 border-t border-outline-variant/20 flex justify-end gap-2">
       <button id="kwCancel" class="px-4 py-2 rounded-lg text-sm font-medium text-on-surface hover:bg-surface-container">Cancelar</button>
@@ -750,7 +750,7 @@ export function renderDashboard(period) {
       fillBar(th.micro_ceiling, "b2bMicroBar", "b2bMicroPct", "b2bMicroCross", "b2bMicroLabel");
 
       const rows = (d.byBusiness || []).slice();
-      if (d.unattributed) rows.push({ name: "Sin clasificar", ca: d.unattributed, pct_of_total: null });
+      if (d.unattributed) rows.push({ name: "Unclassified", ca: d.unattributed, pct_of_total: null });
       const html = rows.map((b) =>
         '<div class="flex items-center justify-between px-3 py-2 text-sm">' +
           '<span class="text-on-surface">' + b.name + '</span>' +
@@ -759,7 +759,7 @@ export function renderDashboard(period) {
           '</span>' +
         '</div>'
       ).join("");
-      elSplit.innerHTML = html || '<div class="text-xs text-outline italic p-3">Sin ingresos de negocio aún. Conecta Shine para empezar.</div>';
+      elSplit.innerHTML = html || '<div class="text-xs text-outline italic p-3">No business revenue yet. Connect Shine to start.</div>';
     } catch (err) {
       elSplit.innerHTML = '<div class="text-xs text-error p-3">Error: ' + (err.message || err) + '</div>';
     }
@@ -1730,7 +1730,7 @@ export function renderDashboard(period) {
 
   function renderYTD(y) {
     document.getElementById("ytdYearLabel").textContent = y.year;
-    document.getElementById("ytdMonthsLabel").textContent = y.months_with_data + " " + (y.months_with_data === 1 ? "mes" : "meses") + " con datos · " + y.tx_count + " tx";
+    document.getElementById("ytdMonthsLabel").textContent = y.months_with_data + " " + (y.months_with_data === 1 ? "month" : "months") + " with data · " + y.tx_count + " tx";
     const t = y.totals;
     const net = t.net_actual_eur;
     const netCls = net >= 0 ? "text-primary" : "text-error";
@@ -1738,7 +1738,7 @@ export function renderDashboard(period) {
       \`<div class="bg-surface-container-lowest p-3 cursor-pointer hover:bg-surface-container transition-colors" onclick="openCategoryDrill('income', '\${y.year}')"><div class="text-[10px] font-bold uppercase tracking-wider text-outline">Income YTD</div><div class="font-headline text-lg font-bold tabular-nums mt-0.5 text-on-surface">\${fmt(t.income_actual_eur)}</div><div class="text-[9px] text-primary mt-0.5">click → detail</div></div>\`,
       \`<div class="bg-surface-container-lowest p-3 cursor-pointer hover:bg-surface-container transition-colors" onclick="openYTDBreakdown(\${JSON.stringify(y).replace(/"/g, '&quot;')})"><div class="text-[10px] font-bold uppercase tracking-wider text-outline">Spend YTD</div><div class="font-headline text-lg font-bold tabular-nums mt-0.5 text-on-surface">\${fmt(t.expenses_actual_eur)}</div><div class="text-[9px] text-primary mt-0.5">click → breakdown</div></div>\`,
       \`<div class="bg-surface-container-lowest p-3 cursor-pointer hover:bg-surface-container transition-colors" onclick="openYTDBreakdown(\${JSON.stringify(y).replace(/"/g, '&quot;')})"><div class="text-[10px] font-bold uppercase tracking-wider text-outline">Neto YTD</div><div class="font-headline text-lg font-bold tabular-nums mt-0.5 \${netCls}">\${fmt(net)}</div><div class="text-[9px] text-primary mt-0.5">click → mensual</div></div>\`,
-      \`<div class="bg-surface-container-lowest p-3 cursor-pointer hover:bg-surface-container transition-colors" onclick="openYTDBreakdown(\${JSON.stringify(y).replace(/"/g, '&quot;')})"><div class="text-[10px] font-bold uppercase tracking-wider text-outline">Media/mes</div><div class="font-headline text-lg font-bold tabular-nums mt-0.5 text-on-surface">\${fmt(t.avg_monthly_expense)}</div><div class="text-[9px] text-primary mt-0.5">click → trend</div></div>\`,
+      \`<div class="bg-surface-container-lowest p-3 cursor-pointer hover:bg-surface-container transition-colors" onclick="openYTDBreakdown(\${JSON.stringify(y).replace(/"/g, '&quot;')})"><div class="text-[10px] font-bold uppercase tracking-wider text-outline">Avg/month</div><div class="font-headline text-lg font-bold tabular-nums mt-0.5 text-on-surface">\${fmt(t.avg_monthly_expense)}</div><div class="text-[9px] text-primary mt-0.5">click → trend</div></div>\`,
     ].join("");
 
     // Top categories as clickable chips
@@ -1859,8 +1859,8 @@ export function renderDashboard(period) {
     const modal = document.getElementById("drillModal");
     document.getElementById("drillTitle").textContent = "Gasto YTD · " + y.year;
     document.getElementById("drillSub").textContent =
-      "Total " + fmt(y.totals.expenses_actual_eur) + " · " + y.months_with_data + " meses · " +
-      "neto " + fmt(y.totals.net_actual_eur);
+      "Total " + fmt(y.totals.expenses_actual_eur) + " · " + y.months_with_data + " months · " +
+      "net " + fmt(y.totals.net_actual_eur);
     const body = document.getElementById("drillBody");
 
     const catsHtml = (y.by_category || []).slice(0, 15).map((c) => {
@@ -1889,11 +1889,11 @@ export function renderDashboard(period) {
     body.innerHTML = \`
       <div class="px-5 py-4 space-y-6">
         <section>
-          <h4 class="text-xs font-bold uppercase tracking-wider text-outline mb-2">Por categoría</h4>
+          <h4 class="text-xs font-bold uppercase tracking-wider text-outline mb-2">By category</h4>
           <table class="w-full text-sm"><tbody>\${catsHtml}</tbody></table>
         </section>
         <section>
-          <h4 class="text-xs font-bold uppercase tracking-wider text-outline mb-2">Por mes</h4>
+          <h4 class="text-xs font-bold uppercase tracking-wider text-outline mb-2">By month</h4>
           <table class="w-full text-sm">
             <thead><tr class="text-left text-[10px] uppercase tracking-wider text-outline border-b border-outline-variant/15">
               <th class="px-3 py-2">Month</th><th class="px-3 py-2 text-right">Spend</th><th class="px-3 py-2 text-right">Income</th><th class="px-3 py-2 text-right">Net</th>
@@ -2193,7 +2193,7 @@ export function renderDashboard(period) {
     const conflictsBlock = a.conflicts.length ? \`
       <div class="px-5 py-3 bg-error-container/30 border-b border-outline-variant/20">
         <div class="text-xs font-semibold text-error mb-1">\${a.conflicts.length} conflicto(s) — transacciones que matchean varios fijos</div>
-        \${a.conflicts.slice(0, 5).map((c) => \`<div class="text-xs text-on-surface">\${c.merchant} \${fmt(c.amount)} → asignado a <b>\${c.assigned_to}</b> (también matchea: \${c.matched_by.filter((m) => m !== c.assigned_to).join(", ")})</div>\`).join("")}
+        \${a.conflicts.slice(0, 5).map((c) => \`<div class="text-xs text-on-surface">\${c.merchant} \${fmt(c.amount)} → asignado a <b>\${c.assigned_to}</b> (also matches: \${c.matched_by.filter((m) => m !== c.assigned_to).join(", ")})</div>\`).join("")}
       </div>\` : "";
 
     const body = conflictsBlock + Object.entries(byCat).map(([cat, rows]) => {
@@ -2220,7 +2220,7 @@ export function renderDashboard(period) {
       </div>\`;
     }).join("");
 
-    document.getElementById("auditBody").innerHTML = body || "<div class='p-8 text-center text-outline'>Sin huérfanos 🎉</div>";
+    document.getElementById("auditBody").innerHTML = body || "<div class='p-8 text-center text-outline'>No orphans 🎉</div>";
 
     // Hook up "Recategorizar" dropdowns
     document.querySelectorAll(".auditRecat").forEach((sel) => {
@@ -2320,8 +2320,8 @@ export function renderDashboard(period) {
       if (bad.length) {
         reconBadge.classList.remove("hidden");
         reconBadge.classList.add("flex");
-        reconBadge.title = "El statement de " + bad.join(", ").toUpperCase() + " de este mes no cuadra con su saldo — las cifras pueden estar incompletas. Re-sube el statement.";
-        document.getElementById("reconBadgeText").textContent = "Revisar " + bad.map((a) => a.toUpperCase()).join("/");
+        reconBadge.title = "This month's " + bad.join(", ").toUpperCase() + " statement doesn't reconcile with its balance — the figures may be incomplete. Re-upload the statement.";
+        document.getElementById("reconBadgeText").textContent = "Review " + bad.map((a) => a.toUpperCase()).join("/");
       } else {
         reconBadge.classList.add("hidden");
         reconBadge.classList.remove("flex");
