@@ -49,6 +49,7 @@ import {
   getStatement as getEtoroStatement, getTaxYears as getEtoroTaxYears,
   getTaxYear as getEtoroTaxYear, getReconciliation as getEtoroReconciliation,
   getPositionsByYear as getEtoroPositions, getDividendsByYear as getEtoroDividends,
+  importStatementFromBuffer as importEtoroStatement,
 } from "./etoro.js";
 import { runWeeklyAdvisorBriefing } from "./advisor.js";
 import { toTelegramHTML } from "./tgformat.js";
@@ -492,6 +493,25 @@ app.get("/api/etoro/year/:year.json", (req, res) => {
   } catch (err) {
     console.error("[etoro year]", err);
     res.status(500).json({ error: err.message });
+  }
+});
+
+// Upload an eToro statement .xlsx straight into the (production) DB. The raw
+// file bytes are the request body — no multipart needed. The /etoro page's
+// empty state posts here. Idempotent on re-upload.
+app.post("/api/etoro/import", express.raw({ type: () => true, limit: "25mb" }), (req, res) => {
+  if (!requireKey(req, res, "DASH_KEY")) return;
+  if (!req.body || !req.body.length) {
+    return res.status(400).json({ error: "empty body — POST the .xlsx file bytes as the request body" });
+  }
+  try {
+    const fileName = (req.query.name || "statement.xlsx").toString().slice(0, 200);
+    const result = importEtoroStatement(req.body, { fileName });
+    console.log(`[etoro import] ${fileName}: ${result.counts.positions} positions, ${result.counts.dividends} dividends`);
+    res.json({ ok: true, statement: result.statement, counts: result.counts, years: result.taxYears.map((y) => y.year) });
+  } catch (err) {
+    console.error("[etoro import]", err);
+    res.status(400).json({ error: err.message });
   }
 });
 

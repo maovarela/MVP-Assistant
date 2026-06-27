@@ -86,12 +86,51 @@ export function renderEtoroPage({ year, print, key } = {}) {
     const parts = [qs, k].filter(Boolean);
     return "/etoro" + (parts.length ? "?" + parts.join("&") : "");
   };
+  const importUrl = "/api/etoro/import" + (key ? `?key=${encodeURIComponent(key)}` : "");
   const stmt = getStatement();
   if (!stmt) {
-    return `<!doctype html><html><body style="font-family:system-ui;padding:2rem">
-      <h1>No eToro statement imported yet</h1>
-      <p>Run: <code>node scripts/import-etoro.mjs --file "&lt;statement.xlsx&gt;"</code></p>
-    </body></html>`;
+    return `<!doctype html>
+<html lang="en"><head>
+  <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Régularisation eToro — import</title>
+  <style>
+    body { font-family: system-ui, sans-serif; max-width: 640px; margin: 3rem auto; padding: 0 1.5rem; color: #0b1c30; }
+    h1 { font-size: 1.5rem; } code { background: #eef; padding: .1rem .3rem; border-radius: 3px; }
+    .drop { border: 2px dashed #bbc; border-radius: 12px; padding: 2rem; text-align: center; margin: 1.5rem 0; }
+    button { background: #006d32; color: #fff; border: 0; border-radius: 8px; padding: .6rem 1.2rem; font-size: 1rem; cursor: pointer; }
+    #status { margin-top: 1rem; white-space: pre-wrap; font-size: .9rem; }
+    .muted { color: #667; font-size: .9rem; }
+  </style>
+</head><body>
+  <h1>No eToro statement imported yet</h1>
+  <p class="muted">Upload your eToro <strong>Account Statement .xlsx</strong> to populate this page. Re-uploading an updated statement is safe (it overwrites in place).</p>
+  <div class="drop">
+    <input type="file" id="file" accept=".xlsx" />
+    <p class="muted">or, locally: <code>node scripts/import-etoro.mjs --file "&lt;statement.xlsx&gt;"</code></p>
+  </div>
+  <button id="go">Upload &amp; import</button>
+  <div id="status"></div>
+  <script>
+    const importUrl = ${JSON.stringify(importUrl)};
+    const f = document.getElementById("file"), s = document.getElementById("status");
+    document.getElementById("go").onclick = async () => {
+      const file = f.files[0];
+      if (!file) { s.textContent = "Pick a .xlsx file first."; return; }
+      s.textContent = "Uploading " + file.name + " …";
+      try {
+        const sep = importUrl.includes("?") ? "&" : "?";
+        const r = await fetch(importUrl + sep + "name=" + encodeURIComponent(file.name), {
+          method: "POST", headers: { "content-type": "application/octet-stream" }, body: file,
+        });
+        const j = await r.json();
+        if (!r.ok) { s.textContent = "Error: " + (j.error || r.status); return; }
+        s.textContent = "Imported " + j.counts.positions + " positions, " + j.counts.dividends +
+          " dividends, years " + (j.years || []).join(", ") + ". Reloading…";
+        setTimeout(() => location.reload(), 900);
+      } catch (e) { s.textContent = "Upload failed: " + e.message; }
+    };
+  </script>
+</body></html>`;
   }
   const all = getTaxYears();
   const years = year ? all.filter((y) => y.year === Number(year)) : all;

@@ -12,6 +12,7 @@
 
 import db from "./memory.js";
 import crypto from "crypto";
+import * as XLSX from "xlsx";
 
 // ─── Schema ──────────────────────────────────────────────────────────────────
 
@@ -346,6 +347,170 @@ export function getReconciliation(statementId) {
     ours_eur: byCls[cls]?.eur ?? 0,
     etoro_eur: fin[map[cls]]?.amount_eur ?? 0,
   }));
+}
+
+// ─── Statement ingestion (shared by the CLI script and the upload route) ─────
+
+// Read a sheet as objects keyed by its header row; raw:false so eToro's
+// bracketed negatives come through as strings for num() to handle.
+function sheetRows(wb, name) {
+  const ws = wb.Sheets[name];
+  if (!ws) throw new Error(`Sheet "${name}" not found. Sheets present: ${wb.SheetNames.join(", ")}`);
+  return XLSX.utils.sheet_to_json(ws, { defval: "", raw: false });
+}
+// Read a sheet as a raw matrix (for the key/value Account Summary).
+function sheetMatrix(wb, name) {
+  const ws = wb.Sheets[name];
+  if (!ws) throw new Error(`Sheet "${name}" not found`);
+  return XLSX.utils.sheet_to_json(ws, { header: 1, defval: "", raw: false });
+}
+
+function buildPositions(wb, statementId) {
+  return sheetRows(wb, "Closed Positions").map((r) => {
+    const close = parseEtoroDate(r["Close Date"]);
+    return {
+      position_id: String(r["Position ID"]).trim(),
+      statement_id: statementId,
+      action: r["Action"] || null,
+      type: r["Type"] || null,
+      long_short: r["Long / Short"] || null,
+      amount: num(r["Amount"]),
+      units: num(r["Units / Contracts"]),
+      open_date: parseEtoroDate(r["Open Date"]).iso,
+      close_date: close.iso,
+      close_year: close.year,
+      leverage: num(r["Leverage"]),
+      profit_usd: num(r["Profit(USD)"]),
+      profit_eur: num(r["Profit(EUR)"]),
+      isin: r["ISIN"] || null,
+      copied_from: r["Copied From"] || null,
+    };
+  }).filter((p) => p.position_id && p.position_id !== "undefined");
+}
+
+function buildDividends(wb, statementId) {
+  return sheetRows(wb, "Dividends").map((r) => {
+    const pay = parseEtoroDate(r["Date of Payment"]);
+    const pos = String(r["Position ID"] || "").trim();
+    const netEur = num(r["Net Dividend Received (EUR)"]);
+    return {
+      id: hashRow(statementId, pos, r["Date of Payment"], netEur),
+      statement_id: statementId,
+      pay_date: pay.iso,
+      pay_year: pay.year,
+      instrument: (r["Instrument Name"] || "").toString().trim() || null,
+      isin: r["ISIN"] || null,
+      net_div_usd: num(r["Net Dividend Received (USD)"]),
+      net_div_eur: netEur,
+      currency: r["Currency"] || null,
+      wht_rate: (r["Withholding Tax Rate (%)"] || "").toString().trim() || null,
+      wht_usd: num(r["Withholding Tax Amount (USD)"]),
+      wht_eur: num(r["Withholding Tax Amount (EUR)"]),
+      position_id: pos || null,
+      type: r["Type"] || null,
+    };
+  });
+}
+
+function buildActivity(wb, statementId) {
+  return sheetRows(wb, "Account Activity").map((r, i) => {
+    const d = parseEtoroDate(r["Date"]);
+    return {
+      id: hashRow(statementId, i, r["Date"], r["Type"], r["Amount"]),
+      statement_id: statementId,
+      date: d.iso,
+      year: d.year,
+      type: (r["Type"] || "").toString().trim() || null,
+      details: r["Details"] || null,
+      amount: num(r["Amount"]),
+      realized_chg: num(r["Realized Equity Change"]),
+      balance: num(r["Balance"]),
+      position_id: String(r["Position ID"] || "").trim() || null,
+      asset_type: r["Asset type"] || null,
+    };
+  });
+}
+
+function buildFinSummary(wb, statementId) {
+  return sheetMatrix(wb, "Financial Summary").slice(1) // drop header row
+    .filter((r) => r[0])
+    .map((r) => ({
+      statement_id: statementId,
+      line_name: String(r[0]).replace(/\s+/g, " ").trim(),
+      amount_usd: num(r[1]),
+      amount_eur: num(r[2]),
+      tax_rate: num(r[3]),
+    }));
+}
+
+// Parse the Account Summary key/value block into the statement identity row.
+function buildStatementRow(wb, fileName, fileHash) {
+  const kv = {};
+  for (const r of sheetMatrix(wb, "Account Summary")) {
+    if (r.length >= 2 && r[0]) kv[String(r[0]).trim()] = r[1];
+  }
+  return {
+    file_name: fileName,
+    file_hash: fileHash,
+    holder_name: (kv["Name"] || "").toString().trim() || null,
+    username: (kv["Username"] || "").toString().trim() || null,
+    institution: "eToro (Europe) Ltd, Cyprus (CySEC #109/10)",
+    account_currency: (kv["Currency"] || "").toString().trim() || null,
+    period_start: parseEtoroDate((kv["Start Date"] || "").toString()).iso,
+    period_end: parseEtoroDate((kv["End Date"] || "").toString()).iso,
+  };
+}
+
+// Ingest an eToro statement .xlsx (as a Buffer) into the etoro_* tables and
+// rebuild the per-year aggregation. Idempotent: re-importing the same file
+// updates rows in place. With { dryRun } it parses and counts without writing.
+// Throws if the workbook is missing the expected eToro sheets.
+export function importStatementFromBuffer(buf, { fileName = "statement.xlsx", dryRun = false } = {}) {
+  const fileHash = crypto.createHash("sha1").update(buf).digest("hex").slice(0, 16);
+  let wb;
+  try {
+    wb = XLSX.read(buf, { type: "buffer" });
+  } catch (e) {
+    throw new Error(`Not a readable .xlsx file: ${e.message}`);
+  }
+  const statement = buildStatementRow(wb, fileName, fileHash);
+
+  if (dryRun) {
+    return {
+      dryRun: true, statement,
+      counts: {
+        positions: buildPositions(wb, 0).length,
+        dividends: buildDividends(wb, 0).length,
+        activity: buildActivity(wb, 0).length,
+        finSummary: buildFinSummary(wb, 0).length,
+      },
+    };
+  }
+
+  const statementId = upsertStatement(statement);
+  const positions = buildPositions(wb, statementId);
+  const dividends = buildDividends(wb, statementId);
+  const activity = buildActivity(wb, statementId);
+  const finSummary = buildFinSummary(wb, statementId);
+
+  insertPositions(positions);
+  insertDividends(dividends);
+  insertActivity(activity);
+  insertFinSummary(finSummary);
+
+  const taxYears = computeTaxYears();
+  return {
+    statementId,
+    statement: { ...statement, id: statementId },
+    counts: {
+      positions: positions.length,
+      dividends: dividends.length,
+      activity: activity.length,
+      finSummary: finSummary.length,
+    },
+    taxYears,
+    reconciliation: getReconciliation(statementId),
+  };
 }
 
 export default db;
