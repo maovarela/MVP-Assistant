@@ -85,6 +85,7 @@ export function renderDashboard(period) {
       <button id="tabResumen"   class="tabBtn px-2.5 sm:px-3 py-3.5 sm:py-1.5 rounded-full text-xs font-semibold transition-colors bg-primary text-on-primary">Overview</button>
       <button id="tabHistorico" class="tabBtn px-2.5 sm:px-3 py-3.5 sm:py-1.5 rounded-full text-xs font-semibold transition-colors bg-surface-container text-on-surface hover:bg-surface-container-high">Transactions</button>
       <button id="tabB2b"       class="tabBtn px-2.5 sm:px-3 py-3.5 sm:py-1.5 rounded-full text-xs font-semibold transition-colors bg-surface-container text-on-surface hover:bg-surface-container-high">B2B</button>
+      <a id="etoroLink" href="/etoro" title="eToro foreign-account regularization (3916-bis)" class="px-2.5 sm:px-3 py-3.5 sm:py-1.5 rounded-full text-xs font-semibold transition-colors bg-surface-container text-on-surface hover:bg-surface-container-high">eToro</a>
       <button id="addExpenseBtn" title="Log an expense" class="flex items-center gap-1 px-2.5 sm:px-3 py-3.5 sm:py-1.5 rounded-full text-xs font-semibold transition-colors bg-surface-container text-on-surface hover:bg-surface-container-high">
         <span class="material-symbols-outlined" style="font-size:16px">add</span><span class="hidden sm:inline">Add</span>
       </button>
@@ -680,6 +681,8 @@ export function renderDashboard(period) {
 
 <script>
   const key = new URLSearchParams(location.search).get("key");
+  // Carry the dashboard key over to the standalone eToro page (same DASH_KEY gate).
+  if (key) { const el = document.getElementById("etoroLink"); if (el) el.href = "/etoro?key=" + encodeURIComponent(key); }
   const urlPeriod = new URLSearchParams(location.search).get("period");
   let initialPeriod = urlPeriod || ${initialPeriod};
   let donutChart, barChart;

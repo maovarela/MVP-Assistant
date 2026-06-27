@@ -21,3 +21,4 @@ scripts/.processed.json
 
 # Stale WhatsApp QR captured during the parked Evolution API setup
 qr.png
+.gstack/
