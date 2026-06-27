@@ -44,6 +44,12 @@ import db, {
 import { categorize as keywordCategorize } from "./bankCsv.js";
 import { refreshCurrentMonthFx } from "./fx.js";
 import { renderDashboard } from "./dashboard.js";
+import { renderEtoroPage } from "./etoroPage.js";
+import {
+  getStatement as getEtoroStatement, getTaxYears as getEtoroTaxYears,
+  getTaxYear as getEtoroTaxYear, getReconciliation as getEtoroReconciliation,
+  getPositionsByYear as getEtoroPositions, getDividendsByYear as getEtoroDividends,
+} from "./etoro.js";
 import { runWeeklyAdvisorBriefing } from "./advisor.js";
 import { toTelegramHTML } from "./tgformat.js";
 import { transcribeAudio } from "./stt.js";
@@ -439,6 +445,52 @@ app.get("/api/year.json", (req, res) => {
     res.json({ ...getYearSummary(year), available_years: listYears() });
   } catch (err) {
     console.error("[year json]", err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ─── eToro foreign-account regularization (form 3916-bis + gains/dividends) ──
+// Self-contained page mapping the per-year figures to the French forms; doubles
+// as the printable worksheet for the fiscaliste. Data imported via
+// scripts/import-etoro.mjs. Same single-user DASH_KEY gate as the dashboard.
+app.get("/etoro", (req, res) => {
+  if (!requireKey(req, res, "DASH_KEY")) return;
+  const year = (req.query.year || "").toString().match(/^\d{4}$/) ? req.query.year : undefined;
+  const print = req.query.print === "1";
+  res.set("content-type", "text/html; charset=utf-8");
+  res.set("Cache-Control", "no-cache, no-store, must-revalidate");
+  res.send(renderEtoroPage({ year, print, key: req.query.key }));
+});
+
+app.get("/api/etoro/summary.json", (req, res) => {
+  if (!requireKey(req, res, "DASH_KEY")) return;
+  try {
+    const statement = getEtoroStatement();
+    if (!statement) return res.json({ statement: null, years: [], reconciliation: [] });
+    res.json({
+      statement,
+      years: getEtoroTaxYears(),
+      reconciliation: getEtoroReconciliation(statement.id),
+    });
+  } catch (err) {
+    console.error("[etoro summary]", err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.get("/api/etoro/year/:year.json", (req, res) => {
+  if (!requireKey(req, res, "DASH_KEY")) return;
+  const year = req.params.year.replace(/\.json$/, "");
+  if (!/^\d{4}$/.test(year)) return res.status(400).json({ error: "year must be YYYY" });
+  try {
+    res.json({
+      year: Number(year),
+      summary: getEtoroTaxYear(year) || null,
+      positions: getEtoroPositions(year),
+      dividends: getEtoroDividends(year),
+    });
+  } catch (err) {
+    console.error("[etoro year]", err);
     res.status(500).json({ error: err.message });
   }
 });
