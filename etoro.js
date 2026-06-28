@@ -349,6 +349,60 @@ export function getReconciliation(statementId) {
   }));
 }
 
+// ─── Tax estimate (France, PFU) ──────────────────────────────────────────────
+//
+// ESTIMATE ONLY — not tax advice; the fiscaliste confirms (esp. the 2086 crypto
+// method and CFD classification). Assumptions, stated plainly so they're easy to
+// challenge:
+//   - Flat tax "PFU" of 30% (12.8% income tax + 17.2% prélèvements sociaux) on
+//     net positive gains. No barème option, no abattement modelled.
+//   - Securities = real stocks + CFD, netted together per year. A net loss is
+//     €0 tax and carries forward (shown, not valued).
+//   - Crypto netted on its own; a net loss is €0 and does NOT offset securities
+//     or carry forward (lost).
+//   - Foreign dividends taxed on the GROSS (net received + foreign withholding),
+//     less a crédit d'impôt = the withholding (capped at the 30% due). US treaty
+//     withholding (~15%) typically wipes the 12.8% income-tax slice, leaving the
+//     17.2% social charge.
+export const PFU_RATE = 0.30;
+
+export function estimateTax(y) {
+  const secGain = (y.stocks_pnl_eur || 0) + (y.cfd_pnl_eur || 0);
+  const cryptoGain = y.crypto_pnl_eur || 0;
+  const divGross = (y.dividends_eur || 0) + (y.dividends_wht_eur || 0);
+
+  const secTax = Math.max(0, secGain) * PFU_RATE;
+  const cryptoTax = Math.max(0, cryptoGain) * PFU_RATE;
+  const divCredit = Math.min(y.dividends_wht_eur || 0, divGross * PFU_RATE);
+  const divTax = Math.max(0, divGross * PFU_RATE - divCredit);
+
+  const round = (n) => Math.round(n * 100) / 100;
+  return {
+    year: y.year,
+    sec_gain: round(secGain),
+    sec_tax: round(secTax),
+    crypto_tax: round(cryptoTax),
+    div_gross: round(divGross),
+    div_credit: round(divCredit),
+    div_tax: round(divTax),
+    total_tax: round(secTax + cryptoTax + divTax),
+    carry_forward_sec: secGain < 0 ? round(-secGain) : 0,
+    crypto_loss_lost: cryptoGain < 0 ? round(-cryptoGain) : 0,
+  };
+}
+
+// Per-year tax estimates keyed by year, plus a total over the closed years to
+// regularize (everything before `currentYear`).
+export function getTaxEstimates(currentYear = 2026) {
+  const years = getTaxYears().map(estimateTax);
+  const toRegularize = years.filter((e) => e.year < currentYear);
+  return {
+    years,
+    regularize_total: Math.round(toRegularize.reduce((a, e) => a + e.total_tax, 0) * 100) / 100,
+    regularize_years: toRegularize.map((e) => e.year),
+  };
+}
+
 // ─── Statement ingestion (shared by the CLI script and the upload route) ─────
 
 // Read a sheet as objects keyed by its header row; raw:false so eToro's

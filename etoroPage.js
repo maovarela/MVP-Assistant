@@ -9,12 +9,20 @@
 
 import {
   getStatement, getTaxYears, getTaxYear, getReconciliation,
-  getPositionsByYear, getDividendsByYear,
+  getPositionsByYear, getDividendsByYear, estimateTax,
 } from "./etoro.js";
 
 const CURRENT_YEAR = 2026; // statement period end; "current" (not yet a closed declaration year)
 const eur = (n) => (n == null ? "—" : `${n < 0 ? "−" : ""}€${Math.abs(n).toFixed(2)}`);
 const esc = (s) => String(s ?? "").replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+
+// A distinct accent per year so the per-year worksheets/PDFs don't blur together.
+const YEAR_ACCENT = {
+  2024: { bar: "#0059bb", chip: "background:#d8e2ff;color:#001b3f", ring: "#0059bb" }, // blue
+  2025: { bar: "#006d32", chip: "background:#bdf0c8;color:#00210e", ring: "#006d32" }, // green
+  2026: { bar: "#a76900", chip: "background:#ffddb8;color:#2a1700", ring: "#a76900" }, // amber
+};
+const accentFor = (y) => YEAR_ACCENT[y] || { bar: "#3c4a3d", chip: "background:#e5eeff;color:#0b1c30", ring: "#3c4a3d" };
 
 // Declaration status for a given fiscal year, relative to today (2026).
 function yearStatus(year) {
@@ -37,6 +45,8 @@ function reconRow(r) {
 // One per-year card: form mapping + 3916-bis checklist.
 function yearCard(y, stmt) {
   const st = yearStatus(y.year);
+  const a = accentFor(y.year);
+  const tax = estimateTax(y);
   const gains = (y.stocks_pnl_eur || 0) + (y.cfd_pnl_eur || 0);
   const line = (label, val, form, extra = "") => `
     <div class="flex items-baseline justify-between gap-3 py-1.5 border-t border-outline-variant/20">
@@ -47,12 +57,24 @@ function yearCard(y, stmt) {
       <div class="tabular-nums font-headline font-semibold ${val < 0 ? "text-error" : "text-on-surface"}">${eur(val)}</div>
     </div>`;
 
-  return `<section class="break-inside-avoid bg-surface-container-lowest rounded-2xl border border-outline-variant/30 p-5 shadow-sm">
+  return `<section class="break-inside-avoid bg-surface-container-lowest rounded-2xl border border-outline-variant/30 shadow-sm overflow-hidden">
+    <!-- coloured year band: makes each year's worksheet instantly distinguishable -->
+    <div style="height:6px;background:${a.bar}"></div>
+    <div class="p-5">
     <div class="flex items-center justify-between mb-1">
-      <h2 class="font-headline text-xl font-bold text-on-surface">${y.year}</h2>
-      <span class="text-xs font-medium px-2.5 py-1 rounded-full ${st.cls}">${st.label}</span>
+      <h2 class="font-headline text-2xl font-bold" style="color:${a.bar}">${y.year}</h2>
+      <span class="text-xs font-semibold px-2.5 py-1 rounded-full" style="${a.chip}">${st.label}</span>
     </div>
     <p class="text-xs text-on-surface-variant mb-3">${st.note}</p>
+
+    <!-- Headline: estimated tax for this year -->
+    <div class="mb-4 p-3 rounded-lg flex items-baseline justify-between" style="background:${a.bar}0d;border:1px solid ${a.bar}33">
+      <div>
+        <div class="text-sm font-semibold text-on-surface">Estimated tax — ${y.year}</div>
+        <div class="text-[11px] text-on-surface-variant">PFU 30% on gains + dividends, net of crédit d'impôt</div>
+      </div>
+      <div class="font-headline text-2xl font-bold tabular-nums" style="color:${a.bar}">${eur(tax.total_tax)}</div>
+    </div>
 
     <!-- 3916-bis: the obligation that applies every held year regardless of activity -->
     <div class="mb-4 p-3 rounded-lg bg-surface-container-low">
@@ -65,16 +87,18 @@ function yearCard(y, stmt) {
       </ul>
     </div>
 
-    ${line("Securities capital gains", gains, "Form 2074 → 2042-C (PFU 30%)", `${y.n_positions} closed positions`)}
+    ${line("Securities capital gains", gains, "Form 2074 → 2042-C (PFU 30%)", `${y.n_positions} closed positions · tax ${eur(tax.sec_tax)}`)}
     ${line("— of which real stocks", y.stocks_pnl_eur, "Stocks")}
     ${line("— of which CFD / other", y.cfd_pnl_eur, "CFD")}
-    ${line("Crypto disposals", y.crypto_pnl_eur, "Form 2086", "method: portfolio-value at each cash-out — confirm w/ fiscaliste")}
-    ${line("Foreign dividends (net)", y.dividends_eur, "Form 2047 → 2042", `withholding ${eur(y.dividends_wht_eur)} → crédit d'impôt`)}
+    ${line("Crypto disposals", y.crypto_pnl_eur, "Form 2086", y.crypto_pnl_eur < 0 ? "net loss — €0 tax, not carried forward" : "method: portfolio-value at cash-out — confirm w/ fiscaliste")}
+    ${line("Foreign dividends (net)", y.dividends_eur, "Form 2047 → 2042", `gross ${eur(tax.div_gross)} · crédit ${eur(tax.div_credit)} · tax ${eur(tax.div_tax)}`)}
+    ${tax.carry_forward_sec ? `<p class="text-[11px] text-on-surface-variant mt-1">Net securities loss ${eur(-tax.carry_forward_sec)} → carries forward 10 yrs against future gains.</p>` : ""}
 
     <div class="mt-3 pt-2 border-t border-outline-variant/30 grid grid-cols-3 gap-2 text-center">
       <div><div class="text-[10px] uppercase tracking-wide text-on-surface-variant">Deposits</div><div class="text-sm tabular-nums">${eur(y.deposits_eur)}</div></div>
       <div><div class="text-[10px] uppercase tracking-wide text-on-surface-variant">Withdrawals</div><div class="text-sm tabular-nums">${eur(y.withdrawals_eur)}</div></div>
       <div><div class="text-[10px] uppercase tracking-wide text-on-surface-variant">FX fees</div><div class="text-sm tabular-nums">${eur(y.fx_fees_eur)}</div></div>
+    </div>
     </div>
   </section>`;
 }
@@ -136,13 +160,21 @@ export function renderEtoroPage({ year, print, key } = {}) {
   const years = year ? all.filter((y) => y.year === Number(year)) : all;
 
   const recon = getReconciliation(stmt.id);
-  const totals = all.reduce((a, y) => {
+  // Summary cards reflect the displayed scope: one year if filtered, else all.
+  const scope = years;
+  const totals = scope.reduce((a, y) => {
     a.gains += (y.stocks_pnl_eur || 0) + (y.cfd_pnl_eur || 0);
     a.crypto += y.crypto_pnl_eur || 0;
     a.div += y.dividends_eur || 0;
     a.wht += y.dividends_wht_eur || 0;
+    a.tax += estimateTax(y).total_tax;
     return a;
-  }, { gains: 0, crypto: 0, div: 0, wht: 0 });
+  }, { gains: 0, crypto: 0, div: 0, wht: 0, tax: 0 });
+  // Headline tax: the selected year, or the regularization total (closed years).
+  const regYears = all.filter((y) => y.year < CURRENT_YEAR);
+  const regTotal = Math.round(regYears.reduce((s, y) => s + estimateTax(y).total_tax, 0) * 100) / 100;
+  const headlineTaxLabel = year ? `Estimated tax — ${year}` : `Estimated tax to regularize (${regYears.map((y) => y.year).join(" + ") || "—"})`;
+  const headlineTaxValue = year ? totals.tax : regTotal;
 
   return `<!doctype html>
 <html class="light" lang="en"><head>
@@ -193,17 +225,27 @@ export function renderEtoroPage({ year, print, key } = {}) {
       <p class="text-on-surface-variant">First activity was in <strong>${all[0]?.year ?? "—"}</strong>, so the closed years to regularize are <strong>${all.filter((y) => y.year < CURRENT_YEAR).map((y) => y.year).join(" and ") || "—"}</strong> (${CURRENT_YEAR} is the current year). The statement's "${esc((stmt.period_start || "").slice(0, 4))}" start date is just the report window, not the account age. <span class="font-medium">Confirm the account wasn't opened in an earlier year with zero activity — 3916-bis is still due for any held year.</span></p>
     </div>
 
-    <!-- Whole-period totals -->
-    <div class="grid grid-cols-2 sm:grid-cols-4 gap-3">
+    <!-- Headline: the bottom-line tax number -->
+    <div class="rounded-2xl p-5 flex items-center justify-between gap-4 text-white" style="background:linear-gradient(135deg,#006d32,#0059bb)">
+      <div>
+        <div class="text-sm font-medium opacity-90">${headlineTaxLabel}</div>
+        <div class="text-xs opacity-75 mt-0.5">Back-tax only — the 3916 fine (discretionary, waivable) is separate. Estimate, not advice.</div>
+      </div>
+      <div class="font-headline text-3xl sm:text-4xl font-bold tabular-nums whitespace-nowrap">${eur(headlineTaxValue)}</div>
+    </div>
+
+    <!-- ${year ? `${year} figures` : "Whole-period totals"} -->
+    <div class="grid grid-cols-2 sm:grid-cols-5 gap-3">
       ${[
         ["Securities gains", totals.gains, "2074 → 2042-C"],
         ["Crypto P&L", totals.crypto, "2086"],
         ["Dividends (net)", totals.div, "2047 → 2042"],
         ["Withholding (crédit)", totals.wht, "2047"],
+        ["Estimated tax", totals.tax, "PFU 30%"],
       ].map(([l, v, f]) => `<div class="bg-surface-container-lowest rounded-xl border border-outline-variant/30 p-3">
         <div class="text-xs text-on-surface-variant">${l}</div>
         <div class="font-headline text-lg font-bold tabular-nums ${v < 0 ? "text-error" : ""}">${eur(v)}</div>
-        <div class="text-[10px] text-on-surface-variant mt-0.5">Form ${f}</div>
+        <div class="text-[10px] text-on-surface-variant mt-0.5">${f.startsWith("PFU") ? f : "Form " + f}</div>
       </div>`).join("")}
     </div>
 
@@ -227,8 +269,8 @@ export function renderEtoroPage({ year, print, key } = {}) {
     </section>
 
     <p class="text-xs text-on-surface-variant px-1">
-      Figures and checklist only — not tax advice. The <strong>2086</strong> crypto line and the exact held-years for <strong>3916-bis</strong> are the two items worth a fiscaliste consult, as flagged in the brief.
-      ${year ? "" : `Per-year worksheets: ${all.map((y) => `<a class="underline" href="${href(`year=${y.year}`)}">${y.year}</a>`).join(" · ")}`}
+      <strong>Tax estimate</strong> assumes the flat PFU (30% = 12.8% income tax + 17.2% social charges) on net positive gains, securities and CFD netted together, crypto losses neither offsetting nor carried, and foreign dividends taxed on the gross less a crédit d'impôt for the withholding. Figures and checklist only — <strong>not tax advice</strong>. The <strong>2086</strong> crypto method, the <strong>CFD</strong> classification, and the exact held-years for <strong>3916-bis</strong> are the items to confirm with the fiscaliste.
+      ${year ? "" : `<br>Per-year worksheets: ${all.map((y) => `<a class="underline" href="${href(`year=${y.year}`)}">${y.year}</a>`).join(" · ")}`}
     </p>
   </main>
   ${print ? "<script>window.addEventListener('load',()=>setTimeout(()=>window.print(),300));</script>" : ""}
