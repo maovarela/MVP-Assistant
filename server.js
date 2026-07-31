@@ -39,7 +39,7 @@ import db, {
   deleteBudgetRow,
   upsertCategoryBudget, copyCategoryBudgets,
   listPendingItems, upsertPendingItem, deletePendingItem,
-  deleteTransactionsBySource,
+  deleteTransactionsBySource, deleteTransactionsByIds,
 } from "./memory.js";
 import { categorize as keywordCategorize } from "./bankCsv.js";
 import { refreshCurrentMonthFx } from "./fx.js";
@@ -594,6 +594,21 @@ app.post("/api/account-balance", express.json({ limit: "10kb" }), (req, res) => 
     res.json({ ok: true, row });
   } catch (err) {
     console.error("[account-balance]", err);
+    res.status(400).json({ error: err.message });
+  }
+});
+
+// Delete specific transactions by id — for rows an authoritative statement says
+// never existed. Body: { ids: [1,2,3], dry_run?: true }. Send dry_run first and
+// eyeball the returned rows; this is not undoable.
+app.post("/api/transactions/delete", express.json({ limit: "64kb" }), (req, res) => {
+  if (!requireKey(req, res, "DASH_KEY")) return;
+  try {
+    const out = deleteTransactionsByIds(req.body?.ids, { dryRun: !!req.body?.dry_run });
+    if (!out.dry_run) console.log(`[tx-delete] removed ${out.deleted} rows:`, out.rows.map((r) => r.id).join(","));
+    res.json({ ok: true, ...out });
+  } catch (err) {
+    console.error("[tx-delete]", err);
     res.status(400).json({ error: err.message });
   }
 });

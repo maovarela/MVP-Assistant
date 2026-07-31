@@ -501,6 +501,30 @@ export function deleteTransactionsBySource(source) {
   return { deleted: r.changes, source };
 }
 
+/** Delete specific transactions by id. Used to remove rows an authoritative
+ *  statement says never existed (e.g. Revolut pre-authorizations that were
+ *  later reverted and dropped from history — the overlap guard can't dedup
+ *  those because the settled row differs in amount or date).
+ *
+ *  Always returns the rows it matched, so the caller can log what it removed;
+ *  `dryRun` matches without deleting. Capped to avoid a typo wiping the table. */
+export function deleteTransactionsByIds(ids, { dryRun = false } = {}) {
+  const clean = [...new Set((Array.isArray(ids) ? ids : [])
+    .map(Number).filter((n) => Number.isInteger(n) && n > 0))];
+  if (!clean.length)      throw new Error("ids required (array of positive integers)");
+  if (clean.length > 500) throw new Error(`too many ids (${clean.length}, max 500)`);
+
+  const ph   = clean.map(() => "?").join(",");
+  const rows = db.prepare(
+    `SELECT id, date, merchant, amount, currency, external_id, source
+       FROM transactions WHERE id IN (${ph}) ORDER BY date`
+  ).all(...clean);
+
+  if (dryRun) return { dry_run: true, requested: clean.length, matched: rows.length, deleted: 0, rows };
+  const r = db.prepare(`DELETE FROM transactions WHERE id IN (${ph})`).run(...clean);
+  return { dry_run: false, requested: clean.length, matched: rows.length, deleted: r.changes, rows };
+}
+
 export function listTransactions({ from, to, category, merchant, limit = 100 } = {}) {
   let query = `SELECT * FROM transactions WHERE 1=1`;
   const params = [];
