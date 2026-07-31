@@ -72,7 +72,16 @@ Se hizo con el **check agregado** `opening + Σ(transacciones) == closing` sobre
 
 **Lección**: la clave natural `(fecha, importe, moneda, comercio)` no sobrevive a una re-liquidación. Solo un anchor de balance detecta esto — ninguna cantidad de dedup por fila lo habría visto.
 
-**Estado**: ids identificados (`86,97,132,147,175,178,184,245,285,288,289,290,311,322,335,371,381,383,387,403,1059`), dry-run confirmado (21 matched, €255.96), endpoint `POST /api/transactions/delete` desplegado. **Falta ejecutar el borrado** y re-correr `scripts/audit-revolut.mjs` para confirmar que el anchor cierra en €126.56.
+**Estado: CERRADO 2026-07-31.** Las 21 filas se borraron vía `POST /api/transactions/delete` (dry-run primero: 21 matched, €255.96 → `deleted=21`). Re-corrido `scripts/audit-revolut.mjs`:
+
+```
+file rows 386 / db rows 386 · faltantes 0 · sobrantes 0
+todos los meses ene–jul cuadran al céntimo
+balance anchor: Σ db = 126.56 = closing − opening  ✅
+CLEAN — the DB matches the authoritative history.
+```
+
+**Correr `scripts/audit-revolut.mjs` después de cada carga de Revolut.** Este fallo se repetirá: cada import puede dejar pre-autorizaciones que Revolut revierte después, y ninguna deduplicación por fila las ve. El script sale con código ≠ 0 si hay discrepancia, así que se puede encadenar a `sync-bank-folders.mjs`.
 
 ## WhatsApp — por qué quedó diferido
 
