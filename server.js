@@ -1084,6 +1084,28 @@ app.post("/import/pdf", express.raw({ type: "application/pdf", limit: "20mb" }),
   }
 });
 
+// Single-CSV upload — runs the *same* importCsv path as the Telegram document
+// handler, so Amex/Revolut hit the deterministic per-bank parsers (correct
+// signs, internal-transfer flags, reconciliation check) instead of being
+// mistaken for a pre-normalized file. Use this for raw bank exports;
+// /import/normalized is only for CSVs already in our own column schema.
+app.post("/import/csv", express.text({ type: "*/*", limit: "20mb" }), async (req, res) => {
+  if (!requireKey(req, res, "INTERNAL_IMPORT_KEY")) return;
+  let tmpPath;
+  try {
+    if (!req.body || !req.body.length) return res.status(400).json({ error: "empty body" });
+    tmpPath = path.join(os.tmpdir(), `csvimport-${Date.now()}.csv`);
+    fs.writeFileSync(tmpPath, req.body);
+    const stats = await importCsv(tmpPath);
+    res.json({ ok: true, ...stats });
+  } catch (err) {
+    console.error("[import/csv]", err);
+    res.status(500).json({ error: err.message });
+  } finally {
+    if (tmpPath && fs.existsSync(tmpPath)) { try { fs.unlinkSync(tmpPath); } catch {} }
+  }
+});
+
 app.post("/import/normalized", express.text({ type: "*/*", limit: "20mb" }), async (req, res) => {
   if (!requireKey(req, res, "INTERNAL_IMPORT_KEY")) return;
   try {

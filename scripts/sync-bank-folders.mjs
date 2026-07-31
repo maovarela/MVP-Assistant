@@ -3,9 +3,9 @@
 // Walks one or more bank-statement folders and ingests any file we haven't
 // processed before. Format auto-detected per file:
 //
-//   - *.csv  → POST /import/normalized (after local Amex/Revolut parse OR raw
-//              when format is unknown, in which case the server's LLM batch
-//              parser handles it)
+//   - *.csv  → POST /import/csv (server auto-detects Amex/Revolut and uses the
+//              deterministic parser; falls back to the LLM batch parser when
+//              the format is unknown)
 //   - *.pdf  → POST /import/pdf (server hits the deterministic BNP fast-path,
 //              falls back to LLM only if it doesn't look like a BNP statement)
 //
@@ -15,8 +15,7 @@
 // transaction-level dedup (external_id) keeps duplicates out of the DB.
 //
 // Usage:
-//   $env:DASH_KEY = "..."                # for CSV path (Amex/Revolut)
-//   $env:INTERNAL_IMPORT_KEY = "..."     # for PDF path (BNP)
+//   $env:INTERNAL_IMPORT_KEY = "..."     # both endpoints
 //   node scripts/sync-bank-folders.mjs `
 //     "C:\Users\varel\OneDrive\Documents\Docs Perso\Bank Statements\Amex" `
 //     "C:\Users\varel\OneDrive\Documents\Docs Perso\Bank Statements\Revolut" `
@@ -60,7 +59,7 @@ function save() {
 // ─── Uploaders ──────────────────────────────────────────────────────────────
 
 async function uploadCsv(filePath, buf) {
-  const r = await fetch(`${HOST}/import/normalized?key=${encodeURIComponent(INTERNAL_KEY)}`, {
+  const r = await fetch(`${HOST}/import/csv?key=${encodeURIComponent(INTERNAL_KEY)}`, {
     method:  "POST",
     headers: { "content-type": "text/csv" },
     body:    buf,
