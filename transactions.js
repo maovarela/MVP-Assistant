@@ -342,10 +342,12 @@ export function importNormalized(filePath) {
   if (rows.length) {
     const cols = Object.keys(rows[0]).map((c) => c.toLowerCase());
     if (!cols.includes("date") || !cols.includes("amount")) {
-      throw new Error(
+      const err = new Error(
         `not a normalized CSV (columns: ${cols.join(", ")}). This looks like a raw bank ` +
         `export — POST it to /import/csv, which auto-detects the bank format.`
       );
+      err.status = 400;   // wrong file for this endpoint — caller's problem, not a server fault
+      throw err;
     }
   }
 

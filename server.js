@@ -1123,7 +1123,7 @@ app.post("/import/csv", express.text({ type: "*/*", limit: "20mb" }), async (req
     res.json({ ok: true, ...stats });
   } catch (err) {
     console.error("[import/csv]", err);
-    res.status(500).json({ error: err.message });
+    res.status(err.status || 500).json({ error: err.message });
   } finally {
     if (tmpPath && fs.existsSync(tmpPath)) { try { fs.unlinkSync(tmpPath); } catch {} }
   }
@@ -1140,7 +1140,7 @@ app.post("/import/normalized", express.text({ type: "*/*", limit: "20mb" }), asy
     res.json({ ok: true, ...stats });
   } catch (err) {
     console.error("[import/normalized]", err);
-    res.status(500).json({ error: err.message });
+    res.status(err.status || 500).json({ error: err.message });
   }
 });
 
