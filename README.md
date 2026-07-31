@@ -425,6 +425,7 @@ Detects drift between the parser regex (`bankCsv.js:categorize()`) and stored ca
 | POST | `/webhook/telegram` | Telegram update webhook (HMAC-secret-validated) |
 | POST | `/webhook/whatsapp/<secret>` | Evolution API webhook (gated by `ENABLE_WHATSAPP`) |
 | POST | `/import/normalized?key=$INTERNAL_IMPORT_KEY` | Bulk-load `text/csv` produced by `scripts/import-local.mjs` (normalized schema **only** — a raw bank export gets 400). Body limit 20 MB. |
+| POST | `/api/transactions/delete?key=$DASH_KEY` | Delete rows by id — `{ids:[…], dry_run?:true}`. Max 500 ids, returns the rows matched. Send `dry_run` first; not undoable. |
 | POST | `/import/csv?key=$INTERNAL_IMPORT_KEY` | Single raw bank CSV (Amex/Revolut auto-detected, LLM fallback). Body limit 20 MB. |
 | POST | `/import/pdf?key=$INTERNAL_IMPORT_KEY` | Single PDF statement upload (Gemini-parsed). Body limit 20 MB. |
 

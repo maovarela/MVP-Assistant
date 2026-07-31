@@ -58,12 +58,21 @@ Tres huecos encontrados al montar la subida mensual. Los tres **fallaban en sile
 - **Las filas ya cargadas desde el consolidated siguen sin verificar.** Los fixes evitan que vuelva a pasar, no validan retroactivamente lo que ya está en la DB. Ver "Verificación retroactiva de Revolut" abajo.
 - **No hay tests.** Cero: ni runner ni dependencia. Para un código que parsea dinero y que ya acumula tres bugs de corrupción silenciosa documentados (signos Amex, TAB/espacio en BNP, y estos), unos golden-file tests sobre los parsers (statements de muestra + row count / suma neta / distribución de signos esperados) es lo de mayor valor pendiente.
 
-## Verificación retroactiva de Revolut (pendiente)
+## Verificación retroactiva de Revolut — hecha 2026-07-31
 
-Las ~135 filas cargadas desde el consolidated no tienen anchor de balance. Dos formas de cerrarlo:
+Se hizo con el **check agregado** `opening + Σ(transacciones) == closing` sobre la columna `Balance` del propio consolidated. Es **independiente del orden**, así que funciona pese a que el layout reordene filas del mismo día — justo lo que impide la continuidad fila a fila. Script: `scripts/audit-revolut.mjs` (read-only).
 
-1. **Re-pasar los exports mensuales de ene–jul** por `/import/csv`. Cada mes se reconcilia solo y el overlap guard deduplica. **El diagnóstico es el propio `inserted`**: debería salir ~0. Cualquier inserción sobre un mes ya cargado = discrepancia entre las dos fuentes (fila que faltaba, o fila que está mal y por eso no matchea la clave natural) → investigar esa.
-2. **Check agregado opening/closing por mes** (estilo BNP): `opening + Σ(transacciones) == closing`. Es **independiente del orden**, así que funciona sobre el consolidated pese a que su layout reordene — que es justo lo que impide la continuidad fila a fila. Necesita el balance de cierre real de cada mes, que el propio consolidated ya trae en su columna `Balance`.
+**Resultado — no faltaba nada, sobraba:**
+
+- **0 filas perdidas**: las 386 del export completo estaban todas en la DB. Las ~135 que entraron sin verificar estaban bien.
+- **21 filas de más** en la DB que el historial de Revolut dice que **nunca ocurrieron**: **€255.96** entre enero y mayo. El anchor lo prueba solo: `closing − opening = +126.56`, `Σ file = +126.56` ✅, `Σ db = −129.40` ❌ — desfase exacto de 255.96.
+- Desglose por mes: ene €21.15 · feb €17.34 · mar €39.70 · abr €42.30 · may €135.47. Junio y julio cuadran al céntimo (todas las filas sobrantes son ≤ 30-may).
+
+**Causa**: pre-autorizaciones de Revolut importadas desde exports **anteriores** (el consolidated ene–24may y el mensual de mayo) que Revolut luego revirtió y borró del historial. El consolidated **no trae columna `State`**, así que en su momento entraron como si fueran definitivas. El overlap guard no las puede deduplicar porque la fila liquidada difiere en importe o fecha — se ve clarísimo en `International Transfer to CARLOS ANTONIO` (2026-05-30): la DB tiene **−85.27** y el fichero **−88.32**, las dos.
+
+**Lección**: la clave natural `(fecha, importe, moneda, comercio)` no sobrevive a una re-liquidación. Solo un anchor de balance detecta esto — ninguna cantidad de dedup por fila lo habría visto.
+
+**Estado**: ids identificados (`86,97,132,147,175,178,184,245,285,288,289,290,311,322,335,371,381,383,387,403,1059`), dry-run confirmado (21 matched, €255.96), endpoint `POST /api/transactions/delete` desplegado. **Falta ejecutar el borrado** y re-correr `scripts/audit-revolut.mjs` para confirmar que el anchor cierra en €126.56.
 
 ## WhatsApp — por qué quedó diferido
 

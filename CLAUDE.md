@@ -80,6 +80,12 @@ everything else. There is no build step.
   export posted to `/import/normalized` matches no column and skips every row;
   it now 400s, but for months it returned `0 inserted, N skipped` — identical
   to "all duplicates" — and silently dropped whole statements.
+- **A reverted Revolut pre-authorization survives every row-level dedup.** It was
+  real when an older export was imported; Revolut later reversed it and dropped
+  it from history, and the settled row differs in amount or date so the natural
+  key `(date, amount, currency, merchant)` never matches. Only an aggregate
+  balance anchor catches these — `scripts/audit-revolut.mjs` found 21 such rows
+  (€255.96) in 2026-01..05. Re-run it after any bulk Revolut load.
 - **Never collapse "duplicate" and "couldn't parse" into one counter.** Import
   results carry `duplicates` (benign) and `unparsed` (a statement row was
   DROPPED) separately; `skipped` is kept only as their sum for old callers.
