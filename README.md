@@ -418,8 +418,7 @@ Detects drift between the parser regex (`bankCsv.js:categorize()`) and stored ca
 | `5 * * * *` | Hourly IMAP scan for bank transaction emails (ingestor) |
 | `0 8 * * *` | Daily briefing — calendar (1d ahead) + tasks + spending pace + top categories |
 | `0 9 * * *` | Follow-ups for tasks due in next 48h |
-| `0 9 6 * *` | Monthly bank-statement reminder (day 6 — by then all 3 banks have published last month) |
-| `0 10 * * 0` | Sunday Revolut CSV upload nudge (per-tx alerts not supported) |
+| `0 9 6 * *` | Monthly bank-statement reminder (day 6 — by then all 3 banks have published last month). The only upload nudge; uploads are a monthly routine. |
 | `0 18 * * 0` | Sunday weekly review — calendar (7d ahead) + completions/blockers + week spend |
 | `0 19 * * 0` | Sunday CFO weekly briefing (`advisor.js` — structured review) |
 | `0 8,10,12,14,16,18,20,22 * * *` | Proactive scan — silent by default; broadcasts anomalies + **budget-pace alerts** (mid-month, deduped via `proactive_pace_sent`) if `interrupt=true` |

@@ -1250,23 +1250,14 @@ function startScheduler() {
     catch (err) { console.error("[cron] fx refresh:", err.message); }
   }, { timezone: "Europe/Paris" });
 
-  // Sunday 10:00 Paris — Revolut CSV upload nudge.
-  // Revolut killed per-transaction email alerts, so the only way to ingest its
-  // transactions in-month is via manual CSV/PDF upload. This reminder lands
-  // before the 18:00 weekly review so the data is fresh when the review runs.
-  cron.schedule("0 10 * * 0", async () => {
-    try {
-      await broadcast(
-        "💳 *Revolut weekly upload*\n\n" +
-        "Sube el CSV de Revolut de esta semana para que el weekly review de las 18:00 tenga los gastos al día.\n\n" +
-        "App Revolut → avatar → Statements → cuenta → últimos 7 días → Excel/CSV → compartir al bot."
-      );
-    } catch (err) { console.error("[cron] revolut nudge:", err.message); }
-  }, { timezone: "Europe/Paris" });
-
-  // 6th of every month, 09:00 Paris — monthly bank-statement reminder.
+  // 6th of every month, 09:00 Paris — monthly bank-statement reminder. This is
+  // the ONLY upload nudge: ingestion is a monthly routine, so the old Sunday
+  // Revolut nudge ("0 10 * * 0") was dropped rather than left asking weekly for
+  // a file that only arrives once a month.
   // By the 6th all three banks (BNP, Amex, Revolut) have published the prior
   // month's statement, so it's the earliest day a full month can be ingested.
+  // Trade-off: Revolut has no per-transaction email alerts, so its spending is
+  // stale in-month and the Sunday weekly review only sees it after this upload.
   cron.schedule("0 9 6 * *", async () => {
     try {
       await broadcast(
@@ -1297,7 +1288,7 @@ function startScheduler() {
     } catch (err) { console.error("[cron] cfo weekly:", err.message); }
   }, { timezone: "Europe/Paris" });
 
-  console.log("[scheduler] started — hourly inbox scan + daily/weekly briefings + sunday revolut nudge + 2h proactive scan + monthly FX + sunday 19:00 CFO");
+  console.log("[scheduler] started — hourly inbox scan + daily/weekly briefings + monthly statement reminder (day 6) + 2h proactive scan + monthly FX + sunday 19:00 CFO");
 
   // Boot kick: scan inbox 30s after startup so each redeploy gives quick feedback
   setTimeout(async () => {
