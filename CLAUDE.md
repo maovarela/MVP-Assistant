@@ -56,7 +56,10 @@ everything else. There is no build step.
 - Production DB is the Railway **volume** at `/data/pm.db` (`DB_PATH`). It is a
   *different database* from local `./data/pm.db` — local CLI imports do NOT
   reach production. To load data into prod, use an authenticated upload route
-  (e.g. eToro's `POST /api/etoro/import`), not the CLI.
+  (`POST /import/csv`, `/import/pdf`, eToro's `POST /api/etoro/import`), not the
+  CLI. `scripts/sync-bank-folders.mjs <Amex> <Revolut> <BNP>` walks the statement
+  folders and posts each new file (content-hash cache in `scripts/.processed.json`);
+  run it under `railway run` so the prod `INTERNAL_IMPORT_KEY` is injected.
 
 ## Gotchas (these have bitten us)
 - **Node version is pinned to `"22.x"` in `package.json` engines — do not loosen
@@ -66,6 +69,21 @@ everything else. There is no build step.
   for two weeks once.
 - eToro statements render **negative numbers in parentheses** `(1.23)`; parse as
   negative (see `num()` in `etoro.js`), or you silently drop every loss.
+- **Revolut: use the *monthly* export, never the consolidated one, for recurring
+  uploads.** Only the monthly export gets a balance check (per-row continuity);
+  the consolidated year-to-date layout isn't balance-ordered so it returns
+  `reconciled: null` + a `warning` and goes in unverified. Both parse fine —
+  the difference is invisible unless you look at `reconciled`.
+- **Two CSV import routes, and they are not interchangeable.** `/import/csv` =
+  raw bank exports (auto-detects Amex/Revolut → deterministic parser).
+  `/import/normalized` = only our own `date,merchant,amount,…` schema. A raw
+  export posted to `/import/normalized` matches no column and skips every row;
+  it now 400s, but for months it returned `0 inserted, N skipped` — identical
+  to "all duplicates" — and silently dropped whole statements.
+- **Never collapse "duplicate" and "couldn't parse" into one counter.** Import
+  results carry `duplicates` (benign) and `unparsed` (a statement row was
+  DROPPED) separately; `skipped` is kept only as their sum for old callers.
+  Conflating them is what hid the bug above.
 - Background sockets (IMAP/SMTP) emit late errors; `server.js` has
   `uncaughtException`/`unhandledRejection` handlers to keep the webhook server up
   — don't remove them.

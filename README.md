@@ -213,10 +213,25 @@ Bulk-load all rows into the bot DB in one HTTP call:
 curl -sf "https://<your-domain>/import/normalized?key=$INTERNAL_IMPORT_KEY" \
   -H "content-type: text/csv" \
   --data-binary @scripts/normalized-transactions.csv
-# → { "ok": true, "inserted": N, "skipped": M, "errors": 0, "total": N+M }
+# → { "ok": true, "inserted": N, "duplicates": M, "unparsed": 0, "errors": 0, "total": N+M }
 ```
 
 Dedup is keyed by Amex transaction reference / Revolut row hash, so re-running is safe.
+
+> **Two import routes — don't mix them up.** `/import/normalized` takes only the
+> *normalized* schema above (`date,merchant,amount,…`). A **raw** bank export
+> (Revolut's `Type,Product,Started Date,…`, an Amex `activity.csv`) goes to
+> **`/import/csv`**, which auto-detects the bank and runs the deterministic
+> parser. Posting a raw export to `/import/normalized` now fails with **400**
+> naming the columns it saw — it used to match no column, skip every row, and
+> report `0 inserted, N skipped`, which is indistinguishable from "all
+> duplicates". That is how raw CSVs were silently dropped for months.
+
+**`duplicates` vs `unparsed` matters.** `duplicates` = already in the DB (benign,
+the idempotent path). `unparsed` = a row of your statement had no usable
+date/amount and **was dropped**. Any file that inserts nothing *and* has
+`unparsed > 0` is rejected with **422** rather than returning a cheerful 200;
+Telegram marks it ❌ and `sync-bank-folders.mjs` prints `UNPARSED=`.
 
 ### Quick capture (log a single expense in the moment)
 
@@ -232,8 +247,11 @@ Cash, Revolut-without-email, or anything that won't arrive by statement — four
 Every statement import is checked against the statement's own numbers; on mismatch the bot replies `⚠️ No cuadra` and the dashboard shows a ⚠️ "Review <ACCT>" badge on that month (`account_balances.reconciled`):
 
 - **BNP** — `opening + Σ(parsed lines) == closing` (the printed balances).
-- **Revolut monthly** — per-row balance continuity (`balance[i] == balance[i-1] + amount − fee`).
+- **Revolut monthly** — per-row balance continuity (`balance[i] == balance[i-1] + amount − fee`), attributed **per `YYYY-MM`** so a file spanning two months can't flag a clean one.
+- **Revolut consolidated** — ⚠️ **not reconcilable**. Its multi-section layout isn't strictly balance-ordered, so continuity checks false-positive. The import returns `reconciled: null` plus an explicit `warning`. **Download the monthly export, not the year-to-date consolidated one** — it's the only Revolut file that gets verified.
 - **Amex** — CSV has no balance/total anchor, so it's not reconciled (its amounts are simple, low risk).
+
+The verdict is persisted to `account_balances.reconciled` from **both** the PDF and CSV paths. (Until 2026-07-31 only the BNP PDF path wrote it, so a broken Revolut month rendered clean on the dashboard.)
 
 This was added after a real bug: BNP PDF amounts ≥ €1000 were parsed reversed for months. See "deterministic parsers" below.
 
@@ -406,7 +424,7 @@ Detects drift between the parser regex (`bankCsv.js:categorize()`) and stored ca
 | POST | `/api/maintenance/purge-source?key=$DASH_KEY&source=pdf[&dry_run=1]` | Delete all txs from one source (`pdf`=BNP, `csv`=Amex/Revolut…) to re-import cleanly after a parser fix. `dry_run=1` only counts. |
 | POST | `/webhook/telegram` | Telegram update webhook (HMAC-secret-validated) |
 | POST | `/webhook/whatsapp/<secret>` | Evolution API webhook (gated by `ENABLE_WHATSAPP`) |
-| POST | `/import/normalized?key=$INTERNAL_IMPORT_KEY` | Bulk-load `text/csv` produced by `scripts/import-local.mjs`. Body limit 20 MB. |
+| POST | `/import/normalized?key=$INTERNAL_IMPORT_KEY` | Bulk-load `text/csv` produced by `scripts/import-local.mjs` (normalized schema **only** — a raw bank export gets 400). Body limit 20 MB. |
 | POST | `/import/csv?key=$INTERNAL_IMPORT_KEY` | Single raw bank CSV (Amex/Revolut auto-detected, LLM fallback). Body limit 20 MB. |
 | POST | `/import/pdf?key=$INTERNAL_IMPORT_KEY` | Single PDF statement upload (Gemini-parsed). Body limit 20 MB. |
 

@@ -9,7 +9,8 @@
 - **3-agent split shipped 2026-05-24**: Ingestor (`transactions.js`/`email.js`) + Analyst (`agent.js`) + Proactive (`proactive.js`). Notion: organigram → `MVP-Assistant — Organigram` page.
 - **Proactive watchman**: corre cada 2h entre 08:00–22:00 Paris. Default silencio. Snapshot → JSON estricto → `broadcast()` solo si `interrupt=true`.
 - **Daily briefing**: ahora incluye calendario (1d ahead) + `spend_pace` (gasto MTD, proyección fin de mes, top 3 categorías con delta % vs mismo periodo mes anterior).
-- **Bulk import histórico**: `scripts/import-local.mjs` + endpoint `POST /import/normalized?key=$INTERNAL_IMPORT_KEY`. Soporta cargar años de CSV en un solo curl.
+- **Bulk import histórico**: `scripts/import-local.mjs` + endpoint `POST /import/normalized?key=$INTERNAL_IMPORT_KEY` (solo esquema normalizado). Para exports **crudos** del banco: `POST /import/csv` / `/import/pdf`, o `scripts/sync-bank-folders.mjs` que recorre las carpetas de statements. Ver "Aprendizajes 2026-07-31".
+- **Subida de statements: mensual** (desde 2026-07-31). Recordatorio único el día 6 (`0 9 6 * *`); se eliminó el nudge semanal de Revolut.
 - **B2B / techo micro shipped 2026-06-05** (`ceiling.js` + tab B2B): el operador opera Vandfort + Zentra + Touro bajo **una sola EI** (SIRET 10549166600019), así que el CA de los tres **suma a un único techo**. El módulo calcula el CA combinado del año, lo atribuye por keyword, excluye salario CDI + transferencias internas, marca ingresos sin clasificar, proyecta el cruce a fin de año, y dispara alerta por Telegram al cruzar 60/70/85/95/100% de la franchise TVA (€37.5k) y el techo micro (€77.7k). Cuenta Shine registrada como prefijo `shine:` (B2B independiente de lo personal). **Pendiente único**: ingestión de Shine (CSV/email/API — por definir cuando la cuenta esté activa); hoy el tab muestra €0 sin datos. Zentra y Touro comparten cuenta Stripe → no se separan entre sí desde el banco.
 - **WhatsApp**: **diferido** — código integrado pero apagado por flag (`ENABLE_WHATSAPP=false` default). Detalles abajo.
 
@@ -32,7 +33,37 @@
 
 ### Revolut no tiene email-on-transaction
 - Lo mataron hace ~2 años. Solo push notification. Para tener gastos en-mes hay que subir CSV manual.
-- Mitigación: cron de domingo a las 10:00 Paris que pinge "sube el CSV de Revolut" antes del weekly review de las 18:00.
+- Mitigación **hasta 2026-07-31**: cron de domingo 10:00 Paris ("sube el CSV de Revolut") antes del weekly review de las 18:00.
+- **Desde 2026-07-31**: la subida pasó a ser mensual, así que ese cron semanal se eliminó. Queda solo el recordatorio del día 6 (`0 9 6 * *`), que ya cubre los tres bancos.
+- **Consecuencia asumida**: Revolut queda desactualizado dentro del mes — el weekly review del domingo y las alertas de pace del proactive scan no ven su gasto hasta la subida mensual.
+
+## ⚠️ Aprendizajes 2026-07-31 (fallos silenciosos en la ingesta)
+
+Tres huecos encontrados al montar la subida mensual. Los tres **fallaban en silencio** — ninguno daba error, todos devolvían 200 OK.
+
+### `/import/normalized` se tragaba los CSV crudos
+- `sync-bank-folders.mjs` posteaba los CSV crudos de Amex/Revolut a `/import/normalized`, que solo entiende **nuestro** esquema (`date,merchant,amount,…`). Un export crudo no matchea ninguna columna → todas las filas caían en la rama de skip → `0 inserted, N skipped`, **idéntico a "todo duplicado"**. Ningún endpoint HTTP ejecutaba `importCsv`.
+- **Solución**: nuevo `POST /import/csv` (mismo guard `INTERNAL_IMPORT_KEY`) que corre `importCsv` — la misma ruta que el handler de documentos de Telegram. `importNormalized` ahora rechaza con **400** un CSV que no traiga columnas `date`+`amount`.
+- **Regla**: si un import puede devolver "no hice nada" por dos razones distintas (duplicado vs. no parseado), **tienen que ser contadores distintos**. `duplicates` vs `unparsed`; `skipped` queda solo como la suma. Un fichero con `inserted=0` y `unparsed>0` devuelve **422**, no 200.
+
+### Revolut entraba sin verificar
+- `bankCsv.js` solo reconcilia el export **mensual** (continuidad de balance fila a fila). El **consolidated** año-a-la-fecha está documentado como "one-time load" y no produce veredicto… pero era justamente el fichero que se había vuelto la rutina mensual: **135 de las 188 filas nuevas entraron sin ningún control**.
+- **Solución**: el consolidated ahora devuelve `reconciled: null` **explícito + `reason`** (antes no devolvía nada, y "no verificado" era indistinguible de "verificado y OK"). El recordatorio del día 6 pide el export **mensual**.
+
+### El badge ⚠️ del dashboard solo cubría BNP
+- `setAccountBalance` se llamaba únicamente desde la rama del PDF de BNP. `importCsv` calculaba el veredicto de reconciliación y lo tiraba a la basura → un mes de Revolut roto se veía limpio.
+- **Solución**: la reconciliación se atribuye **por `YYYY-MM`** (un fichero a caballo entre dos meses no puede marcar como roto el mes sano) y se persiste en `account_balances.reconciled` desde la ruta CSV también.
+
+### Pendiente que queda abierto
+- **Las filas ya cargadas desde el consolidated siguen sin verificar.** Los fixes evitan que vuelva a pasar, no validan retroactivamente lo que ya está en la DB. Ver "Verificación retroactiva de Revolut" abajo.
+- **No hay tests.** Cero: ni runner ni dependencia. Para un código que parsea dinero y que ya acumula tres bugs de corrupción silenciosa documentados (signos Amex, TAB/espacio en BNP, y estos), unos golden-file tests sobre los parsers (statements de muestra + row count / suma neta / distribución de signos esperados) es lo de mayor valor pendiente.
+
+## Verificación retroactiva de Revolut (pendiente)
+
+Las ~135 filas cargadas desde el consolidated no tienen anchor de balance. Dos formas de cerrarlo:
+
+1. **Re-pasar los exports mensuales de ene–jul** por `/import/csv`. Cada mes se reconcilia solo y el overlap guard deduplica. **El diagnóstico es el propio `inserted`**: debería salir ~0. Cualquier inserción sobre un mes ya cargado = discrepancia entre las dos fuentes (fila que faltaba, o fila que está mal y por eso no matchea la clave natural) → investigar esa.
+2. **Check agregado opening/closing por mes** (estilo BNP): `opening + Σ(transacciones) == closing`. Es **independiente del orden**, así que funciona sobre el consolidated pese a que su layout reordene — que es justo lo que impide la continuidad fila a fila. Necesita el balance de cierre real de cada mes, que el propio consolidated ya trae en su columna `Balance`.
 
 ## WhatsApp — por qué quedó diferido
 
