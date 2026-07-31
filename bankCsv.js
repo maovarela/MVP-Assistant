@@ -123,10 +123,14 @@ function parseRevolutMoney(s) {
 // amount[i] - fee[i]. Any break means a row's amount/sign is wrong or a row was
 // missed — the Revolut analog of BNP's opening+Σ=closing check. reconRows must
 // be in statement (chronological) order, grouped later by currency.
+// `periods` buckets each checked row by its own YYYY-MM so a break can be
+// attributed to the month it happened in — a file spanning two months must not
+// mark a clean month unreconciled (that's what feeds the dashboard ⚠️ badge).
 function attachRevolutRecon(out, reconRows) {
   const byCcy = {};
   for (const r of reconRows) (byCcy[r.currency] = byCcy[r.currency] || []).push(r);
   let breaks = 0, checked = 0, maxDelta = 0;
+  const periods = {};
   for (const ccy of Object.keys(byCcy)) {
     const list = byCcy[ccy];
     for (let i = 1; i < list.length; i++) {
@@ -134,11 +138,20 @@ function attachRevolutRecon(out, reconRows) {
       const expected = list[i - 1].balance + list[i].amount - (list[i].fee || 0);
       const d = Math.round((list[i].balance - expected) * 100) / 100;
       checked++;
-      if (Math.abs(d) > 0.01) { breaks++; if (Math.abs(d) > Math.abs(maxDelta)) maxDelta = d; }
+      const p = String(list[i].date || "").slice(0, 7);
+      if (p) {
+        periods[p] = periods[p] || { breaks: 0, checked: 0 };
+        periods[p].checked++;
+      }
+      if (Math.abs(d) > 0.01) {
+        breaks++;
+        if (p) periods[p].breaks++;
+        if (Math.abs(d) > Math.abs(maxDelta)) maxDelta = d;
+      }
     }
   }
   Object.defineProperty(out, "reconciliation", {
-    value: { reconciled: checked > 0 ? breaks === 0 : null, breaks, checked, maxDelta },
+    value: { reconciled: checked > 0 ? breaks === 0 : null, breaks, checked, maxDelta, periods },
     enumerable: false,
   });
 }
@@ -178,7 +191,7 @@ function parseRevolutMonthly(content) {
       is_internal_transfer: isInternal,
       category: isInternal ? "internal_transfer" : undefined,
     });
-    reconRows.push({ currency, amount, fee: parseRevolutMoney(r.Fee), balance: parseRevolutMoney(r.Balance) });
+    reconRows.push({ currency, date, amount, fee: parseRevolutMoney(r.Fee), balance: parseRevolutMoney(r.Balance) });
   }
   attachRevolutRecon(out, reconRows);
   return out;
@@ -247,6 +260,19 @@ export function parseRevolutCsv(content) {
   // layout isn't strictly balance-ordered (same-day rows reorder), so per-row
   // continuity false-positives. The monthly export (the ongoing upload path) is
   // a single ordered stream and IS reconciled. Consolidated is a one-time load.
+  //
+  // Say so explicitly rather than returning no verdict at all: "unreconciled"
+  // and "never checked" look identical downstream, and this file being used as
+  // the *recurring* upload silently bypasses every integrity check we have.
+  Object.defineProperty(out, "reconciliation", {
+    value: {
+      reconciled: null,
+      breaks: 0, checked: 0, maxDelta: 0, periods: {},
+      reason: "Revolut consolidated export — no balance check is possible on this layout. " +
+              "Prefer the monthly statement export, which is verified row by row.",
+    },
+    enumerable: false,
+  });
   return out;
 }
 

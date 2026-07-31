@@ -285,13 +285,19 @@ async function handleDocument(msg) {
       ? `\n\n⚠️ *No cuadra con el saldo del statement* — ${result.recon}. Revisa antes de confiar en estas cifras.`
       : (result.reconciled === true ? `\n✅ Cuadra con el saldo del statement.` : "");
 
+    // A file that inserted nothing AND parsed nothing is a failure, not a
+    // no-op — don't report it with a ✅.
+    const failed = result.inserted === 0 && (result.unparsed || 0) > 0;
+
     await bot.sendMessage(chatId,
-      `✅ *${doc.file_name}*\n` +
+      `${failed ? "❌" : "✅"} *${doc.file_name}*\n` +
       `• Insertadas: ${result.inserted}\n` +
-      `• Saltadas (duplicados): ${result.skipped}\n` +
+      `• Duplicados (ya estaban): ${result.duplicates ?? result.skipped}\n` +
+      (result.unparsed ? `• ⚠️ Sin parsear (filas perdidas): ${result.unparsed}\n` : "") +
       `• Errores: ${result.errors}\n` +
       (result.total ? `• Total filas: ${result.total}` : "") +
-      reconLine,
+      reconLine +
+      (result.warning ? `\n\nℹ️ ${result.warning}` : ""),
       { parse_mode: "Markdown" }
     );
   } catch (err) {
@@ -1084,6 +1090,22 @@ app.post("/import/pdf", express.raw({ type: "application/pdf", limit: "20mb" }),
   }
 });
 
+// A statement that inserted nothing *and* failed to parse rows is a failed
+// import, not a quiet no-op — 200 OK there is how a dropped file passes for a
+// file full of duplicates. Duplicates alone (re-uploading a known statement)
+// stay a success: that's the idempotent path we rely on.
+function rejectUnparsed(res, stats) {
+  if (stats.inserted === 0 && (stats.unparsed || 0) > 0) {
+    res.status(422).json({
+      error: `parsed no usable transactions — ${stats.unparsed}/${stats.total} rows had no date/amount. ` +
+             `Wrong file format for this endpoint, or the statement layout changed.`,
+      ...stats,
+    });
+    return true;
+  }
+  return false;
+}
+
 // Single-CSV upload — runs the *same* importCsv path as the Telegram document
 // handler, so Amex/Revolut hit the deterministic per-bank parsers (correct
 // signs, internal-transfer flags, reconciliation check) instead of being
@@ -1097,6 +1119,7 @@ app.post("/import/csv", express.text({ type: "*/*", limit: "20mb" }), async (req
     tmpPath = path.join(os.tmpdir(), `csvimport-${Date.now()}.csv`);
     fs.writeFileSync(tmpPath, req.body);
     const stats = await importCsv(tmpPath);
+    if (rejectUnparsed(res, stats)) return;
     res.json({ ok: true, ...stats });
   } catch (err) {
     console.error("[import/csv]", err);
@@ -1113,6 +1136,7 @@ app.post("/import/normalized", express.text({ type: "*/*", limit: "20mb" }), asy
     fs.writeFileSync(tmpPath, req.body || "");
     const stats = importNormalized(tmpPath);
     fs.unlinkSync(tmpPath);
+    if (rejectUnparsed(res, stats)) return;
     res.json({ ok: true, ...stats });
   } catch (err) {
     console.error("[import/normalized]", err);
@@ -1265,7 +1289,9 @@ function startScheduler() {
         "Ya puedes descargar los statements completos del mes anterior (todos los bancos publicaron al día 6). Súbelos al bot para cerrar el mes:\n\n" +
         "- *BNP* → app → cuenta → Relevés → PDF/CSV\n" +
         "- *Amex* → online → Statements → CSV\n" +
-        "- *Revolut* → avatar → Statements → cuenta → mes completo → Excel/CSV\n\n" +
+        "- *Revolut* → avatar → Statements → cuenta → *solo el mes anterior* → Excel/CSV\n" +
+        "  (el export mensual, NO el consolidado del año: solo el mensual se verifica " +
+        "contra el balance fila por fila)\n\n" +
         "Compártelos aquí (CSV o PDF) y quedan ingestados."
       );
     } catch (err) { console.error("[cron] monthly statements reminder:", err.message); }

@@ -165,9 +165,9 @@ export async function importCsv(filePath) {
     console.log(`[csv] detected format=${fmt} for ${filePath}`);
     const parsed = fmt === "amex" ? parseAmexCsv(content) : parseRevolutCsv(content);
     const isOverlap = makeOverlapGuard(parsed);
-    let inserted = 0, skipped = 0;
+    let inserted = 0, duplicates = 0;
     for (const tx of parsed) {
-      if (isOverlap(tx)) { skipped++; continue; }
+      if (isOverlap(tx)) { duplicates++; continue; }
       const extId = tx.external_id || hashTx(tx);
       const id = insertTransaction({
         external_id: `${fmt}:${extId}`,
@@ -181,7 +181,7 @@ export async function importCsv(filePath) {
         raw:         null,
         is_internal_transfer: !!tx.is_internal_transfer,
       });
-      if (id) inserted++; else skipped++;
+      if (id) inserted++; else duplicates++;
     }
     // Revolut carries a running balance per row → balance-continuity check
     // (the Revolut analog of BNP's opening+Σ=closing). Amex CSVs have no balance
@@ -192,7 +192,31 @@ export async function importCsv(filePath) {
       recon = `${rec.breaks}/${rec.checked} filas no cuadran con el balance (desfase máx €${rec.maxDelta})`;
       console.warn(`[csv] RECONCILIATION MISMATCH (${fmt}): ${recon}`);
     }
-    return { inserted, skipped, errors: 0, total: parsed.length, reconciled: rec ? rec.reconciled : null, recon };
+
+    // Persist the verdict per period so the dashboard ⚠️ badge covers this
+    // account too — it reads account_balances.reconciled, and until now only
+    // the BNP PDF path ever wrote there, so a broken Revolut month rendered
+    // clean. Balances are left untouched (COALESCE keeps any existing values);
+    // we're only recording whether the month's rows are trustworthy.
+    if (rec && rec.periods) {
+      for (const [period, p] of Object.entries(rec.periods)) {
+        if (!p.checked) continue;
+        try {
+          setAccountBalance({ account: fmt, period, source: "csv", reconciled: p.breaks === 0 });
+        } catch (err) {
+          console.error(`[csv] could not record reconciliation for ${fmt} ${period}:`, err.message);
+        }
+      }
+    }
+
+    return {
+      inserted, duplicates, unparsed: 0, errors: 0,
+      skipped: duplicates,                 // kept: existing callers read `skipped`
+      total: parsed.length,
+      reconciled: rec ? rec.reconciled : null,
+      recon,
+      warning: rec?.reason || null,
+    };
   }
 
   // Generic fallback — LLM batch parser
@@ -217,9 +241,13 @@ export async function importCsv(filePath) {
     });
   }
 
-  if (!rows.length) return { inserted: 0, skipped: 0, errors: 0 };
+  if (!rows.length) return { inserted: 0, skipped: 0, duplicates: 0, unparsed: 0, errors: 0, total: 0 };
 
-  let inserted = 0, skipped = 0, errors = 0;
+  // `duplicates` (already in the DB — benign) is tracked apart from `unparsed`
+  // (the LLM gave us no usable date/amount — a row of the statement was DROPPED).
+  // Collapsing both into `skipped` is what let a fully-unparsed file read as
+  // "nothing new to do" for months.
+  let inserted = 0, duplicates = 0, unparsed = 0, errors = 0;
 
   // Process in batches of 20 rows so Claude sees enough context but stays fast
   const BATCH = 20;
@@ -237,8 +265,8 @@ export async function importCsv(filePath) {
     const isOverlap = makeOverlapGuard(parsedBatch.filter((t) => t && t.date && t.amount != null));
     for (let j = 0; j < parsedBatch.length; j++) {
       const tx = parsedBatch[j];
-      if (!tx || !tx.date || tx.amount == null) { skipped++; continue; }
-      if (isOverlap(tx)) { skipped++; continue; }
+      if (!tx || !tx.date || tx.amount == null) { unparsed++; continue; }
+      if (isOverlap(tx)) { duplicates++; continue; }
 
       const externalId = tx.external_id || hashTx(tx, batch[j]);
       const id = insertTransaction({
@@ -253,11 +281,15 @@ export async function importCsv(filePath) {
         raw:         JSON.stringify(batch[j]),
       });
 
-      if (id) inserted++; else skipped++;
+      if (id) inserted++; else duplicates++;
     }
   }
 
-  return { inserted, skipped, errors, total: rows.length };
+  return {
+    inserted, duplicates, unparsed, errors,
+    skipped: duplicates + unparsed,       // kept: existing callers read `skipped`
+    total: rows.length,
+  };
 }
 
 const CSV_PARSE_PROMPT = `You convert raw bank-statement CSV rows to a normalized transaction format.
@@ -302,11 +334,26 @@ export function importNormalized(filePath) {
     columns: true, skip_empty_lines: true, bom: true, relax_quotes: true, relax_column_count: true, trim: true,
   });
 
-  let inserted = 0, skipped = 0, errors = 0;
+  // Refuse a file that isn't in our normalized schema at all. Without this a
+  // raw bank export (Revolut's "Type,Product,Started Date,..." etc.) parses
+  // fine as CSV, matches no column we read, and every row falls into the
+  // skip branch below — reported as "0 inserted, N skipped", indistinguishable
+  // from "all duplicates". That is exactly how raw CSVs were silently dropped.
+  if (rows.length) {
+    const cols = Object.keys(rows[0]).map((c) => c.toLowerCase());
+    if (!cols.includes("date") || !cols.includes("amount")) {
+      throw new Error(
+        `not a normalized CSV (columns: ${cols.join(", ")}). This looks like a raw bank ` +
+        `export — POST it to /import/csv, which auto-detects the bank format.`
+      );
+    }
+  }
+
+  let inserted = 0, duplicates = 0, unparsed = 0, errors = 0;
   for (const r of rows) {
     try {
       const amount = parseFloat(r.amount);
-      if (!r.date || !Number.isFinite(amount)) { skipped++; continue; }
+      if (!r.date || !Number.isFinite(amount)) { unparsed++; continue; }
       const extId = r.external_id || hashTx({ date: r.date, merchant: r.merchant, amount });
       const id = insertTransaction({
         external_id: extId.startsWith("amex:") || extId.startsWith("revolut:") ? extId : `csv:${extId}`,
@@ -319,13 +366,17 @@ export function importNormalized(filePath) {
         description: r.description || null,
         raw:         null,
       });
-      if (id) inserted++; else skipped++;
+      if (id) inserted++; else duplicates++;
     } catch (err) {
       console.error("[normalized import] row error:", err.message);
       errors++;
     }
   }
-  return { inserted, skipped, errors, total: rows.length };
+  return {
+    inserted, duplicates, unparsed, errors,
+    skipped: duplicates + unparsed,       // kept: existing callers read `skipped`
+    total: rows.length,
+  };
 }
 
 // ─── PDF import (uses Claude vision via document input) ──────────────────────

@@ -109,7 +109,18 @@ for (const folder of folders) {
         failed++;
         continue;
       }
-      console.log(`ok — ins=${body.inserted} skp=${body.skipped} err=${body.errors}`);
+      // Surface the integrity signals instead of only the counts: `unparsed`
+      // means rows of the statement were dropped, and `reconciled:false` means
+      // the parsed rows don't add up to the statement's own balance. Both used
+      // to be invisible here.
+      const flags = [];
+      if (body.unparsed)            flags.push(`UNPARSED=${body.unparsed}`);
+      if (body.reconciled === true) flags.push("reconciled");
+      if (body.reconciled === false) flags.push(`NOT-RECONCILED (${body.recon})`);
+      if (body.reconciled == null)  flags.push("no-balance-check");
+      console.log(`ok — ins=${body.inserted} dup=${body.duplicates ?? body.skipped} err=${body.errors}` +
+                  (flags.length ? ` · ${flags.join(" · ")}` : ""));
+      if (body.warning) console.log(`      ℹ️  ${body.warning}`);
       uploaded++;
       ins   += body.inserted || 0;
       dupes += body.skipped  || 0;
