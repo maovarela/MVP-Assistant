@@ -317,6 +317,9 @@ const FR_MONTHS = {
 // has transaction date Mar 31 but value date Apr 1 → belongs to April.
 const BNP_TX_RX     = /^(\d{2})\.(\d{2})\s+(\d{2})\.(\d{2})\s+(.+?)\s+(\d+)\s*,\s*([\d\s]+)$/;
 const BNP_PERIOD_RX = /du\s+\d{1,2}\s+([a-zûéôà]+)\s+(\d{4})\s+au\s+\d{1,2}\s+([a-zûéôà]+)\s+(\d{4})/i;
+// Same header with the days kept — the statement's exact coverage window
+// ("du 31 juillet 2026 au 31 août 2026"), used by the monthly-close check.
+const BNP_PERIOD_DAYS_RX = /du\s+(\d{1,2})\s+([a-zûéôà]+)\s+(\d{4})\s+au\s+(\d{1,2})\s+([a-zûéôà]+)\s+(\d{4})/i;
 
 function reverseFrenchAmount(centsStr, intStr) {
   // BNP's PDF aligns numbers by column. Two different whitespace meanings appear
@@ -516,6 +519,14 @@ export function parseBnpPdfText(text) {
   }
 
   Object.defineProperty(out, "balances", { value: balances, enumerable: false });
+
+  const dm = text.match(BNP_PERIOD_DAYS_RX);
+  const fromMm = dm && FR_MONTHS[dm[2].toLowerCase()];
+  const toMm   = dm && FR_MONTHS[dm[5].toLowerCase()];
+  const coverage = fromMm && toMm
+    ? { from: `${dm[3]}-${fromMm}-${dm[1].padStart(2, "0")}`, to: `${dm[6]}-${toMm}-${dm[4].padStart(2, "0")}` }
+    : null;
+  Object.defineProperty(out, "coverage", { value: coverage, enumerable: false });
   return out;
 }
 

@@ -1,11 +1,12 @@
 // advisor.js
-// Financial advisor / CFO module. Two entry points share the same context
-// builder + LLM prompt:
+// Financial advisor / CFO module — on-demand only:
 //
 //   - runAdvisorReview({period, lookbackMonths}) called by the agent tool
-//     `financial_advisor_review` for on-demand chat queries.
-//   - runWeeklyAdvisorBriefing() called by the Sunday 19:00 Paris cron;
-//     prefixes the output with the briefing header and broadcasts it.
+//     `financial_advisor_review` for chat queries ("dame consejos").
+//
+// The scheduled CFO message is the monthly close (monthlyClose.js), sent once
+// a month's statements are in. The old Sunday 19:00 "CFO Weekly" was removed:
+// it analysed a month whose transactions hadn't been uploaded yet.
 //
 // Architectural notes:
 //   - This is a SINGLE LLM call, not a tool-loop agent. We assemble a
@@ -123,13 +124,4 @@ export async function runAdvisorReview({ period, lookbackMonths = 6 } = {}) {
     advice = `⚠️ No pude generar el análisis — fallo en los providers LLM. Reintenta en un momento. (${err.message})`;
   }
   return { snapshot, advice: (advice || "").trim() };
-}
-
-/**
- * Sunday weekly briefing entrypoint. Returns the text to broadcast.
- * Same engine as runAdvisorReview, just with a header.
- */
-export async function runWeeklyAdvisorBriefing() {
-  const { advice } = await runAdvisorReview({ period: undefined, lookbackMonths: 6 });
-  return `💼 *CFO Weekly*\n\n${advice}`;
 }

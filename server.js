@@ -51,7 +51,7 @@ import {
   getPositionsByYear as getEtoroPositions, getDividendsByYear as getEtoroDividends,
   importStatementFromBuffer as importEtoroStatement,
 } from "./etoro.js";
-import { runWeeklyAdvisorBriefing } from "./advisor.js";
+import { runMonthlyCloseCheck, getCloseReminder, getCloseOverview } from "./monthlyClose.js";
 import { toTelegramHTML } from "./tgformat.js";
 import { transcribeAudio } from "./stt.js";
 
@@ -278,6 +278,7 @@ async function handleDocument(msg) {
     fs.writeFileSync(tmpPath, Buffer.from(buffer));
 
     const result = isCsv ? await importCsv(tmpPath) : await importPdf(tmpPath);
+    queueMonthlyCloseCheck();
 
     // Reconciliation warning — the parsed lines don't add up to the statement's
     // own closing balance, so something parsed wrong. Surface it loudly.
@@ -323,10 +324,12 @@ app.get("/favicon.ico", (_req, res) => {
 });
 app.get("/healthz", (_req, res) => res.json({ ok: true }));
 
-// Visibility into the DB without needing Telegram round-trips. No auth — it
-// only reads aggregates (no PII, no full transaction list), and the URL is
-// public-domain-only. If that becomes a concern later, gate behind ?key=...
-app.get("/debug/stats", (_req, res) => {
+// Visibility into the DB without needing Telegram round-trips. Gated by
+// DASH_KEY: it used to be public on the assumption it only exposed
+// aggregates, but it returns monthly income/expenses and latest_10 (merchant,
+// amount, masked card number) — real financial data.
+app.get("/debug/stats", (req, res) => {
+  if (!requireKey(req, res, "DASH_KEY")) return;
   try {
     const tx          = getTransactionStats();
     const bySource    = db.prepare(`SELECT source, COUNT(*) AS n FROM transactions GROUP BY source`).all();
@@ -530,6 +533,19 @@ app.get("/api/ceiling.json", (req, res) => {
     res.json(getCeilingStatus());
   } catch (err) {
     console.error("[ceiling json]", err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Monthly close (dashboard "Close" tab): statement coverage of the last 6 closed
+// months per bank, whether each close was sent, and one month's deterministic
+// snapshot (?period=YYYY-MM, default: last closed month). Read-only.
+app.get("/api/monthly-close.json", (req, res) => {
+  if (!requireKey(req, res, "DASH_KEY")) return;
+  try {
+    res.json(getCloseOverview(req.query.period));
+  } catch (err) {
+    console.error("[monthly-close json]", err);
     res.status(500).json({ error: err.message });
   }
 });
@@ -1096,6 +1112,7 @@ app.post("/import/pdf", express.raw({ type: "application/pdf", limit: "20mb" }),
     tmpPath = path.join(os.tmpdir(), `pdfimport-${Date.now()}.pdf`);
     fs.writeFileSync(tmpPath, req.body);
     const stats = await importPdf(tmpPath);
+    queueMonthlyCloseCheck();
     res.json({ ok: true, ...stats });
   } catch (err) {
     console.error("[import/pdf]", err);
@@ -1135,6 +1152,7 @@ app.post("/import/csv", express.text({ type: "*/*", limit: "20mb" }), async (req
     fs.writeFileSync(tmpPath, req.body);
     const stats = await importCsv(tmpPath);
     if (rejectUnparsed(res, stats)) return;
+    queueMonthlyCloseCheck();
     res.json({ ok: true, ...stats });
   } catch (err) {
     console.error("[import/csv]", err);
@@ -1215,6 +1233,8 @@ async function registerWebhook() {
 // Fan-out a notification to all enabled outbound channels. Errors on one
 // channel never block the other — finance/PM notifications are too important
 // to lose because, say, the WhatsApp number got temporarily banned.
+// Resolves true if at least one channel delivered — the monthly close only
+// marks a month as sent on a real delivery (most callers ignore the result).
 async function broadcast(text, { markdown = true } = {}) {
   const tasks = [];
   if (ENABLE_TELEGRAM && CHAT_ID) {
@@ -1222,9 +1242,11 @@ async function broadcast(text, { markdown = true } = {}) {
     // Markdown shows them literally). On any parse error, fall back to plain.
     tasks.push(
       bot.sendMessage(CHAT_ID, markdown ? toTelegramHTML(text) : text, markdown ? { parse_mode: "HTML" } : {})
-         .catch((err) => bot.sendMessage(CHAT_ID, text).catch(() =>
-           console.error("[broadcast] telegram failed:", err.message)
-         ))
+         .then(() => true)
+         .catch((err) => bot.sendMessage(CHAT_ID, text).then(() => true).catch(() => {
+           console.error("[broadcast] telegram failed:", err.message);
+           return false;
+         }))
     );
   }
   if (ENABLE_WHATSAPP && WA_OWNER_NUMBER && isWhatsAppConfigured()) {
@@ -1232,10 +1254,26 @@ async function broadcast(text, { markdown = true } = {}) {
     tasks.push(
       sendWhatsApp(WA_OWNER_NUMBER, text).then((r) => {
         if (!r.ok) console.warn(`[broadcast] whatsapp failed: ${r.error}`);
+        return !!r.ok;
       })
     );
   }
-  await Promise.allSettled(tasks);
+  const results = await Promise.allSettled(tasks);
+  return results.some((r) => r.status === "fulfilled" && r.value === true);
+}
+
+// Monthly close: after an import, wait for the batch to settle (the folder sync
+// posts several files back to back) and then send any month that just became
+// complete. Debounced so a 10-file sync triggers one check, not ten.
+let closeCheckTimer = null;
+function queueMonthlyCloseCheck(delayMs = 90_000) {
+  clearTimeout(closeCheckTimer);
+  closeCheckTimer = setTimeout(async () => {
+    try {
+      const sent = await runMonthlyCloseCheck({ send: broadcast });
+      if (sent.length) console.log(`[close] sent monthly close: ${sent.join(", ")}`);
+    } catch (err) { console.error("[close] check failed:", err.message); }
+  }, delayMs);
 }
 
 function startScheduler() {
@@ -1250,10 +1288,12 @@ function startScheduler() {
     }
   });
 
-  // Daily 8:00 Paris — briefing
+  // Daily 8:00 Paris — briefing. No spending block: transactions only arrive
+  // with the monthly statement upload, so a mid-month "spend so far" read an
+  // almost-empty month. Money lives in the monthly close (monthlyClose.js).
   cron.schedule("0 8 * * *", async () => {
     try {
-      const reply = await runAgent("Dame el briefing del día. (1) Llama list_calendar_events (days_ahead 1) para eventos de hoy y mañana — menciónalos primero con hora y ubicación si aplica. (2) Tareas vencidas y urgentes esta semana. (3) Llama spend_pace y resume: gasto del mes hasta hoy, proyección fin de mes vs mes pasado, y top 3 categorías con su delta % vs el mismo periodo del mes anterior. FORMATO: cada bloque con un header '### Título' en su propia línea, viñetas '- ' una por línea, cifras/horas clave en **negritas**.");
+      const reply = await runAgent("Dame el briefing del día. (1) Llama list_calendar_events (days_ahead 1) para eventos de hoy y mañana — menciónalos primero con hora y ubicación si aplica. (2) Tareas vencidas y urgentes esta semana. NO incluyas gasto ni finanzas: eso va en el cierre mensual. FORMATO: cada bloque con un header '### Título' en su propia línea, viñetas '- ' una por línea, horas/fechas clave en **negritas**.");
       await broadcast(`📋 *Briefing del día*\n\n${reply}`);
     } catch (err) { console.error("[cron] daily briefing:", err.message); }
   }, { timezone: "Europe/Paris" });
@@ -1295,41 +1335,50 @@ function startScheduler() {
   // a file that only arrives once a month.
   // By the 6th all three banks (BNP, Amex, Revolut) have published the prior
   // month's statement, so it's the earliest day a full month can be ingested.
-  // Trade-off: Revolut has no per-transaction email alerts, so its spending is
-  // stale in-month and the Sunday weekly review only sees it after this upload.
+  // Amex statements close on the 20th, so the calendar month is only covered by
+  // the next statement — hence asking for the activity export by dates instead.
   cron.schedule("0 9 6 * *", async () => {
     try {
       await broadcast(
         "🏦 *Statements del mes pasado listos*\n\n" +
         "Ya puedes descargar los statements completos del mes anterior (todos los bancos publicaron al día 6). Súbelos al bot para cerrar el mes:\n\n" +
         "- *BNP* → app → cuenta → Relevés → PDF/CSV\n" +
-        "- *Amex* → online → Statements → CSV\n" +
+        "- *Amex* → online → Activité → exporta CSV *del 1 al último día del mes* " +
+        "(el statement cierra el 20: con él, el mes no queda completo hasta el 20 siguiente)\n" +
         "- *Revolut* → avatar → Statements → cuenta → *solo el mes anterior* → Excel/CSV\n" +
         "  (el export mensual, NO el consolidado del año: solo el mensual se verifica " +
         "contra el balance fila por fila)\n\n" +
-        "Compártelos aquí (CSV o PDF) y quedan ingestados."
+        "Compártelos aquí (CSV o PDF). Cuando estén los tres, te llega el *cierre del mes* solo."
       );
     } catch (err) { console.error("[cron] monthly statements reminder:", err.message); }
   }, { timezone: "Europe/Paris" });
 
-  // Sunday 18:00 Paris — weekly review
+  // 10th of every month, 09:00 Paris — monthly close fallback. Sends the close
+  // if last month is complete but somehow unsent; otherwise ONE message naming
+  // exactly which bank is missing which dates. Replaces the Sunday 19:00 CFO
+  // Weekly, which analysed a month whose statements weren't uploaded yet.
+  cron.schedule("0 9 10 * *", async () => {
+    try {
+      const sent = await runMonthlyCloseCheck({ send: broadcast });
+      if (sent.length) return;
+      const reminder = getCloseReminder();
+      if (reminder) await broadcast(reminder);
+    } catch (err) { console.error("[cron] monthly close reminder:", err.message); }
+  }, { timezone: "Europe/Paris" });
+
+  // Sunday 18:00 Paris — weekly review (PM only — no spend: see daily briefing)
   cron.schedule("0 18 * * 0", async () => {
     try {
-      const reply = await runAgent("Hazme el weekly review. Llama list_calendar_events (days_ahead 7) para los eventos de la próxima semana — inclúyelos. Luego: qué completé, qué bloqueado, prioridades próxima semana, y desglose de gasto de la semana. FORMATO: cada bloque con un header '### Título' en su propia línea, viñetas '- ' una por línea, cifras/fechas clave en **negritas**.");
+      const reply = await runAgent("Hazme el weekly review. Llama list_calendar_events (days_ahead 7) para los eventos de la próxima semana — inclúyelos. Luego: qué completé, qué bloqueado, prioridades próxima semana. NO incluyas gasto ni finanzas: eso va en el cierre mensual. FORMATO: cada bloque con un header '### Título' en su propia línea, viñetas '- ' una por línea, cifras/fechas clave en **negritas**.");
       await broadcast(`📊 *Weekly Review*\n\n${reply}`);
     } catch (err) { console.error("[cron] weekly review:", err.message); }
   }, { timezone: "Europe/Paris" });
 
-  // Sunday 19:00 Paris — CFO weekly briefing (after the weekly review at 18:00).
-  // Single LLM call via advisor.js, deterministic snapshot + structured advice.
-  cron.schedule("0 19 * * 0", async () => {
-    try {
-      const text = await runWeeklyAdvisorBriefing();
-      await broadcast(text);
-    } catch (err) { console.error("[cron] cfo weekly:", err.message); }
-  }, { timezone: "Europe/Paris" });
+  console.log("[scheduler] started — hourly inbox scan + daily/weekly briefings + monthly statement reminder (day 6) + monthly close (on upload, fallback day 10) + 2h proactive scan + monthly FX");
 
-  console.log("[scheduler] started — hourly inbox scan + daily/weekly briefings + monthly statement reminder (day 6) + 2h proactive scan + monthly FX + sunday 19:00 CFO");
+  // Boot kick: a deploy can land after a statement batch was uploaded (and the
+  // debounce timer died with the old container) — re-check once on startup.
+  queueMonthlyCloseCheck(60_000);
 
   // Boot kick: scan inbox 30s after startup so each redeploy gives quick feedback
   setTimeout(async () => {

@@ -8,11 +8,30 @@
 - **Transacciones**: parsers deterministas para Amex FR + Revolut (`bankCsv.js`). El parser viejo basado solo en LLM tenía dos bugs grandes (ver "Aprendizajes 2026-05-24" abajo).
 - **3-agent split shipped 2026-05-24**: Ingestor (`transactions.js`/`email.js`) + Analyst (`agent.js`) + Proactive (`proactive.js`). Notion: organigram → `MVP-Assistant — Organigram` page.
 - **Proactive watchman**: corre cada 2h entre 08:00–22:00 Paris. Default silencio. Snapshot → JSON estricto → `broadcast()` solo si `interrupt=true`.
-- **Daily briefing**: ahora incluye calendario (1d ahead) + `spend_pace` (gasto MTD, proyección fin de mes, top 3 categorías con delta % vs mismo periodo mes anterior).
+- **Daily briefing**: calendario (1d ahead) + tareas. **Sin bloque de gasto desde 2026-10-26** (ver "Cierre mensual" abajo).
+- **Cierre mensual del CFO (2026-10-26)** — `monthlyClose.js`. Reemplaza al "CFO Weekly" del domingo 19:00, a las alertas de pace del watchman y al gasto del briefing/weekly. Ver sección abajo.
 - **Bulk import histórico**: `scripts/import-local.mjs` + endpoint `POST /import/normalized?key=$INTERNAL_IMPORT_KEY` (solo esquema normalizado). Para exports **crudos** del banco: `POST /import/csv` / `/import/pdf`, o `scripts/sync-bank-folders.mjs` que recorre las carpetas de statements. Ver "Aprendizajes 2026-07-31".
 - **Subida de statements: mensual** (desde 2026-07-31). Recordatorio único el día 6 (`0 9 6 * *`); se eliminó el nudge semanal de Revolut.
 - **B2B / techo micro shipped 2026-06-05** (`ceiling.js` + tab B2B): el operador opera Vandfort + Zentra + Touro bajo **una sola EI** (SIRET 10549166600019), así que el CA de los tres **suma a un único techo**. El módulo calcula el CA combinado del año, lo atribuye por keyword, excluye salario CDI + transferencias internas, marca ingresos sin clasificar, proyecta el cruce a fin de año, y dispara alerta por Telegram al cruzar 60/70/85/95/100% de la franchise TVA (€37.5k) y el techo micro (€77.7k). Cuenta Shine registrada como prefijo `shine:` (B2B independiente de lo personal). **Pendiente único**: ingestión de Shine (CSV/email/API — por definir cuando la cuenta esté activa); hoy el tab muestra €0 sin datos. Zentra y Touro comparten cuenta Stripe → no se separan entre sí desde el banco.
 - **WhatsApp**: **diferido** — código integrado pero apagado por flag (`ENABLE_WHATSAPP=false` default). Detalles abajo.
+
+## Cierre mensual del CFO — 2026-10-26
+
+**Por qué:** en prod hay **0 transacciones con `source='email'`**: el escaneo IMAP horario nunca registró una sola fila, y Revolut no manda emails. Todo el gasto entra con la subida mensual de statements, así que el CFO Weekly, el `spend_pace` del briefing, el desglose semanal y las alertas de pace analizaban un mes casi vacío. No era ruido molesto: eran **cifras falsas**.
+
+**Qué hace ahora:**
+- Cada import determinista registra en `statement_coverage` qué fechas cubre el fichero. BNP: periodo impreso ("du … au …", `exact=1`). Amex/Revolut: min/max de las filas (incluye duplicados: re-subir un fichero también prueba cobertura).
+- Un mes está **completo** cuando los tres bancos lo cubren entero. Los rangos de filas se ensanchan 10 días hacia atrás (une ciclos Amex que cierran el 20) y 3 hacia delante; un statement entero que falta deja un hueco de ~30 días y se detecta.
+- ~90 s después de la última subida de una tanda (debounce), se manda el cierre de cada uno de los 2 últimos meses terminados que esté completo y no enviado. **Una vez**: `monthly_reports.sent_at`, que solo se marca si Telegram lo entregó de verdad (`broadcast()` ahora devuelve si algún canal entregó).
+- Día 10 (`0 9 10 * *`): si el mes anterior sigue incompleto, **un** mensaje con lo que falta por banco ("Amex: falta del 1-jun al 20-jun").
+- A demanda: "cierre de septiembre" → tool `monthly_close` (genera aunque falten datos y lo marca como provisional).
+- Dashboard: pestaña **Close** (cobertura por banco de los últimos 6 meses + snapshot del mes).
+- Las cifras salen de un snapshot determinista; el LLM solo redacta. Si fallan los providers, se manda igual con las cifras.
+
+**Abierto:**
+- **Amex del 21-may al 20-jun no está en ninguna carpeta**: `Amex/2026-06-20.csv` es una copia byte a byte de `2026-05-20.csv`. Mayo y junio salen incompletos hasta que se suba el statement real del 20-jun.
+- Amex cierra el 20: con statements, el mes M solo queda completo con el del 20/M+1. El recordatorio del día 6 pide ahora el export de *Activité* del 1 al último día del mes.
+- Si se quiere el mes en curso en tiempo real: reenviar notificaciones push del Pixel (MacroDroid → webhook) como filas *provisionales* que el statement mensual reemplace. Sin esa regla de reemplazo vuelve el bug de las pre-autorizaciones revertidas.
 
 ## ⚠️ Aprendizajes 2026-05-24 (no repetir)
 

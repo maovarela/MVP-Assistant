@@ -26,7 +26,9 @@ everything else. There is no build step.
   `email.js` — IMAP bank-email ingestion · `fx.js` — FX rates.
 - `dashboard.js` — server-rendered web dashboard (one big HTML string, Tailwind
   CDN + Chart.js) · `ceiling.js` — micro-entreprise CA ceiling tracking ·
-  `proactive.js` / `advisor.js` — scheduled briefings.
+  `proactive.js` — 2h watchman (tasks/calendar only) · `advisor.js` — on-demand
+  CFO review · `monthlyClose.js` — the monthly CFO close, sent once a month's
+  statements cover all three banks (tracks per-file `statement_coverage`).
 - `etoro.js` / `etoroPage.js` — eToro foreign-account tax module (`/etoro`).
 - `scripts/*.mjs` — one-off CLI importers/maintenance (run with `node scripts/x.mjs`).
 

@@ -80,11 +80,13 @@ export function renderDashboard(period) {
         <div class="font-headline font-medium text-[10px] tracking-[0.2em] text-outline uppercase">MVP</div>
       </div>
     </div>
-    <!-- Tab nav: Overview | Transactions -->
-    <nav class="flex items-center gap-1">
+    <!-- Tab nav: Overview | Transactions | B2B | Close. Scrolls sideways on
+         narrow phones instead of pushing the period picker off-screen. -->
+    <nav class="flex items-center gap-1 min-w-0 overflow-x-auto [&>*]:flex-shrink-0">
       <button id="tabResumen"   class="tabBtn px-2.5 sm:px-3 py-3.5 sm:py-1.5 rounded-full text-xs font-semibold transition-colors bg-primary text-on-primary">Overview</button>
       <button id="tabHistorico" class="tabBtn px-2.5 sm:px-3 py-3.5 sm:py-1.5 rounded-full text-xs font-semibold transition-colors bg-surface-container text-on-surface hover:bg-surface-container-high">Transactions</button>
       <button id="tabB2b"       class="tabBtn px-2.5 sm:px-3 py-3.5 sm:py-1.5 rounded-full text-xs font-semibold transition-colors bg-surface-container text-on-surface hover:bg-surface-container-high">B2B</button>
+      <button id="tabClose"     class="tabBtn px-2.5 sm:px-3 py-3.5 sm:py-1.5 rounded-full text-xs font-semibold transition-colors bg-surface-container text-on-surface hover:bg-surface-container-high">Close</button>
       <a id="etoroLink" href="/etoro" title="eToro foreign-account regularization (3916-bis)" class="px-2.5 sm:px-3 py-3.5 sm:py-1.5 rounded-full text-xs font-semibold transition-colors bg-surface-container text-on-surface hover:bg-surface-container-high">eToro</a>
       <button id="addExpenseBtn" title="Log an expense" class="flex items-center gap-1 px-2.5 sm:px-3 py-3.5 sm:py-1.5 rounded-full text-xs font-semibold transition-colors bg-surface-container text-on-surface hover:bg-surface-container-high">
         <span class="material-symbols-outlined" style="font-size:16px">add</span><span class="hidden sm:inline">Add</span>
@@ -423,6 +425,45 @@ export function renderDashboard(period) {
 
 </main>
 
+<!-- VIEW: Monthly close (statement coverage per bank + the month's close snapshot) -->
+<main id="viewClose" class="hidden max-w-5xl mx-auto px-4 pt-4 space-y-4">
+
+  <section class="rounded-2xl p-4 flex items-start gap-3 border border-outline-variant/15 bg-surface-container-lowest">
+    <span class="material-symbols-outlined text-secondary" style="font-size:18px">task_alt</span>
+    <div class="text-xs text-on-surface">
+      <div class="font-semibold">Monthly close — sent to Telegram once BNP, Amex and Revolut cover the whole month</div>
+      <div class="text-outline mt-0.5">If last month is still incomplete on the 10th, the bot says which statement is missing. Click a month to see its close.</div>
+    </div>
+  </section>
+
+  <section class="rounded-2xl bg-surface-container-lowest border border-outline-variant/15 overflow-hidden">
+    <div class="flex items-center gap-2 px-4 py-3 border-b border-outline-variant/15">
+      <span class="material-symbols-outlined text-secondary" style="font-size:18px">fact_check</span>
+      <h3 class="font-headline font-bold text-base tracking-tight">Statement coverage</h3>
+    </div>
+    <div id="closeMonths" class="p-2 overflow-x-auto">
+      <div class="text-xs text-outline italic p-3">Loading…</div>
+    </div>
+  </section>
+
+  <section class="rounded-2xl bg-surface-container-lowest border border-outline-variant/15 p-5 space-y-4">
+    <div class="flex items-end justify-between gap-3 flex-wrap">
+      <div>
+        <div class="text-[10px] font-bold uppercase tracking-wider text-outline">Net · <span id="closePeriod">—</span></div>
+        <div class="font-headline text-3xl font-bold tabular-nums mt-1" id="closeNet">—</div>
+        <div class="text-[11px] text-outline mt-0.5">income <span id="closeIncome" class="text-on-surface font-semibold">—</span> · expenses <span id="closeExpenses" class="text-on-surface font-semibold">—</span></div>
+      </div>
+      <div class="text-right">
+        <div class="text-[10px] font-bold uppercase tracking-wider text-outline">3-month avg expenses</div>
+        <div class="font-headline text-xl font-bold tabular-nums mt-1" id="closeAvg">—</div>
+      </div>
+    </div>
+    <div class="overflow-x-auto"><table class="w-full text-xs sm:text-sm" id="closeCats"></table></div>
+    <div id="closeReview" class="space-y-1 text-xs"></div>
+  </section>
+
+</main>
+
 <!-- VIEW: Histórico (flat editable transactions list) -->
 <main id="viewHistorico" class="hidden max-w-6xl mx-auto px-4 pt-4 space-y-4">
   <section class="rounded-2xl bg-surface-container-lowest border border-outline-variant/15 p-5">
@@ -697,6 +738,7 @@ export function renderDashboard(period) {
     document.getElementById("viewResumen").classList.toggle("hidden",   tab !== "resumen");
     document.getElementById("viewHistorico").classList.toggle("hidden", tab !== "historico");
     document.getElementById("viewB2B").classList.toggle("hidden",       tab !== "b2b");
+    document.getElementById("viewClose").classList.toggle("hidden",     tab !== "close");
     document.querySelectorAll(".tabBtn").forEach((b) => {
       const isActive = b.id.endsWith(tab.charAt(0).toUpperCase() + tab.slice(1));
       b.className = "tabBtn px-3 py-1.5 rounded-full text-xs font-semibold transition-colors " +
@@ -707,15 +749,91 @@ export function renderDashboard(period) {
     history.replaceState(null, "", url);
     if (tab === "historico") loadHistorico();
     if (tab === "b2b") loadB2B();
+    if (tab === "close") loadClose();
   }
   // bind after DOM is parsed (this script is at end of body so OK)
   setTimeout(() => {
     document.getElementById("tabResumen").onclick   = () => switchTab("resumen");
     document.getElementById("tabHistorico").onclick = () => switchTab("historico");
     document.getElementById("tabB2b").onclick       = () => switchTab("b2b");
+    document.getElementById("tabClose").onclick     = () => switchTab("close");
     if (activeTab === "historico") switchTab("historico");
     if (activeTab === "b2b")       switchTab("b2b");
+    if (activeTab === "close")     switchTab("close");
   }, 0);
+
+  // ─── Monthly close tab loader ─────────────────────────────────────────────
+  // Reads /api/monthly-close.json: per-bank statement coverage of the last 6
+  // closed months + the selected month's deterministic close snapshot (the same
+  // numbers the Telegram close is written from).
+  async function loadClose(period) {
+    const elMonths = document.getElementById("closeMonths");
+    try {
+      const r = await fetch("/api/monthly-close.json?key=" + encodeURIComponent(key) + (period ? "&period=" + period : ""));
+      const d = await r.json();
+      if (d.error) throw new Error(d.error);
+      const eur = (n) => (n < 0 ? "-" : "") + "€" + Math.abs(Math.round(Number(n || 0))).toLocaleString("fr-FR");
+      const set = (id, v) => { const e = document.getElementById(id); if (e) e.textContent = v; };
+      const MON =["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
+      const label = (p) => MON[Number(p.slice(5, 7)) - 1] + " " + p.slice(0, 4);
+      const day = (iso) => Number(iso.slice(8, 10)) + " " + MON[Number(iso.slice(5, 7)) - 1];
+      const badge = (a) => a.complete
+        ? '<span class="px-2 py-0.5 rounded text-[10px] font-semibold bg-primary-container text-on-primary-container">✓</span>'
+        : '<span class="px-2 py-0.5 rounded text-[10px] font-semibold bg-warn-container text-warn whitespace-nowrap">missing ' + day(a.missing_from) + "–" + day(a.missing_to) + '</span>';
+
+      const head = '<tr class="text-[10px] uppercase tracking-wider text-outline">' +
+        '<th class="text-left px-3 py-2">Month</th><th class="px-2">BNP</th><th class="px-2">Amex</th><th class="px-2">Revolut</th>' +
+        '<th class="hidden sm:table-cell text-right px-3">Close</th></tr>';
+      const rows = d.months.map((m) => {
+        const status = m.report && m.report.sent_at ? "sent " + day(m.report.sent_at.slice(0, 10))
+          : (m.complete ? "ready" : "waiting for statements");
+        return '<tr class="closeRow cursor-pointer hover:bg-surface-container-low' + (m.period === d.period ? " bg-surface-container" : "") + '" data-period="' + m.period + '">' +
+          '<td class="px-3 py-2 font-semibold whitespace-nowrap">' + label(m.period) + '</td>' +
+          '<td class="px-2 text-center">' + badge(m.accounts.bnp) + '</td>' +
+          '<td class="px-2 text-center">' + badge(m.accounts.amex) + '</td>' +
+          '<td class="px-2 text-center">' + badge(m.accounts.revolut) + '</td>' +
+          '<td class="hidden sm:table-cell px-3 text-right text-outline text-[11px] whitespace-nowrap">' + status + '</td></tr>';
+      }).join("");
+      elMonths.innerHTML = '<table class="w-full text-sm">' + head + rows + '</table>';
+      elMonths.querySelectorAll(".closeRow").forEach((row) => { row.onclick = () => loadClose(row.dataset.period); });
+
+      const s = d.snapshot;
+      set("closePeriod", label(s.period));
+      set("closeNet", eur(s.totals.net) + (s.totals.net_pct_of_income != null ? " (" + s.totals.net_pct_of_income + "%)" : ""));
+      set("closeIncome", eur(s.totals.income));
+      set("closeExpenses", eur(s.totals.expenses));
+      set("closeAvg", eur(s.totals.avg_expenses_3m));
+
+      const budgetHdr = "Budget" + (s.budget_period && s.budget_period !== s.period ? " (" + label(s.budget_period) + ")" : "");
+      const catRows = s.categories.slice(0, 14).map((c) => {
+        const vs = c.vs_avg_pct == null ? "—" : (c.vs_avg_pct > 0 ? "+" : "") + c.vs_avg_pct + "%";
+        const vsCls = c.vs_avg_pct >= 30 ? "text-error" : (c.vs_avg_pct != null && c.vs_avg_pct <= -30 ? "text-primary" : "text-outline");
+        const over = c.budget > 0 && c.actual > c.budget * 1.1;
+        return '<tr class="border-t border-outline-variant/10">' +
+          '<td class="px-2 py-1.5">' + escapeHtml(c.category) + '</td>' +
+          '<td class="px-2 text-right tabular-nums font-semibold' + (over ? " text-error" : "") + '">' + eur(c.actual) + '</td>' +
+          '<td class="hidden sm:table-cell px-2 text-right tabular-nums text-outline">' + (c.budget ? eur(c.budget) : "—") + '</td>' +
+          '<td class="px-2 text-right tabular-nums text-outline">' + eur(c.avg_3m) + '</td>' +
+          '<td class="px-2 text-right tabular-nums ' + vsCls + '">' + vs + '</td></tr>';
+      }).join("");
+      document.getElementById("closeCats").innerHTML =
+        '<tr class="text-[10px] uppercase tracking-wider text-outline"><th class="text-left px-2 py-1">Category</th>' +
+        '<th class="text-right px-2">Actual</th><th class="hidden sm:table-cell text-right px-2">' + budgetHdr + '</th>' +
+        '<th class="text-right px-2">3-mo avg</th><th class="text-right px-2">vs avg</th></tr>' + catRows;
+
+      const items = [];
+      s.new_subscriptions.forEach((x) => items.push("New subscription: <b>" + escapeHtml(x.merchant) + "</b> " + eur(x.amount)));
+      s.stopped_subscriptions.forEach((x) => items.push("Stopped: <b>" + escapeHtml(x.merchant) + "</b> (avg " + eur(x.prior_avg) + ")"));
+      s.recurring_price_up.forEach((x) => items.push("Up vs 3-mo avg: <b>" + escapeHtml(x.merchant) + "</b> " + eur(x.amount) + " vs " + eur(x.prior_avg)));
+      s.largest_outflows.forEach((x) => items.push("Large one-off: <b>" + escapeHtml(x.merchant) + "</b> " + eur(x.amount) + " · " + day(x.date)));
+      document.getElementById("closeReview").innerHTML = items.length
+        ? '<div class="text-[10px] font-bold uppercase tracking-wider text-outline mb-1">To review</div>' +
+          items.map((t) => '<div class="text-on-surface">' + t + '</div>').join("")
+        : "";
+    } catch (err) {
+      elMonths.innerHTML = '<div class="text-xs text-error p-3">Error: ' + escapeHtml(err.message || err) + '</div>';
+    }
+  }
 
   // ─── B2B (Shine / negocio) tab loader ─────────────────────────────────────
   // Reads /api/ceiling.json (CA combinado del año, split por negocio, forecast,

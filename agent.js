@@ -31,6 +31,7 @@ import { listEvents, searchEvents } from "./calendar.js";
 import { sendEmail } from "./mailer.js";
 import { runAdvisorReview } from "./advisor.js";
 import { runAnalyst } from "./analyst.js";
+import { getMonthlyCloseOnDemand } from "./monthlyClose.js";
 
 // ─── System Prompt ────────────────────────────────────────────────────────────
 
@@ -104,6 +105,7 @@ TOOLS POR ESCENARIO:
 - "cómo voy este mes" / "resumen del presupuesto" → get_budget_summary.
 - "cuánto he gastado en X" → spend_by_category / spend_by_merchant.
 - "dame consejos" / "analiza mis finanzas" / "qué opinas de mi mes" / "revisión financiera" → financial_advisor_review (devuelve markdown formateado — pásaselo tal cual).
+- "cierre de septiembre" / "cierre del mes" / "reporte mensual" / "cómo cerré el mes" → monthly_close (devuelve markdown — pásalo TAL CUAL, sin re-resumir).
 - "gasté 12€ en café" / "pagué 45 en el súper" / "-30 taxi" / "me llegaron 200 de reembolso" → log_expense (gasto/ingreso REAL hecho a mano). Distinto de set_fixed_expense (eso es budget planeado).
 - "mi arriendo este mes son 1600€" → set_fixed_expense(label:"Arriendo", budget_eur:1600, category:"housing").
 - "el dolar está a 4100" → set_fx_rate.
@@ -293,6 +295,12 @@ const TOOLS = [
       lookback_months:  { type: "number", description: "Cuántos meses pasados para detectar tendencias. Default 6." },
     },
   }),
+  fn("monthly_close", "Cierre mensual del CFO de un mes YA TERMINADO: ingresos/gastos/neto, presupuesto vs real, vs media de 3 meses, suscripciones nuevas/dadas de baja/que subieron, gastos grandes y 3 acciones. Úsalo para 'cierre de septiembre', 'cierre del mes', 'reporte mensual', 'cómo cerré el mes'. Si faltan statements lo genera igual y lo marca como provisional. Devuelve { markdown } — pásalo TAL CUAL al usuario.", {
+    type: "object",
+    properties: {
+      period: { type: "string", description: "YYYY-MM del mes a cerrar. Default: el último mes terminado." },
+    },
+  }),
   fn("analyst_query", "Subagente especializado: Financial Analyst (read-only). Le pasas UNA pregunta libre y él internamente decide qué tools financieros llamar (hasta 5 rondas) y devuelve markdown ya formateado. Úsalo cuando la pregunta requiere MULTIPLES queries o análisis cruzado: 'analiza mi shopping este Q', 'compara abril vs marzo por categoría', 'qué patrón ves en mis transferencias', 'estoy on track para mis ahorros del año', 'por qué subió tanto entertainment'. Pasa la respuesta markdown TAL CUAL al usuario sin re-resumir. NO lo uses para mutaciones (set_*) ni para preguntas simples (cuánto gasté, qué tarea tengo) — para esas usa las tools directas.", {
     type: "object",
     properties: {
@@ -439,6 +447,8 @@ async function executeTool(name, input) {
       return await runAdvisorReview({ period: input.period, lookbackMonths: input.lookback_months });
     case "analyst_query":
       return { markdown: await runAnalyst(input.question) };
+    case "monthly_close":
+      return await getMonthlyCloseOnDemand(input.period);
     case "set_account_balance":      return setAccountBalance(input);
     case "get_account_cashflow":     return getAccountCashflow({ account: input.account || "bnp", period: input.period });
     case "scan_inbox_now":      return await fetchAndParseRecent({ daysBack: input.days_back || 1 });

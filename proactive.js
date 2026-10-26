@@ -1,20 +1,20 @@
 // proactive.js
 // The "watchman" agent. Runs every 2h between 08:00 and 22:00 Paris.
-// Default behaviour: stay silent. Only emits a message when a real time- or
-// money-sensitive signal is found (anomalous charge, deadline today, calendar
-// conflict, etc.).
+// Default behaviour: stay silent. Only emits a message when a real
+// time-sensitive signal is found (deadline today, calendar conflict, a micro
+// ceiling crossed).
+//
+// No spending signals: transactions only arrive with the monthly statement
+// upload (Revolut sends no emails and the IMAP ingestor has never stored a row),
+// so "anomalous charge today" / budget-pace alerts ran on an almost-empty month
+// and were noise. Spending analysis lives in the monthly close (monthlyClose.js).
 //
 // Architectural note: this is NOT a tool-loop agent. It receives a precomputed
 // snapshot of the DB + a strict-JSON instruction and returns one decision.
 // Keeps cost bounded (1 LLM call per scan) and the contract testable.
 
 import { callLLMText } from "./llm.js";
-import db, {
-  listTasks,
-  listTransactions,
-  getBudgetPaceAlerts,
-  markPaceAlertsSent,
-} from "./memory.js";
+import { listTasks } from "./memory.js";
 import { listEvents } from "./calendar.js";
 import { getCeilingAlerts, markCeilingAlertsSent, formatCeilingAlerts } from "./ceiling.js";
 
@@ -25,16 +25,12 @@ realmente urgente o sorprendente. El usuario ya recibe briefing diario a las
 8:00 y weekly review los domingos — no repitas lo que ya verá ahí.
 
 Razones VÁLIDAS para interrumpir AHORA (no más tarde):
-- Un cargo bancario sospechoso o inusualmente grande (anomaly).
-- Una suscripción nueva detectada (primer cobro de un comercio recurrente).
 - Una tarea con due_date = hoy que sigue en Todo y son ya las tardes.
 - Un evento de calendario en las próximas 2 horas con conflicto evidente.
-- Algo claramente roto (no llegaron emails bancarios en >24h cuando suelen llegar a diario).
 
 Razones INVÁLIDAS (no interrumpas):
 - Información que el briefing de mañana cubrirá igual.
-- "Estás gastando mucho este mes" sin un dato concreto sorprendente.
-- Pace/exceso de budget de una categoría — eso se calcula y se manda por separado. NO lo menciones.
+- Cualquier tema de gasto, presupuesto o finanzas — va en el cierre mensual. NO lo menciones.
 - Recordatorios genéricos.
 
 OUTPUT: JSON estricto, una sola línea, sin markdown ni prose fuera del JSON:
@@ -49,52 +45,6 @@ Si dudas, interrupt=false.`;
 
 function todayISO() {
   return new Date().toISOString().slice(0, 10);
-}
-
-function daysAgoISO(n) {
-  const d = new Date();
-  d.setDate(d.getDate() - n);
-  return d.toISOString().slice(0, 10);
-}
-
-function median(nums) {
-  if (!nums.length) return 0;
-  const sorted = [...nums].sort((a, b) => a - b);
-  const mid = Math.floor(sorted.length / 2);
-  return sorted.length % 2 ? sorted[mid] : (sorted[mid - 1] + sorted[mid]) / 2;
-}
-
-function buildTransactionSnapshot() {
-  const today = todayISO();
-  const last30 = daysAgoISO(30);
-
-  const todays = listTransactions({ from: today, to: today, limit: 50 });
-  const last30d = listTransactions({ from: last30, to: today, limit: 1000 });
-
-  const expenseAmts = last30d.filter((t) => t.amount < 0).map((t) => Math.abs(t.amount));
-  const med30 = median(expenseAmts);
-
-  // First-time merchants: in last 7 days but not in the prior 90 days.
-  const last7Cutoff   = daysAgoISO(7);
-  const last90Cutoff  = daysAgoISO(90);
-  const recentMerchants = new Set(
-    db.prepare(`SELECT DISTINCT merchant FROM transactions WHERE date >= ? AND merchant IS NOT NULL`)
-      .all(last7Cutoff).map((r) => r.merchant)
-  );
-  const priorMerchants = new Set(
-    db.prepare(`SELECT DISTINCT merchant FROM transactions WHERE date >= ? AND date < ? AND merchant IS NOT NULL`)
-      .all(last90Cutoff, last7Cutoff).map((r) => r.merchant)
-  );
-  const newMerchants = [...recentMerchants].filter((m) => !priorMerchants.has(m));
-
-  return {
-    today_tx_count:        todays.length,
-    todays_transactions:   todays.map((t) => ({
-      merchant: t.merchant, amount: t.amount, currency: t.currency, category: t.category,
-    })),
-    median_expense_last_30d: med30,
-    new_merchants_last_7d:   newMerchants,
-  };
 }
 
 function buildTaskSnapshot() {
@@ -123,25 +73,6 @@ async function buildCalendarSnapshot() {
   };
 }
 
-function buildIngestorHealthSnapshot() {
-  const lastTx = db.prepare(`SELECT MAX(created_at) AS last FROM transactions WHERE source='email'`).get();
-  const lastTxAt = lastTx?.last ? new Date(lastTx.last).getTime() : 0;
-  const hoursSince = lastTxAt ? Math.round((Date.now() - lastTxAt) / 3_600_000) : null;
-  return { hours_since_last_bank_email: hoursSince };
-}
-
-// Deterministic, human-facing text for budget-pace alerts. Single * so both
-// Telegram (HTML converter) and WhatsApp render the category in bold.
-function formatPaceAlerts(alerts) {
-  const lines = alerts.map((a) =>
-    a.bucket === 2
-      ? `- *${a.category}*: €${a.actual}/€${a.budget} (${a.pct}%) — ya pasaste el budget`
-      : `- *${a.category}*: €${a.actual}/€${a.budget} (${a.pct}%), proyección €${a.projected} → te pasas`
-  );
-  const dl = alerts[0]?.days_left;
-  return `📊 *Pace de budget*${dl != null ? ` (quedan ${dl} días)` : ""}\n${lines.join("\n")}`;
-}
-
 // ─── Public entrypoint ───────────────────────────────────────────────────────
 
 /**
@@ -149,44 +80,26 @@ function formatPaceAlerts(alerts) {
  *   { interrupt: boolean, message: string, why: string, snapshot: ... }
  * Caller is responsible for actually broadcasting the message if interrupt=true.
  *
- * Two independent signals are merged: (1) deterministic budget-pace alerts
- * (computed + deduped in memory.js — these fire on their own, even if the LLM
- * call fails) and (2) the fuzzy LLM watchman for anomalies/tasks/calendar.
+ * Two independent signals are merged: (1) deterministic micro ceiling alerts
+ * (computed + deduped in ceiling.js — these fire on their own, even if the LLM
+ * call fails) and (2) the fuzzy LLM watchman for tasks/calendar.
  */
 export async function runProactiveScan() {
   const snapshot = {
     now_iso:    new Date().toISOString(),
     day_of_week: new Date().toLocaleDateString("en-US", { weekday: "long" }),
-    transactions: buildTransactionSnapshot(),
     tasks:        buildTaskSnapshot(),
     calendar:     await buildCalendarSnapshot(),
-    ingestor:     buildIngestorHealthSnapshot(),
   };
 
-  // (1) Deterministic budget-pace alerts. Independent of the LLM so they still
-  // fire if the model call errors. Mark sent now (we always surface them).
-  let pacePart = "";
-  let paceWhy  = "";
-  try {
-    const paceAlerts = getBudgetPaceAlerts();
-    if (paceAlerts.length) {
-      pacePart = formatPaceAlerts(paceAlerts);
-      paceWhy  = `pace:${paceAlerts.map((a) => `${a.category}/${a.bucket}`).join(",")}`;
-      markPaceAlertsSent(paceAlerts);
-    }
-    snapshot.budget_pace = { new_alerts: paceAlerts };
-  } catch (err) {
-    console.error("[proactive] pace check failed:", err.message);
-  }
-
-  // (1b) Deterministic micro-entreprise ceiling alerts. Same contract as pace:
-  // computed + deduped in ceiling.js, fire even if the LLM call errors. CA de
-  // Vandfort + Zentra + Touro suma a un unico techo (es una sola EI).
+  // (1) Deterministic micro-entreprise ceiling alerts: computed + deduped in
+  // ceiling.js, fire even if the LLM call errors. CA de Vandfort + Zentra +
+  // Touro suma a un unico techo (es una sola EI). Kept out of the LLM snapshot —
+  // the watchman is told finances are not its business.
   let ceilingPart = "";
   let ceilingWhy  = "";
   try {
-    const { alerts: ceilingAlerts, status } = getCeilingAlerts();
-    snapshot.ceiling = status;
+    const { alerts: ceilingAlerts } = getCeilingAlerts();
     if (ceilingAlerts.length) {
       ceilingPart = formatCeilingAlerts(ceilingAlerts);
       ceilingWhy  = `ceiling:${ceilingAlerts.map((a) => `${a.threshold}/${a.bucket}`).join(",")}`;
@@ -196,8 +109,8 @@ export async function runProactiveScan() {
     console.error("[proactive] ceiling check failed:", err.message);
   }
 
-  // (2) Fuzzy LLM watchman. Failures degrade to silence — pace alerts (if any)
-  // still go out.
+  // (2) Fuzzy LLM watchman. Failures degrade to silence — ceiling alerts (if
+  // any) still go out.
   let llmMessage = "";
   let llmWhy     = "";
   const userPrompt =
@@ -229,11 +142,11 @@ export async function runProactiveScan() {
     llmWhy = `llm_error: ${err.message}`;
   }
 
-  const parts = [pacePart, ceilingPart, llmMessage].filter(Boolean);
+  const parts = [ceilingPart, llmMessage].filter(Boolean);
   return {
     interrupt: parts.length > 0,
     message:   parts.join("\n\n"),
-    why:       [paceWhy, ceilingWhy, llmWhy].filter(Boolean).join(" | "),
+    why:       [ceilingWhy, llmWhy].filter(Boolean).join(" | "),
     snapshot,
   };
 }

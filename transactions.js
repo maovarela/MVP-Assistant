@@ -16,6 +16,7 @@ import db, {
 } from "./memory.js";
 import { callLLMText, callLLM, getProviders } from "./llm.js";
 import { detectBankFormat, parseAmexCsv, parseRevolutCsv, parseBnpPdfText, categorize as keywordCategorize } from "./bankCsv.js";
+import { recordCoverage, recordCoverageFromRows } from "./monthlyClose.js";
 
 // ─── Categories — single source of truth ─────────────────────────────────────
 const CATEGORIES = [
@@ -183,6 +184,11 @@ export async function importCsv(filePath) {
       });
       if (id) inserted++; else duplicates++;
     }
+    // Which dates this file covers — feeds the monthly-close completeness check.
+    // All parsed rows count, duplicates too: a re-upload still proves coverage.
+    try { recordCoverageFromRows(fmt, parsed); }
+    catch (err) { console.error(`[csv] coverage not recorded for ${fmt}:`, err.message); }
+
     // Revolut carries a running balance per row → balance-continuity check
     // (the Revolut analog of BNP's opening+Σ=closing). Amex CSVs have no balance
     // or total, so there's no anchor — reconciled stays null (not flagged).
@@ -466,6 +472,13 @@ export async function importPdf(filePath) {
       });
       if (id) inserted++; else skipped++;
     }
+    // Coverage for the monthly close: the printed statement window when we have
+    // it, else the span of its rows.
+    try {
+      if (bnpTxs.coverage) recordCoverage({ account: "bnp", ...bnpTxs.coverage, exact: true, rows: bnpTxs.length });
+      else recordCoverageFromRows("bnp", bnpTxs);
+    } catch (err) { console.error("[pdf] coverage not recorded:", err.message); }
+
     // Persist opening/closing balances if extracted. opening_eur in this
     // statement = closing of previous month. The end_period is the month the
     // statement closes (typically same as transaction dates).

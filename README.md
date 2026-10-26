@@ -7,8 +7,9 @@ Personal PM + finance agent. Telegram bot backed by an OpenAI-compatible LLM (Ge
 - 📋 **Project & task tracking** — projects, tasks with priorities, due dates, status
 - 💰 **Spending intelligence** — auto-parses bank notification emails (Amex, Revolut, BNP) + bulk import of historical CSV/PDF statements with **per-bank deterministic parsers** (no LLM call, no sign bugs)
 - 🤖 **Conversational** — ask anything in Spanish/English, agent uses tools to query DB
-- 📅 **Daily briefings** — 8 AM Paris brief (now includes calendar + spending pace), 9 AM follow-ups, Sunday 6 PM weekly review, Sunday 10 AM Revolut upload nudge
-- 🛎️ **Proactive watchman** — scans every 2h between 08:00 and 22:00 Paris; stays silent by default, only interrupts for anomalous charges, deadlines today, calendar conflicts, etc.
+- 📅 **Daily briefings** — 8 AM Paris brief (calendar + tasks, no spending), 9 AM follow-ups, Sunday 6 PM weekly review (PM only)
+- 📒 **Monthly close** — the CFO report, sent once per month as soon as BNP + Amex + Revolut statements cover the whole month ([monthlyClose.js](monthlyClose.js)); day-10 fallback says which statement is missing
+- 🛎️ **Proactive watchman** — scans every 2h between 08:00 and 22:00 Paris; stays silent by default, only interrupts for deadlines today, calendar conflicts and micro-ceiling thresholds (no spending signals: transactions only arrive monthly)
 - ⚡ **Webhook-based** — instant Telegram replies, no polling lag
 
 ## Architecture (4-agent split)
@@ -69,13 +70,14 @@ MVP-Assistant/
 ├── server.js                # Express + webhooks + scheduler + /debug/stats + /import/normalized + dashboard APIs
 ├── agent.js                 # ② Main Agent — conversational tool-use loop (PM + finance + email + Notion)
 ├── analyst.js               # ④ Financial Analyst subagent — read-only, 12 finance tools, tool-loop (called via analyst_query)
-├── advisor.js               # CFO-style monthly review (markdown), one-shot via financial_advisor_review tool
+├── advisor.js               # CFO-style review (markdown), on demand via financial_advisor_review tool
+├── monthlyClose.js          # Monthly close: statement coverage per bank, completeness check, the close report (Telegram + Close tab)
 ├── proactive.js             # ③ Proactive watchman — 2h scans, strict-JSON output
 ├── transactions.js          # ① Ingestor entrypoint — email/CSV/PDF
 ├── bankCsv.js               # Deterministic Amex/Revolut/BNP parsers (sign-correct, multi-section, internal-transfer auto-flag)
 ├── ceiling.js               # B2B micro-entreprise ceiling: combined CA (Vandfort+Zentra+Touro = 1 EI), forecast, threshold alerts
 ├── ceiling.config.json      # Ceiling thresholds + per-business income keywords (editable)
-├── dashboard.js             # HTML shell for /dashboard (Overview + Transactions + B2B tabs, Chart.js via CDN, mobile-first)
+├── dashboard.js             # HTML shell for /dashboard (Overview + Transactions + B2B + Close tabs, Chart.js via CDN, mobile-first)
 ├── fx.js                    # Free FX rate fetch (exchangerate.host + open.er-api fallback)
 ├── memory.js                # SQLite layer: messages, projects, tasks, transactions, budgets, pending_items, llm_calls
 ├── email.js                 # IMAP reader (Gmail app password)
@@ -162,7 +164,7 @@ npm run dev           # starts server.js with file watch
 The bot's SQLite DB **must** live on a mounted Railway volume or every redeploy wipes everything (transactions, tasks, conversation history). Verify by curling:
 
 ```
-curl https://<your-domain>/debug/stats
+curl "https://<your-domain>/debug/stats?key=$DASH_KEY"
 # → "db_path": "/data/pm.db"   ← correct
 # → "db_path": "./data/pm.db"  ← BROKEN, ephemeral, fix immediately
 ```
@@ -349,6 +351,7 @@ Detects drift between the parser regex (`bankCsv.js:categorize()`) and stored ca
 
 **Finance — analysis:**
 - `financial_advisor_review` — CFO-style monthly review (markdown), one-shot LLM call with trend/anomaly context. Use for "dame consejos / analiza mis finanzas / qué opinas de mi mes".
+- `monthly_close(period?)` — the monthly close for an ended month ("cierre de septiembre"). Generated even with missing statements, flagged as provisional.
 - `analyst_query(question)` — delegate to the Financial Analyst subagent ([analyst.js](analyst.js)). Use for multi-step or comparative finance questions ("compare April vs March", "why did entertainment spike vs last month", "am I on track for my annual savings"). The subagent has 12 read-only tools and iterates internally before returning markdown.
 
 **Notion:** `search_notion`, `read_notion_page`, `query_notion_database`
@@ -392,7 +395,9 @@ Detects drift between the parser regex (`bankCsv.js:categorize()`) and stored ca
   - `debts(period, label, amount_src, currency, amount_eur, kind)` — loans, card balances
   - `fx_rates(period PK, usd_cop, eur_usd, tax_fr_pct, source)`
 - `account_balances(account, period, opening_eur, closing_eur, source, reconciled)` — explicit opening/closing per (account, month), used to display the Inicial/Final cells. Inferred from prior period's closing when missing. `reconciled` (1/0/null) set at import time → drives the ⚠️ dashboard badge.
-- `proactive_pace_sent(period, category, bucket)` — dedup ledger so the 2h watchman never repeats a budget-pace alert (bucket 1 = on-pace-to-exceed, 2 = already over).
+- `proactive_pace_sent(period, category, bucket)` — legacy dedup ledger of the mid-month budget-pace alerts (no longer sent; kept for history).
+- `statement_coverage(account, from_date, to_date, exact)` — one row per imported statement: which dates of which bank it covers. BNP = printed period (`exact=1`); Amex/Revolut = min/max of its rows. Drives monthly-close completeness.
+- `monthly_reports(period PK, text, snapshot, complete, generated_at, sent_at)` — generated closes; `sent_at` set only on real delivery, so a month is never sent twice.
 - `pending_items(id, kind, who, amount_eur, description, expected_date, status)` — off-account receivables/payables/reimbursements. `kind ∈ ('receivable', 'payable', 'reimbursement')`, `status ∈ ('open', 'settled', 'cancelled')`.
 - `llm_calls` — observability table for every LLM round-trip (provider, model, latency, tokens, ok)
 
@@ -402,7 +407,8 @@ Detects drift between the parser regex (`bankCsv.js:categorize()`) and stored ca
 |---|---|---|
 | GET  | `/` | Liveness — `{ status }` |
 | GET  | `/healthz` | Railway healthcheck |
-| GET  | `/debug/stats` | Aggregates: tx count, by_source, by_sign, by_month, latest_10, spend_pace, `db_path`. Read-only, no PII. |
+| GET  | `/api/monthly-close.json?key=&period=` | Close tab: per-bank statement coverage of the last 6 closed months + one month's close snapshot. `DASH_KEY`. |
+| GET  | `/debug/stats?key=` | Aggregates: tx count, by_source, by_sign, by_month, latest_10, spend_pace, `db_path`. Read-only, gated by `DASH_KEY` (latest_10 is real transaction data). |
 | GET  | `/dashboard?key=$DASH_KEY[&period=YYYY-MM]` | Budget dashboard HTML (Overview + Transactions + B2B tabs). |
 | GET  | `/api/dashboard.json?key=$DASH_KEY[&period=YYYY-MM]` | Full dashboard payload (incomes, category_rows MECE, debts, FX, totals, donut/variance data, internal-transfer breakdown). |
 | GET  | `/api/ceiling.json?key=$DASH_KEY` | B2B tab data: combined CA for the year, per-business split, forecast, progress vs Franchise TVA + Techo micro thresholds. Read-only (the 2h watchman is what fires/dedups alerts). |
@@ -435,12 +441,12 @@ Detects drift between the parser regex (`bankCsv.js:categorize()`) and stored ca
 |---|---|
 | `0 6 1 * *` | Monthly FX rate refresh (skips months whose row is `source='manual'`) |
 | `5 * * * *` | Hourly IMAP scan for bank transaction emails (ingestor) |
-| `0 8 * * *` | Daily briefing — calendar (1d ahead) + tasks + spending pace + top categories |
+| `0 8 * * *` | Daily briefing — calendar (1d ahead) + tasks. No spending: transactions only arrive with the monthly upload |
 | `0 9 * * *` | Follow-ups for tasks due in next 48h |
 | `0 9 6 * *` | Monthly bank-statement reminder (day 6 — by then all 3 banks have published last month). The only upload nudge; uploads are a monthly routine. |
-| `0 18 * * 0` | Sunday weekly review — calendar (7d ahead) + completions/blockers + week spend |
-| `0 19 * * 0` | Sunday CFO weekly briefing (`advisor.js` — structured review) |
-| `0 8,10,12,14,16,18,20,22 * * *` | Proactive scan — silent by default; broadcasts anomalies + **budget-pace alerts** (mid-month, deduped via `proactive_pace_sent`) if `interrupt=true` |
+| `0 9 10 * *` | Monthly close fallback — sends last month's close if complete but unsent, else ONE message naming the missing statement per bank. (The close itself normally goes out ~90s after the upload batch that completes the month.) |
+| `0 18 * * 0` | Sunday weekly review — calendar (7d ahead) + completions/blockers + priorities (no spend) |
+| `0 8,10,12,14,16,18,20,22 * * *` | Proactive scan — silent by default; tasks/calendar via LLM + deterministic micro-ceiling alerts. No spending signals |
 
 ## Operating notes
 
