@@ -40,6 +40,7 @@ import db, {
   upsertCategoryBudget, copyCategoryBudgets,
   listPendingItems, upsertPendingItem, deletePendingItem,
   deleteTransactionsBySource, deleteTransactionsByIds,
+  carryForwardBudgetsThrough,
 } from "./memory.js";
 import { categorize as keywordCategorize } from "./bankCsv.js";
 import { refreshCurrentMonthFx } from "./fx.js";
@@ -51,7 +52,7 @@ import {
   getPositionsByYear as getEtoroPositions, getDividendsByYear as getEtoroDividends,
   importStatementFromBuffer as importEtoroStatement,
 } from "./etoro.js";
-import { runMonthlyCloseCheck, getCloseReminder, getCloseOverview } from "./monthlyClose.js";
+import { runMonthlyCloseCheck, getCloseReminder, getCloseOverview, lastCompletePeriod } from "./monthlyClose.js";
 import { toTelegramHTML } from "./tgformat.js";
 import { transcribeAudio } from "./stt.js";
 
@@ -437,7 +438,11 @@ app.get("/dashboard", (req, res) => {
 app.get("/api/dashboard.json", (req, res) => {
   if (!requireKey(req, res, "DASH_KEY")) return;
   try {
-    const period = (req.query.period || "").toString().match(/^\d{4}-\d{2}$/) ? req.query.period : undefined;
+    // Default: the last month whose statements are all in. The running month is
+    // always partial (statements arrive monthly) and read as "not updated".
+    const period = (req.query.period || "").toString().match(/^\d{4}-\d{2}$/)
+      ? req.query.period
+      : (lastCompletePeriod() || undefined);
     const summary = getDashboardSummary(period);
     const periods = listBudgetPeriods();
     res.json({ ...summary, available_periods: periods });
@@ -1276,6 +1281,10 @@ function queueMonthlyCloseCheck(delayMs = 90_000) {
   }, delayMs);
 }
 
+function logCarriedBudgets(filled) {
+  for (const f of filled) console.log(`[budget] ${f.period} had no plan — carried forward from ${f.from}`);
+}
+
 function startScheduler() {
   // Hourly: pull bank emails and parse new transactions
   cron.schedule("5 * * * *", async () => {
@@ -1324,9 +1333,13 @@ function startScheduler() {
 
   // Monthly FX refresh — 1st of month, 06:00 Paris. Auto rates never overwrite
   // manual ones (setFxRate skips when existing source='manual').
+  // Same moment: carry last month's plan into the new one so the dashboard
+  // never shows a month with €0 planned (never overwrites an existing plan).
   cron.schedule("0 6 1 * *", async () => {
     try { await refreshCurrentMonthFx(setFxRate); }
     catch (err) { console.error("[cron] fx refresh:", err.message); }
+    try { logCarriedBudgets(carryForwardBudgetsThrough()); }
+    catch (err) { console.error("[cron] budget carry-forward:", err.message); }
   }, { timezone: "Europe/Paris" });
 
   // 6th of every month, 09:00 Paris — monthly bank-statement reminder. This is
@@ -1376,8 +1389,11 @@ function startScheduler() {
 
   console.log("[scheduler] started — hourly inbox scan + daily/weekly briefings + monthly statement reminder (day 6) + monthly close (on upload, fallback day 10) + 2h proactive scan + monthly FX");
 
-  // Boot kick: a deploy can land after a statement batch was uploaded (and the
-  // debounce timer died with the old container) — re-check once on startup.
+  // Boot kick: fill any month left without a plan (idempotent), then — a deploy
+  // can land after a statement batch was uploaded and the debounce timer died
+  // with the old container — re-check the monthly close once.
+  try { logCarriedBudgets(carryForwardBudgetsThrough()); }
+  catch (err) { console.error("[boot] budget carry-forward:", err.message); }
   queueMonthlyCloseCheck(60_000);
 
   // Boot kick: scan inbox 30s after startup so each redeploy gives quick feedback

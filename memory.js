@@ -1126,6 +1126,61 @@ export function upsertCategoryBudget({ period, category, budget_eur, notes }) {
   return db.prepare(`SELECT * FROM category_budgets WHERE period = ? AND category = ?`).get(p, category);
 }
 
+/** Carry the latest monthly plan forward into `period` when that month has no
+ *  plan at all: incomes, fixed lines (with their match keywords, which drive
+ *  attribution — without them rent lands in 'other'), variable lines, category
+ *  budgets and debts. FX is left to the monthly auto-refresh. Never overwrites:
+ *  a month with any plan row is left alone. Returns the source period or null.
+ *  Exists because the plan used to be cloned by hand (scripts/clone-period.mjs)
+ *  and stopped after May 2026 — every later month showed €0 planned. */
+export function carryForwardBudget(period) {
+  // variable_expenses has no unique key, so any row there also counts as "has
+  // a plan" — otherwise a re-run would duplicate them.
+  const hasPlan = db.prepare(`
+    SELECT 1 FROM incomes WHERE period = @p
+    UNION ALL SELECT 1 FROM fixed_expenses    WHERE period = @p
+    UNION ALL SELECT 1 FROM variable_expenses WHERE period = @p
+    UNION ALL SELECT 1 FROM category_budgets  WHERE period = @p
+    LIMIT 1
+  `).get({ p: period });
+  if (hasPlan) return null;
+  const src = db.prepare(`
+    SELECT MAX(period) AS p FROM (
+      SELECT period FROM incomes UNION SELECT period FROM fixed_expenses UNION SELECT period FROM category_budgets
+    ) WHERE period < ?
+  `).get(period)?.p;
+  if (!src) return null;
+  db.transaction(() => {
+    const args = { dst: period, src };
+    db.prepare(`INSERT OR IGNORE INTO incomes (period, label, amount_eur, amount_src, currency, kind, notes)
+      SELECT @dst, label, amount_eur, amount_src, currency, kind, notes FROM incomes WHERE period = @src`).run(args);
+    db.prepare(`INSERT OR IGNORE INTO fixed_expenses (period, label, budget_eur, category, notes, match_keyword)
+      SELECT @dst, label, budget_eur, category, notes, match_keyword FROM fixed_expenses WHERE period = @src`).run(args);
+    db.prepare(`INSERT INTO variable_expenses (period, label, amount_eur, category, notes, match_keyword)
+      SELECT @dst, label, amount_eur, category, notes, match_keyword FROM variable_expenses WHERE period = @src`).run(args);
+    db.prepare(`INSERT OR IGNORE INTO category_budgets (period, category, budget_eur, notes)
+      SELECT @dst, category, budget_eur, notes FROM category_budgets WHERE period = @src`).run(args);
+    db.prepare(`INSERT OR IGNORE INTO debts (period, label, amount_src, currency, amount_eur, kind, notes)
+      SELECT @dst, label, amount_src, currency, amount_eur, kind, notes FROM debts WHERE period = @src`).run(args);
+  })();
+  return src;
+}
+
+/** Fill every unplanned month in the 12 months up to `through` (default:
+ *  current month), oldest first so each copies the plan just before it — a gap
+ *  before a hand-planned month gets filled too. Returns [{ period, from }]. */
+export function carryForwardBudgetsThrough(through = currentPeriod()) {
+  const [ty, tm] = through.split("-").map(Number);
+  const filled = [];
+  for (let i = 11; i >= 0; i--) {
+    const d = new Date(Date.UTC(ty, tm - 1 - i, 1));
+    const p = d.toISOString().slice(0, 7);
+    const from = carryForwardBudget(p);
+    if (from) filled.push({ period: p, from });
+  }
+  return filled;
+}
+
 /** Returns all category_budgets rows for a period as a {category: budget_eur} map. */
 export function listCategoryBudgets(period) {
   const p = period || currentPeriod();

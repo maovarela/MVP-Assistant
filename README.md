@@ -439,7 +439,7 @@ Detects drift between the parser regex (`bankCsv.js:categorize()`) and stored ca
 
 | Cron | What |
 |---|---|
-| `0 6 1 * *` | Monthly FX rate refresh (skips months whose row is `source='manual'`) |
+| `0 6 1 * *` | Monthly FX rate refresh (skips months whose row is `source='manual'`) + budget carry-forward: a month with no plan gets the previous month's incomes / fixed lines (with match keywords) / variable lines / category budgets / debts. Never overwrites; also runs on boot. |
 | `5 * * * *` | Hourly IMAP scan for bank transaction emails (ingestor) |
 | `0 8 * * *` | Daily briefing — calendar (1d ahead) + tasks. No spending: transactions only arrive with the monthly upload |
 | `0 9 * * *` | Follow-ups for tasks due in next 48h |

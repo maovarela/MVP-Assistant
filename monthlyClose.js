@@ -106,6 +106,17 @@ export function lastClosedPeriod() {
   return shiftPeriod(parisPeriod(), -1);
 }
 
+/** Most recent ended month whose statements cover all three banks — the
+ *  dashboard opens here: the running month is always partial now that
+ *  transactions arrive with the monthly upload. Null if none in the last year. */
+export function lastCompletePeriod() {
+  let p = lastClosedPeriod();
+  for (let i = 0; i < 12; i++, p = shiftPeriod(p, -1)) {
+    if (getMonthCompleteness(p).complete) return p;
+  }
+  return null;
+}
+
 export function periodLabel(period) {
   const [y, m] = period.split("-").map(Number);
   return `${MESES[m - 1]} ${y}`;
