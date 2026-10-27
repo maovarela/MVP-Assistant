@@ -100,6 +100,9 @@ balance anchor: Σ db = 126.56 = closing − opening  ✅
 CLEAN — the DB matches the authoritative history.
 ```
 
+**Carga 2026-10-27 (consolidated 01-ene → 26-oct):** la auditoría previa encontró 8 filas "en DB, no en el fichero" de abr–jul, pero cada mes cuadraba al céntimo: **Revolut renombró el comercio** de transacciones ya cargadas (misma fecha e importe — `noir coffee shop ba` → `noir`, `taberna casa lola` → `casa lola`…). Subir el consolidado entero las habría **duplicado** (~€155), porque la clave natural incluye el comercio. Se subió solo el tramo ≥ 2026-08-01 (138 filas, verificado idéntico al original en ese rango) y el fichero completo quedó marcado en `scripts/.processed.json` para que el sync no lo suba entero. Resultado: los 10 meses y el anchor de balance cuadran al céntimo. **Esas 8 parejas renombradas siguen saliendo en el audit como "discrepancias": NO borrarlas** — son transacciones reales, solo con otro nombre.
+**Regla:** antes de subir un consolidated que solapa meses ya cargados, correr el audit; si hay filas DB-only con el neto mensual cuadrando, son renombres → subir solo el tramo nuevo.
+
 **Correr `scripts/audit-revolut.mjs` después de cada carga de Revolut.** Este fallo se repetirá: cada import puede dejar pre-autorizaciones que Revolut revierte después, y ninguna deduplicación por fila las ve. El script sale con código ≠ 0 si hay discrepancia, así que se puede encadenar a `sync-bank-folders.mjs`.
 
 ## WhatsApp — por qué quedó diferido
